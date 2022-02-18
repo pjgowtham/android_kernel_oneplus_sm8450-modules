@@ -319,7 +319,7 @@ static u32 sde_rsc_timer_calculate(struct sde_rsc_priv *rsc,
 
 	default_prefill_lines = (rsc->cmd_config.fps *
 		DEFAULT_PANEL_MIN_V_PREFILL) / DEFAULT_PANEL_FPS;
-	if (!rsc->cmd_config.prefill_lines)
+	if ((state != SDE_RSC_VID_STATE) || !rsc->cmd_config.prefill_lines)
 		rsc->cmd_config.prefill_lines = default_prefill_lines;
 
 	pr_debug("frame fps:%d jitter_numer:%d jitter_denom:%d vtotal:%d prefill lines:%d\n",
