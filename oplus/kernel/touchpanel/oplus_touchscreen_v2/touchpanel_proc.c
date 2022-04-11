@@ -816,12 +816,8 @@ DECLARE_PROC_OPS(tp_communicate_test_ops, simple_open, tp_communicate_test_read,
 
 /*double_tap_enable - For black screen gesture
  * Input:
- * gesture_enable = 0 : disable gesture
- * gesture_enable = 1 : enable gesture when ps is far away
- * gesture_enable = 2 : disable gesture when ps is near
- * gesture_enable = 3 : enable single tap gesture when ps is far away
- * value = 5 : hall status is far way
- * value = 6 : hall status is near
+ * gesture_enable = 0 : disable dt2w
+ * gesture_enable = 1 : enable dt2w
  */
 static ssize_t proc_gesture_control_write(struct file *file,
 		const char __user *buffer, size_t count, loff_t *ppos)
@@ -847,64 +843,13 @@ static ssize_t proc_gesture_control_write(struct file *file,
 
 	mutex_lock(&ts->mutex);
 
-	switch(value) {
-	case 0:
-	case 1:
-	case 2:
-	case 3:
-		if (ts->gesture_enable != value) {
-			ts->gesture_enable = value;
-			TP_INFO(ts->tp_index, "%s: gesture_enable = %d, is_suspended = %d\n", __func__,
-				ts->gesture_enable, ts->is_suspended);
+	if (value)
+		ts->gesture_enable_indep |= (1 << DOU_TAP);
+	else
+		ts->gesture_enable_indep &= ~(1 << DOU_TAP);
 
-		if (0 == ts->gesture_enable && ts->is_suspended && ts->fp_grip_enable && ts->fp_grip_hold == true && ts->fp_grip_support) {
-			TP_INFO(ts->tp_index, "%s: maybe prox near to disable gesture,nead send release touch to fp\n", __func__);
-			touch_call_fp_grip(ts, 0);
-		}
-
-		if (ts->is_incell_panel && (ts->suspend_state == TP_RESUME_EARLY_EVENT
-					    || ts->disable_gesture_ctrl) && (ts->tp_resume_order == LCD_TP_RESUME)) {
-			TS_TP_INFO("tp will resume, no need mode_switch in incell panel\n"); /*avoid i2c error or tp rst pulled down in lcd resume*/
-
-		} else if (ts->is_suspended) {
-			if (ts->bus_ready == false) {
-				if (ts->health_monitor_support) {
-					ts->monitor_data.bus_not_ready_gesture_write_count++;
-				}
-			}
-			if (ts->fingerprint_underscreen_support && ts->fp_enable
-					&& ts->ts_ops->enable_gesture_mask) {
-				ts->ts_ops->enable_gesture_mask(ts->chip_data,
-								(ts->gesture_enable & 0x01) == 1);
-
-			} else {
-				operate_mode_switch(ts);
-			}
-		}
-
-	}
-	break;
-	case 4:
-	break;
-	case 5:
-		ts->hall_status = false;
-		if (ts->ts_ops->notify_keyboard_open && ts->is_hall_near_resume) {
-			ts->ts_ops->notify_keyboard_open(ts->chip_data);
-			ts->is_hall_near_resume = false;
-			if (ts->health_monitor_support) {
-				tp_healthinfo_report(&ts->monitor_data, HEALTH_REPORT, "hall_near_resume");
-			}
-		}
-		break;
-	case 6:
-		ts->hall_status = true;
-		if ((ts->gesture_enable & 0x01) && ts->is_suspended)
-			operate_mode_switch(ts);
-		break;
-	default:
-		TPD_DEBUG("invalid setting %d\n", value);
-	}
-	TPD_INFO("%s: gesture_enable = %d, value = %d, hall_status = %d\n", __func__, ts->gesture_enable, value, ts->hall_status);
+	if (ts->ts_ops->set_gesture_state)
+		ts->ts_ops->set_gesture_state(ts->chip_data, ts->gesture_enable_indep);
 
 	mutex_unlock(&ts->mutex);
 
@@ -913,14 +858,14 @@ static ssize_t proc_gesture_control_write(struct file *file,
 
 /*double_tap_enable - For black screen gesture
  * Output:
- * gesture_enable = 0 : disable gesture
- * gesture_enable = 1 : enable gesture when ps is far away
- * gesture_enable = 2 : disable gesture when ps is near
+ * gesture_enable = 0 : disable dt2w
+ * gesture_enable = 1 : enable dt2w
  */
 static ssize_t proc_gesture_control_read(struct file *file, char __user *buffer,
 		size_t count, loff_t *ppos)
 {
 	int ret = 0;
+	int value = 0;
 	char page[PAGESIZE] = {0};
 	struct touchpanel_data *ts = PDE_DATA(file_inode(file));
 
@@ -928,8 +873,10 @@ static ssize_t proc_gesture_control_read(struct file *file, char __user *buffer,
 		return 0;
 	}
 
-	TP_DEBUG(ts->tp_index, "double tap enable is: %d\n", ts->gesture_enable);
-	ret = snprintf(page, PAGESIZE - 1, "%d\n", ts->gesture_enable);
+	value = !!(ts->gesture_enable_indep & (1 << DOU_TAP));
+
+	TP_DEBUG(ts->tp_index, "double tap enable is: %d\n", value);
+	ret = snprintf(page, PAGESIZE - 1, "%d\n", value);
 	ret = simple_read_from_buffer(buffer, count, ppos, page, strlen(page));
 
 	return ret;
