@@ -12,22 +12,19 @@ KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
 M ?= $(shell pwd)
 
 ifeq ($(WLAN_ROOT),)
-# WLAN_ROOT must contain an absolute path (i.e. not a relative path)
-KBUILD_OPTIONS := WLAN_ROOT=$(shell cd $(KERNEL_SRC); readlink -e $(M))
-
-# MODNAME should be qca_cld3_wlan for helium based platform
-ifeq (qca_cld3, $(WLAN_CHIPSET))
-KBUILD_OPTIONS += MODNAME?=$(WLAN_CHIPSET)_wlan
-else
-KBUILD_OPTIONS += MODNAME?=wlan
-endif
-
-#By default build for CLD
-WLAN_SELECT := CONFIG_QCA_CLD_WLAN=m
-KBUILD_OPTIONS += CONFIG_QCA_WIFI_ISOC=0
-KBUILD_OPTIONS += CONFIG_QCA_WIFI_2_0=1
-KBUILD_OPTIONS += $(WLAN_SELECT)
-KBUILD_OPTIONS += $(KBUILD_EXTRA) # Extra config if any
+KBUILD_OPTIONS += \
+    WLAN_ROOT=$(KERNEL_SRC)/$(M)/.qca6490 \
+    WLAN_COMMON_ROOT=cmn \
+    WLAN_COMMON_INC=$(KERNEL_SRC)/$(M)/cmn \
+    WLAN_FW_API=$(KERNEL_SRC)/$(M)/../fw-api \
+    CONFIG_QCA_CLD_WLAN=m \
+    CONFIG_CNSS_QCA6490=y \
+    WLAN_PROFILE=qca6490 \
+    DYNAMIC_SINGLE_CHIP= \
+    MODNAME=qca_cld3_qca6490 \
+    DEVNAME=qca6490 \
+    BOARD_PLATFORM=taro \
+    WLAN_CTRL_NAME=wlan
 endif
 
 all:
