@@ -14,7 +14,7 @@
 #include "sde_encoder_phys.h"
 #include "sde_trace.h"
 #include <linux/msm_drm_notify.h>
-#include "../../../oplus/kernel/touchpanel/oplus_touchscreen_v2/touchpanel_notify/touchpanel_event_notify.h"
+#include <soc/oplus/touchpanel_event_notify.h>
 #ifdef OPLUS_FEATURE_DISPLAY
 #include "oplus_display_temperature.h"
 #include "oplus_display_panel_common.h"
