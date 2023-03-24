@@ -19,7 +19,7 @@
 #include <linux/notifier.h>
 #include <linux/msm_drm_notify.h>
 #include <soc/oplus/device_info.h>
-#include "../../../oplus/kernel/touchpanel/oplus_touchscreen_v2/touchpanel_notify/touchpanel_event_notify.h"
+#include <soc/oplus/touchpanel_event_notify.h>
 #include "dsi_pwr.h"
 #include "oplus_display_panel.h"
 #ifdef OPLUS_FEATURE_DISPLAY
