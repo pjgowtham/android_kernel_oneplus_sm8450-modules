@@ -13,7 +13,7 @@ M ?= $(shell pwd)
 
 ifeq ($(WLAN_ROOT),)
 KBUILD_OPTIONS += \
-    WLAN_ROOT=$(KERNEL_SRC)/$(M)/.qca6490 \
+    WLAN_ROOT=$(KERNEL_SRC)/$(M) \
     WLAN_COMMON_ROOT=cmn \
     WLAN_COMMON_INC=$(KERNEL_SRC)/$(M)/cmn \
     WLAN_FW_API=$(KERNEL_SRC)/$(M)/../fw-api \
