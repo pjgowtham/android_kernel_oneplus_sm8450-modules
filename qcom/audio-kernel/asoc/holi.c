@@ -41,6 +41,14 @@
 #include "holi-port-config.h"
 #include "msm_holi_dailink.h"
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include "feedback/oplus_audio_kernel_fb.h"
+#ifdef dev_err
+#undef dev_err
+#define dev_err dev_err_fb
+#endif
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
 #define DRV_NAME "holi-asoc-snd"
 #define __CHIPSET__ "HOLI "
 #define MSM_DAILINK_NAME(name) (__CHIPSET__#name)
