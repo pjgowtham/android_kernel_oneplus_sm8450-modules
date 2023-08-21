@@ -9,6 +9,9 @@
 #include "sde_hw_catalog.h"
 #include "sde_hw_intf.h"
 #include "sde_dbg.h"
+#if defined(CONFIG_PXLW_IRIS)
+#include "dsi_iris_api.h"
+#endif
 
 #define INTF_TIMING_ENGINE_EN           0x000
 #define INTF_CONFIG                     0x004
@@ -651,6 +654,12 @@ static int sde_hw_intf_setup_te_config(struct sde_hw_intf *intf,
 	 * less than 2^16 vsync clk cycles.
 	 */
 	spin_lock(&tearcheck_spinlock);
+<<<<<<< HEAD
+=======
+	SDE_REG_WRITE(c, INTF_TEAR_SYNC_WRCOUNT,
+			(te->start_pos + te->sync_threshold_start + 1));
+
+>>>>>>> b93ff3fce8 (Import changes for display-drivers)
 	SDE_REG_WRITE(c, INTF_TEAR_SYNC_CONFIG_VSYNC, cfg);
 	wmb(); /* disable vsync counter before updating single buffer registers */
 	SDE_REG_WRITE(c, INTF_TEAR_SYNC_CONFIG_HEIGHT, te->sync_cfg_height);
@@ -663,10 +672,14 @@ static int sde_hw_intf_setup_te_config(struct sde_hw_intf *intf,
 			 te->sync_threshold_start));
 	cfg |= BIT(19); /* VSYNC_COUNTER_EN */
 	SDE_REG_WRITE(c, INTF_TEAR_SYNC_CONFIG_VSYNC, cfg);
+<<<<<<< HEAD
 	wmb(); /* ensure vsync_counter_en is written */
 
 	SDE_REG_WRITE(c, INTF_TEAR_SYNC_WRCOUNT,
 			(te->start_pos + te->sync_threshold_start + 1));
+=======
+
+>>>>>>> b93ff3fce8 (Import changes for display-drivers)
 	spin_unlock(&tearcheck_spinlock);
 
 	return 0;
@@ -877,6 +890,12 @@ static void sde_hw_intf_enable_compressed_input(struct sde_hw_intf *intf,
 	c = &intf->hw;
 	intf_cfg2 = SDE_REG_READ(c, INTF_CONFIG2);
 
+#if defined(CONFIG_PXLW_IRIS)
+	if (iris_is_chip_supported()) {
+	/* fixed for dynamic switching from dsc panel timing into raw timing */
+		intf_cfg2 &= ~BIT(12);
+	}
+#endif
 	_check_and_set_comp_bit(intf, dsc_4hs_merge, compression_en,
 			&intf_cfg2);
 

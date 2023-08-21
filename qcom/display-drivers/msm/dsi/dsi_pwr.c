@@ -10,7 +10,9 @@
 #include "dsi_pwr.h"
 #include "dsi_parser.h"
 #include "dsi_defs.h"
-
+#ifdef OPLUS_FEATURE_DISPLAY
+#include "dsi_display.h"
+#endif
 /*
  * dsi_pwr_parse_supply_node() - parse power supply node from root device node
  */
@@ -129,6 +131,10 @@ static int dsi_pwr_enable_vregs(struct dsi_regulator_info *regs, bool enable)
 	u32 pre_on_ms, post_on_ms;
 	u32 pre_off_ms, post_off_ms;
 
+#ifdef OPLUS_FEATURE_DISPLAY
+	struct dsi_display *display = get_main_display();
+#endif
+
 	if (enable) {
 		for (i = 0; i < regs->count; i++) {
 			vreg = &regs->vregs[i];
@@ -139,6 +145,24 @@ static int dsi_pwr_enable_vregs(struct dsi_regulator_info *regs, bool enable)
 				usleep_range((pre_on_ms * 1000),
 						(pre_on_ms * 1000) + 10);
 
+#ifdef OPLUS_FEATURE_DISPLAY
+			/* Add for vddr->vci power on sequence */
+			if ((display != NULL) && (display->panel != NULL)) {
+				if ((!strcmp(display->panel->oplus_priv.vendor_name,"RM692E5") ||
+					(!strcmp(display->panel->oplus_priv.vendor_name,"NT37705"))) &&
+					(!strcmp(vreg->vreg_name, "vci"))) {
+					if (display && display->panel &&
+						gpio_is_valid(display->panel->reset_config.panel_vout_gpio)) {
+							rc = gpio_direction_output(display->panel->reset_config.panel_vout_gpio, 1);
+							if (rc)
+								DSI_ERR("unable to set dir for panel_vout_gpio rc=%d", rc);
+							gpio_set_value(display->panel->reset_config.panel_vout_gpio, 1);
+
+							usleep_range(3000, 3000 + 10);
+					}
+				}
+			}
+#endif
 			rc = regulator_set_load(vreg->vreg,
 						vreg->enable_load);
 			if (rc < 0) {
@@ -178,6 +202,22 @@ static int dsi_pwr_enable_vregs(struct dsi_regulator_info *regs, bool enable)
 			if (pre_off_ms)
 				usleep_range((pre_off_ms * 1000),
 						(pre_off_ms * 1000) + 10);
+
+
+#ifdef OPLUS_FEATURE_DISPLAY
+		/* Add for vci->vddr->vddi power off sequence */
+		if ((display != NULL) && (display->panel != NULL)) {
+			if ((!strcmp(display->panel->oplus_priv.vendor_name,"NT37705")) &&
+					(!strcmp(vreg->vreg_name, "vddio"))) {
+				if (display && display->panel &&
+						gpio_is_valid(display->panel->reset_config.panel_vout_gpio)) {
+					DSI_INFO("set dvdd to 0");
+					gpio_set_value(display->panel->reset_config.panel_vout_gpio, 0);
+					usleep_range(45000, 45000 + 10);
+				}
+			}
+		}
+#endif
 
 			(void)regulator_disable(regs->vregs[i].vreg);
 
@@ -401,6 +441,10 @@ int dsi_pwr_enable_regulator(struct dsi_regulator_info *regs, bool enable)
 
 	return rc;
 }
+
+#ifdef OPLUS_FEATURE_DISPLAY
+EXPORT_SYMBOL(dsi_pwr_enable_regulator);
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 /*
  * dsi_pwr_panel_regulator_mode_set()
