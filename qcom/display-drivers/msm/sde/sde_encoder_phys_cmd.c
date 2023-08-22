@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
-<<<<<<< HEAD
  * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
-=======
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
->>>>>>> b93ff3fce8 (Import changes for display-drivers)
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -1089,15 +1085,6 @@ static int _get_tearcheck_threshold(struct sde_encoder_phys *phys_enc)
 		ktime_t default_line_time_ns;
 		ktime_t extra_time_ns;
 		u32 yres = mode->vtotal;
-<<<<<<< HEAD
-=======
-		u32 slow_time_ns;
-		u32 default_time_ns;
-		u32 extra_time_ns;
-		u32 default_line_time_ns;
-		u32 idle_time_ns = 0;
-		u32 transfer_time_us = 0;
->>>>>>> b93ff3fce8 (Import changes for display-drivers)
 
 		if (phys_enc->parent_ops.get_qsync_fps)
 			phys_enc->parent_ops.get_qsync_fps(phys_enc->parent, &qsync_min_fps,
@@ -1128,7 +1115,6 @@ static int _get_tearcheck_threshold(struct sde_encoder_phys *phys_enc)
 			goto exit;
 		}
 
-<<<<<<< HEAD
 		/*
 		 * Calculate safe qsync trigger window by compensating
 		 * the qsync timeout period by panel jitter value.
@@ -1155,41 +1141,6 @@ static int _get_tearcheck_threshold(struct sde_encoder_phys *phys_enc)
 		if (adjusted_threshold_lines - 2 > DEFAULT_TEARCHECK_SYNC_THRESH_START)
 			adjusted_threshold_lines -= 2;
 
-		SDE_DEBUG_CMDENC(cmd_enc,
-			"qsync mode:%u min_fps:%u time:%lld low:%lld up:%lld jitter:%u/%u\n",
-			qsync_mode, qsync_min_fps, qsync_time_ns, qsync_l_bound_ns,
-			qsync_u_bound_ns, info->jitter_numer, info->jitter_denom);
-		SDE_DEBUG_CMDENC(cmd_enc,
-			"default fps:%u time:%lld yres:%u line_time:%lld\n",
-			default_fps, default_time_ns, yres, default_line_time_ns);
-		SDE_DEBUG_CMDENC(cmd_enc,
-			"extra_time:%lld  threshold_lines:%u adjusted_threshold_lines:%u\n",
-			extra_time_ns, threshold_lines, adjusted_threshold_lines);
-
-		SDE_EVT32(qsync_mode, qsync_min_fps, default_fps, info->jitter_numer,
-				info->jitter_denom, yres, extra_time_ns, default_line_time_ns,
-				adjusted_threshold_lines);
-=======
-		/* Calculate the number of extra lines*/
-		slow_time_ns = DIV_ROUND_UP(1000000000, qsync_min_fps);
-		default_time_ns = DIV_ROUND_UP(1000000000, default_fps);
-		sde_encoder_get_transfer_time(phys_enc->parent,
-				&transfer_time_us);
-		if (transfer_time_us)
-			idle_time_ns = default_time_ns -
-					(1000 * transfer_time_us);
-
-#ifdef OPLUS_FEATURE_DISPLAY
-		/* idle_time_ns make extra_time_ns bigger, this is not we expected */
-		if (oplus_adfr_is_support()) {
-			idle_time_ns = 0;
-		}
-#endif /* OPLUS_FEATURE_DISPLAY */
-
-		extra_time_ns = slow_time_ns - default_time_ns + idle_time_ns;
-		default_line_time_ns = DIV_ROUND_UP(1000000000, default_fps * yres);
-
-		threshold_lines = DIV_ROUND_UP(extra_time_ns, default_line_time_ns);
 #ifdef OPLUS_FEATURE_DISPLAY
 		if (oplus_adfr_is_support()) {
 			if (qsync_min_fps == 51) {
@@ -1208,23 +1159,24 @@ static int _get_tearcheck_threshold(struct sde_encoder_phys *phys_enc)
 		}
 #endif /* OPLUS_FEATURE_DISPLAY */
 
-		SDE_DEBUG_CMDENC(cmd_enc, "slow:%d default:%d extra:%d(ns)\n",
-			slow_time_ns, default_time_ns, extra_time_ns);
-		SDE_DEBUG_CMDENC(cmd_enc, "xfer:%d(us) idle:%d(ns) lines:%d\n",
-			transfer_time_us, idle_time_ns, threshold_lines);
-		SDE_DEBUG_CMDENC(cmd_enc, "min_fps:%d fps:%d yres:%d\n",
-			qsync_min_fps, default_fps, yres);
+		SDE_DEBUG_CMDENC(cmd_enc,
+			"qsync mode:%u min_fps:%u time:%lld low:%lld up:%lld jitter:%u/%u\n",
+			qsync_mode, qsync_min_fps, qsync_time_ns, qsync_l_bound_ns,
+			qsync_u_bound_ns, info->jitter_numer, info->jitter_denom);
+		SDE_DEBUG_CMDENC(cmd_enc,
+			"default fps:%u time:%lld yres:%u line_time:%lld\n",
+			default_fps, default_time_ns, yres, default_line_time_ns);
+		SDE_DEBUG_CMDENC(cmd_enc,
+			"extra_time:%lld  threshold_lines:%u adjusted_threshold_lines:%u\n",
+			extra_time_ns, threshold_lines, adjusted_threshold_lines);
 
-		SDE_EVT32(qsync_mode, qsync_min_fps, extra_time_ns, default_fps,
-			yres, transfer_time_us, threshold_lines);
->>>>>>> b93ff3fce8 (Import changes for display-drivers)
+		SDE_EVT32(qsync_mode, qsync_min_fps, default_fps, info->jitter_numer,
+				info->jitter_denom, yres, extra_time_ns, default_line_time_ns,
+				adjusted_threshold_lines);
 	}
 
 exit:
 
-<<<<<<< HEAD
-	return adjusted_threshold_lines;
-=======
 #ifdef OPLUS_FEATURE_DISPLAY
 	if (oplus_adfr_is_support()) {
 		SDE_DEBUG_CMDENC(cmd_enc, "kVRR : qsync_mode %d, qsync_minfps %d, threshold_lines %d\n",
@@ -1233,9 +1185,7 @@ exit:
 		SDE_ATRACE_INT("threshold_lines", threshold_lines);
 	}
 #endif /* OPLUS_FEATURE_DISPLAY */
-
-	return threshold_lines;
->>>>>>> b93ff3fce8 (Import changes for display-drivers)
+	return adjusted_threshold_lines;
 }
 
 static void sde_encoder_phys_cmd_tearcheck_config(
