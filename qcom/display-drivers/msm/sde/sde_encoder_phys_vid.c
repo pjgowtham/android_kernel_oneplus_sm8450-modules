@@ -1166,7 +1166,7 @@ static int sde_encoder_phys_vid_poll_for_active_region(struct sde_encoder_phys *
 		usleep_range(poll_time_us, poll_time_us + 5);
 		line_cnt = phys_enc->hw_intf->ops.get_line_count(phys_enc->hw_intf);
 		trial++;
-	} while ((trial < MAX_POLL_CNT) || (line_cnt < v_inactive));
+	} while ((trial < MAX_POLL_CNT) && (line_cnt < v_inactive));
 
 	return (trial >= MAX_POLL_CNT) ? -ETIMEDOUT : 0;
 }

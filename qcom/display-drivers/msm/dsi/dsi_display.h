@@ -19,6 +19,9 @@
 #include "dsi_ctrl.h"
 #include "dsi_phy.h"
 #include "dsi_panel.h"
+#ifdef OPLUS_FEATURE_DISPLAY
+#include "../oplus/oplus_dsi_support.h"
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 #define MAX_DSI_CTRLS_PER_DISPLAY             2
 #define DSI_CLIENT_NAME_SIZE		20
@@ -210,6 +213,7 @@ struct dsi_display {
 	bool sw_te_using_wd;
 	struct mutex display_lock;
 	int disp_te_gpio;
+	int disp_te_gpio_1;
 	bool is_te_irq_enabled;
 	struct completion esd_te_gate;
 
@@ -299,6 +303,22 @@ struct dsi_display {
 	struct dsi_panel_cmd_set cmd_set;
 
 	bool enabled;
+
+#if defined(CONFIG_PXLW_IRIS)
+	u32 off;
+	u32 cnt;
+	u8 cmd_data_type;
+#endif
+
+#ifdef OPLUS_FEATURE_DISPLAY
+	/* save qsync info, then restore qsync status after panel enable*/
+	bool need_qsync_restore;
+	/* force close qysnc window when qsync mode is on before panel enable */
+	bool force_qsync_mode_off;
+	uint32_t current_qsync_mode;
+	uint32_t current_qsync_dynamic_min_fps;
+	struct completion switch_te_gate;
+#endif /* OPLUS_FEATURE_DISPLAY */
 };
 
 int dsi_display_dev_probe(struct platform_device *pdev);
@@ -634,6 +654,8 @@ int dsi_pre_clkon_cb(void *priv, enum dsi_clk_type clk_type,
 int dsi_display_unprepare(struct dsi_display *display);
 
 int dsi_display_set_tpg_state(struct dsi_display *display, bool enable);
+int dsi_display_override_dma_cmd_trig(struct dsi_display *display,
+		enum dsi_trigger_type type);
 
 int dsi_display_clock_gate(struct dsi_display *display, bool enable);
 int dsi_dispaly_static_frame(struct dsi_display *display, bool enable);
@@ -780,6 +802,17 @@ enum dsi_pixel_format dsi_display_get_dst_format(
  */
 int dsi_display_cont_splash_config(void *display);
 
+#ifdef OPLUS_FEATURE_DISPLAY
+struct dsi_display *get_main_display(void);
+
+struct dsi_display *get_sec_display(void);
+
+/* Add for implement panel register read */
+int dsi_host_alloc_cmd_tx_buffer(struct dsi_display *display);
+int dsi_display_cmd_engine_enable(struct dsi_display *display);
+int dsi_display_cmd_engine_disable(struct dsi_display *display);
+#endif /* OPLUS_FEATURE_DISPLAY */
+
 /**
  * dsi_display_cont_splash_res_disable() - Disable resource votes added in probe
  * @display:    Pointer to dsi display
@@ -831,4 +864,41 @@ int dsi_display_restore_bit_clk(struct dsi_display *display, struct dsi_display_
 bool dsi_display_mode_match(const struct dsi_display_mode *mode1,
 		struct dsi_display_mode *mode2, unsigned int match_flags);
 
+#ifdef OPLUS_FEATURE_DISPLAY
+/* add oplus_panel_event_data_notifier_trigger */
+/**
+ * oplus_panel_event_data_notifier_trigger() - oplus event notification with data
+ * @dsi_panel:                     Display panel
+ * @panel_event_notification_type: Type of notifier
+ * @data:                          Data to be notified
+ * @early_trigger                  Whether support early trigger
+ * Return: Zero on Success
+ */
+int oplus_panel_event_data_notifier_trigger(struct dsi_panel *panel,
+		enum panel_event_notification_type notif_type,
+		u32 data,
+		bool early_trigger);
+
+/**
+ * oplus_event_data_notifier_trigger() - oplus event notification with data
+ * @panel_event_notification_type: Type of notifier
+ * @data:                          Data to be notified
+ * @early_trigger:                 Whether support early trigger
+ * Return: Zero on Success
+ */
+int oplus_event_data_notifier_trigger(
+		enum panel_event_notification_type notif_type,
+		u32 data,
+		bool early_trigger);
+
+/**
+ * oplus_panel_backlight_notifier() - oplus panel backlight notifier
+ * @dsi_panel: Display panel
+ * @bl_lvl:    Backlight level
+ * Return: Zero on Success
+ */
+int oplus_panel_backlight_notifier(struct dsi_panel *panel, u32 bl_lvl);
+
+
+#endif /* OPLUS_FEATURE_DISPLAY */
 #endif /* _DSI_DISPLAY_H_ */
