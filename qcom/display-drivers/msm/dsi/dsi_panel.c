@@ -896,24 +896,10 @@ static int dsi_panel_update_backlight(struct dsi_panel *panel,
 		mode_flags = dsi->mode_flags;
 		dsi->mode_flags |= MIPI_DSI_MODE_LPM;
 	}
-<<<<<<< HEAD
 
-	if (panel->bl_config.bl_inverted_dbv)
-		bl_lvl = (((bl_lvl & 0xff) << 8) | (bl_lvl >> 8));
-
-	if (panel->bl_config.bl_dcs_subtype)
-		rc = mipi_dsi_dcs_subtype_set_display_brightness(dsi, bl_lvl,
-						panel->bl_config.bl_dcs_subtype);
-	else
-		rc = mipi_dsi_dcs_set_display_brightness(dsi, bl_lvl);
-
-	if (rc < 0)
-		DSI_ERR("failed to update dcs backlight:%d\n", bl_lvl);
-=======
 #ifdef OPLUS_FEATURE_DISPLAY
 	oplus_panel_update_backlight(panel, dsi, bl_lvl);
 #endif /* OPLUS_FEATURE_DISPLAY */
->>>>>>> b93ff3fce8 (Import changes for display-drivers)
 
 	if (unlikely(panel->bl_config.lp_mode))
 		dsi->mode_flags = mode_flags;

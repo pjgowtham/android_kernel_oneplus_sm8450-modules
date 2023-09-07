@@ -1,10 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
-<<<<<<< HEAD
  * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
-=======
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
->>>>>>> b93ff3fce8 (Import changes for display-drivers)
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
