@@ -30,7 +30,12 @@
 #include "cam_cpas_hw.h"
 #include "cam_compat.h"
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#include "oplus_cam_kevent_fb.h"
+#define CAM_REQ_MGR_EVENT_MAX 90
+#else
 #define CAM_REQ_MGR_EVENT_MAX 30
+#endif
 
 static struct cam_req_mgr_device g_dev;
 struct kmem_cache *g_cam_req_mgr_timer_cachep;
@@ -346,6 +351,8 @@ static long cam_private_ioctl(struct file *file, void *fh,
 	switch (k_ioctl->op_code) {
 	case CAM_REQ_MGR_CREATE_SESSION: {
 		struct cam_req_mgr_session_info ses_info;
+
+		camera_provider_pid = task_tgid_nr(current);
 
 		if (k_ioctl->size != sizeof(ses_info))
 			return -EINVAL;
@@ -978,12 +985,18 @@ struct platform_driver cam_req_mgr_driver = {
 
 int cam_req_mgr_init(void)
 {
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	cam_event_proc_init();
+#endif
 	return platform_driver_register(&cam_req_mgr_driver);
 }
 EXPORT_SYMBOL(cam_req_mgr_init);
 
 void cam_req_mgr_exit(void)
 {
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	cam_event_proc_exit();
+#endif
 	platform_driver_unregister(&cam_req_mgr_driver);
 }
 

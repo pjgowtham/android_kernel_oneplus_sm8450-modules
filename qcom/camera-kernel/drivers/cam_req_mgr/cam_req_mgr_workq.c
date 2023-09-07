@@ -7,6 +7,11 @@
 #include "cam_req_mgr_workq.h"
 #include "cam_debug_util.h"
 #include "cam_common_util.h"
+#include <linux/sched/types.h>
+
+struct sched_param {
+	int sched_priority;
+};
 
 #define WORKQ_ACQUIRE_LOCK(workq, flags) {\
 	if ((workq)->in_irq) \
@@ -20,6 +25,30 @@
 		spin_unlock_irqrestore(&(workq)->lock_bh, (flags)); \
 	else	\
 		spin_unlock_bh(&(workq)->lock_bh); \
+}
+
+static int cam_req_mgr_thread(void *data)
+{
+	struct cam_req_mgr_core_workq *workq = (struct cam_req_mgr_core_workq *)data;
+	struct sched_param param = { .sched_priority = 1 };//prio=98
+	sched_setscheduler_nocheck(current, SCHED_FIFO, &param);
+	set_current_state(TASK_INTERRUPTIBLE);
+	schedule();
+
+	while(1)
+	{
+		set_current_state(TASK_INTERRUPTIBLE);
+		if (!kthread_should_stop()) {
+			cam_req_mgr_process_workq(&(workq->work));
+			schedule();
+		}
+		set_current_state(TASK_RUNNING);
+		if (kthread_should_stop())
+			break;
+		cam_req_mgr_process_workq(&(workq->work));
+	}
+
+	return 0;
 }
 
 struct crm_workq_task *cam_req_mgr_workq_get_task(
@@ -186,7 +215,13 @@ int cam_req_mgr_workq_enqueue_task(struct crm_workq_task *task,
 		task, atomic_read(&workq->task.pending_cnt));
 
 	workq->workq_scheduled_ts = ktime_get();
-	queue_work(workq->job, &workq->work);
+
+	if (workq->thread) {
+		wake_up_process(workq->thread);
+	} else {
+		queue_work(workq->job, &workq->work);
+	}
+
 	WORKQ_RELEASE_LOCK(workq, flags);
 
 	return rc;
@@ -234,6 +269,16 @@ int cam_req_mgr_workq_create(char *name, int32_t num_tasks,
 		CAM_DBG(CAM_CRM, "LOCK_DBG workq %s lock %pK",
 			name, &crm_workq->lock_bh);
 
+		if (strstr(crm_workq->workq_name, "CRMCORE")) {
+			crm_workq->thread = kthread_run(cam_req_mgr_thread, crm_workq, "%s",
+				crm_workq->workq_name);
+			if (!crm_workq->thread) {
+				CAM_ERR(CAM_CRM, "create workqueue thread failed: %s", crm_workq->workq_name);
+			}
+		} else {
+			crm_workq->thread = NULL;
+		}
+
 		/* Task attributes initialization */
 		atomic_set(&crm_workq->task.pending_cnt, 0);
 		atomic_set(&crm_workq->task.free_cnt, 0);
@@ -278,6 +323,12 @@ void cam_req_mgr_workq_destroy(struct cam_req_mgr_core_workq **crm_workq)
 	if (crm_workq && *crm_workq) {
 		workq = *crm_workq;
 		CAM_DBG(CAM_CRM, "destroy workque %s", workq->workq_name);
+
+		if (workq->thread) {
+			kthread_stop(workq->thread);
+			workq->thread = NULL;
+		}
+
 		WORKQ_ACQUIRE_LOCK(workq, flags);
 		/* prevent any processing of callbacks */
 		atomic_set(&workq->flush, 1);
