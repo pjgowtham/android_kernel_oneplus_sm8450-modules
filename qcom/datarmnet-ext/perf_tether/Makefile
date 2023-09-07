@@ -1,7 +1,7 @@
 #By default build for CLD
 DATARMNET_CORE_PATH := datarmnet/core
 
-RMNET_CORE_PATH := kernel/oneplus/sm8450-modules/qcom/$(DATARMNET_CORE_PATH)
+RMNET_CORE_PATH := vendor/qcom/opensource/$(DATARMNET_CORE_PATH)
 RMNET_CORE_INC_DIR := $(ANDROID_BUILD_TOP)/$(RMNET_CORE_PATH)
 RMNET_PERF_TETHER_SELECT := CONFIG_RMNET_PERF_TETHER=m
 
