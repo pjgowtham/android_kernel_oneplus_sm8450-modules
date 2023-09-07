@@ -866,6 +866,7 @@ static int dsi_panel_wled_register(struct dsi_panel *panel,
 	return 0;
 }
 
+/*
 static int mipi_dsi_dcs_subtype_set_display_brightness(struct mipi_dsi_device *dsi,
 	u32 bl_lvl, u32 bl_dcs_subtype)
 {
@@ -879,6 +880,7 @@ static int mipi_dsi_dcs_subtype_set_display_brightness(struct mipi_dsi_device *d
 
 	return mipi_dsi_dcs_write(dsi, bl_dcs_subtype, payload, sizeof(payload));
 }
+*/
 
 static int dsi_panel_update_backlight(struct dsi_panel *panel,
 	u32 bl_lvl)
@@ -897,24 +899,10 @@ static int dsi_panel_update_backlight(struct dsi_panel *panel,
 		mode_flags = dsi->mode_flags;
 		dsi->mode_flags |= MIPI_DSI_MODE_LPM;
 	}
-<<<<<<< HEAD
 
-	if (panel->bl_config.bl_inverted_dbv)
-		bl_lvl = (((bl_lvl & 0xff) << 8) | (bl_lvl >> 8));
-
-	if (panel->bl_config.bl_dcs_subtype)
-		rc = mipi_dsi_dcs_subtype_set_display_brightness(dsi, bl_lvl,
-						panel->bl_config.bl_dcs_subtype);
-	else
-		rc = mipi_dsi_dcs_set_display_brightness(dsi, bl_lvl);
-
-	if (rc < 0)
-		DSI_ERR("failed to update dcs backlight:%d\n", bl_lvl);
-=======
 #ifdef OPLUS_FEATURE_DISPLAY
 	oplus_panel_update_backlight(panel, dsi, bl_lvl);
 #endif /* OPLUS_FEATURE_DISPLAY */
->>>>>>> e51a2f5ac1 (display-drivers: Import changes from oneplus/sm8450_t_13.1.0_10pro)
 
 	if (unlikely(panel->bl_config.lp_mode))
 		dsi->mode_flags = mode_flags;

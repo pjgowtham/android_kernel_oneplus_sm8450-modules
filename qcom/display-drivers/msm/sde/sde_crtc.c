@@ -5076,7 +5076,6 @@ static int _sde_crtc_check_secure_state(struct drm_crtc *crtc,
 	return 0;
 }
 
-<<<<<<< HEAD
 bool sde_crtc_is_connector_fsc(struct sde_crtc_state *cstate)
 {
 	struct sde_connector *sde_conn;
@@ -5091,8 +5090,6 @@ bool sde_crtc_is_connector_fsc(struct sde_crtc_state *cstate)
 	}
 	return false;
 }
-=======
->>>>>>> e51a2f5ac1 (display-drivers: Import changes from oneplus/sm8450_t_13.1.0_10pro)
 
 static int _sde_crtc_check_get_pstates(struct drm_crtc *crtc,
 		struct drm_crtc_state *state,
