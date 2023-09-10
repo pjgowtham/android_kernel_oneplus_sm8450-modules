@@ -1247,11 +1247,18 @@
  *
  * </ini>
  */
+#ifndef OPLUS_BUG_STABILITY
+//Modify the maximum value of rx_wakelock_timeout to 250
 #define CFG_DP_RX_WAKELOCK_TIMEOUT \
 	CFG_INI_UINT("rx_wakelock_timeout", \
 	0, 100, 50, CFG_VALUE_OR_DEFAULT, \
 	"Amount of time to hold wakelock for RX unicast packets")
-
+#else /* OPLUS_BUG_STABILITY */
+#define CFG_DP_RX_WAKELOCK_TIMEOUT \
+	CFG_INI_UINT("rx_wakelock_timeout", \
+	0, 250, 50, CFG_VALUE_OR_DEFAULT, \
+	"Amount of time to hold wakelock for RX unicast packets")
+#endif /* OPLUS_BUG_STABILITY */
 /*
  * <ini>
  * num_dp_rx_threads - Control to set the number of dp rx threads

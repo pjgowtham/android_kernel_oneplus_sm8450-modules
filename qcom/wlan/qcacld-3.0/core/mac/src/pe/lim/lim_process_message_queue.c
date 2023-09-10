@@ -92,6 +92,8 @@ static void lim_process_sae_msg_sta(struct mac_context *mac,
 							eLIM_AUTH_SAE_TIMER);
 		lim_sae_auth_cleanup_retry(mac, session->vdev_id);
 		/* success */
+		#ifndef OPLUS_BUG_STABILITY
+		//deliver status code 33 from wlan driver to supplicant when SAE connection is refused
 		if (sae_msg->sae_status == IEEE80211_STATUS_SUCCESS)
 			lim_restore_from_auth_state(mac,
 						    eSIR_SME_SUCCESS,
@@ -101,6 +103,22 @@ static void lim_process_sae_msg_sta(struct mac_context *mac,
 			lim_restore_from_auth_state(mac, sae_msg->result_code,
 						    sae_msg->sae_status,
 						    session);
+		#else /* OPLUS_BUG_STABILITY */
+		if (sae_msg->sae_status == IEEE80211_STATUS_SUCCESS) {
+			lim_restore_from_auth_state(mac,
+						    eSIR_SME_SUCCESS,
+						    STATUS_SUCCESS,
+						    session);
+		} else if (sae_msg->sae_status == STATUS_DENIED_INSUFFICIENT_BANDWIDTH) {
+			lim_restore_from_auth_state(mac, sae_msg->result_code,
+						    STATUS_DENIED_INSUFFICIENT_BANDWIDTH,
+						    session);
+		} else {
+			lim_restore_from_auth_state(mac, sae_msg->result_code,
+						    STATUS_UNSPECIFIED_FAILURE,
+						    session);
+		}
+		#endif /* OPLUS_BUG_STABILITY */
 		break;
 	default:
 		/* SAE msg is received in unexpected state */

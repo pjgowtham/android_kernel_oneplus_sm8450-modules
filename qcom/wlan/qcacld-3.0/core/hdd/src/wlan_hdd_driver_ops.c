@@ -65,6 +65,11 @@ static qdf_atomic_t is_recovery_cleanup_done;
 /* firmware/host hang event data */
 static uint8_t g_fw_host_hang_event[QDF_HANG_EVENT_DATA_SIZE];
 
+#ifdef OPLUS_FEATURE_WIFI_OPLUSWFD
+extern void oplus_wfd_set_hdd_ctx(struct hdd_context *hdd_ctx);
+extern void oplus_register_oplus_wfd_wlan_ops_qcom(void);
+#endif
+
 /*
  * In BMI Phase we are only sending small chunk (256 bytes) of the FW image at
  * a time, and wait for the completion interrupt to start the next transfer.
@@ -638,6 +643,10 @@ static int __hdd_soc_probe(struct device *dev,
 	hdd_start_complete(0);
 	hdd_thermal_mitigation_register(hdd_ctx, dev);
 
+#ifdef OPLUS_FEATURE_WIFI_OPLUSWFD
+	oplus_wfd_set_hdd_ctx(hdd_ctx);
+	oplus_register_oplus_wfd_wlan_ops_qcom();
+#endif
 	errno = hdd_set_suspend_mode(hdd_ctx);
 	if (errno)
 		hdd_err("Failed to set suspend mode in PLD; errno:%d", errno);
@@ -822,6 +831,10 @@ static void __hdd_soc_remove(struct device *dev)
 
 	pr_info("%s: Removing driver v%s\n", WLAN_MODULE_NAME,
 		QWLAN_VERSIONSTR);
+
+#ifdef OPLUS_FEATURE_WIFI_OPLUSWFD
+	oplus_wfd_set_hdd_ctx(NULL);
+#endif
 
 	hif_ctx = cds_get_context(QDF_MODULE_ID_HIF);
 	if (hif_ctx) {

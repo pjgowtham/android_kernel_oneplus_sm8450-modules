@@ -13,17 +13,17 @@ M ?= $(shell pwd)
 
 ifeq ($(WLAN_ROOT),)
 KBUILD_OPTIONS += \
-    WLAN_ROOT=$(KERNEL_SRC)/$(M)/../.qca6490 \
+    WLAN_ROOT=$(KERNEL_SRC)/$(M) \
     WLAN_COMMON_ROOT=cmn \
-    WLAN_COMMON_INC=$(KERNEL_SRC)/$(M)/../cmn \
+    WLAN_COMMON_INC=$(KERNEL_SRC)/$(M)/cmn \
     WLAN_FW_API=$(KERNEL_SRC)/$(M)/../fw-api \
     CONFIG_QCA_CLD_WLAN=m \
     CONFIG_CNSS_QCA6490=y \
     WLAN_PROFILE=qca6490 \
-    DYNAMIC_SINGLE_CHIP=qca6490 \
+    DYNAMIC_SINGLE_CHIP= \
     MODNAME=qca_cld3_qca6490 \
     DEVNAME=qca6490 \
-    BOARD_PLATFORM=waipio \
+    BOARD_PLATFORM=taro \
     WLAN_CTRL_NAME=wlan
 endif
 

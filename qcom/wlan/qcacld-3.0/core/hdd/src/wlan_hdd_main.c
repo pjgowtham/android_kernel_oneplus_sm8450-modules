@@ -13654,6 +13654,7 @@ struct hdd_context *hdd_context_create(struct device *dev)
 			WLAN_INI_FILE, status);
 		/* Assert if failed to parse at least one INI parameter */
 		QDF_BUG(status != QDF_STATUS_E_INVAL);
+
 		ret = qdf_status_to_os_return(status);
 		goto err_free_config;
 	}
@@ -14573,6 +14574,16 @@ static int hdd_initialize_mac_address(struct hdd_context *hdd_ctx)
 
 	/* Use fw provided MAC */
 	if (!qdf_is_macaddr_zero(&hdd_ctx->hw_macaddr)) {
+		#ifdef OPLUS_FEATURE_WIFI_MAC
+		if (hdd_ctx->hw_macaddr.bytes[0] & 0x01) {
+			uint8_t opbytes[QDF_MAC_ADDR_SIZE];
+			int8_t ii;
+			for (ii = 0; ii < QDF_MAC_ADDR_SIZE; ++ii) {
+				opbytes[ii] = hdd_ctx->hw_macaddr.bytes[QDF_MAC_ADDR_SIZE - 1 - ii];
+			}
+			qdf_mem_copy(hdd_ctx->hw_macaddr.bytes, opbytes, QDF_MAC_ADDR_SIZE);
+		}
+		#endif /* OPLUS_FEATURE_WIFI_MAC */
 		hdd_update_macaddr(hdd_ctx, hdd_ctx->hw_macaddr, false);
 		update_mac_addr_to_fw = false;
 		return 0;
@@ -17805,7 +17816,7 @@ static ssize_t wlan_hdd_state_ctrl_param_write(struct file *filp,
 	}
 
 	if (strncmp(buf, wlan_on_str, strlen(wlan_on_str)) == 0) {
-		hdd_info("Wifi Turning On from UI\n");
+		pr_info("Wifi Turning On from UI\n");
 		turning_on = true;
 	}
 
@@ -18871,7 +18882,6 @@ int hdd_driver_load(void)
 
 	hdd_debug("%s: driver loaded", WLAN_MODULE_NAME);
 	hdd_place_marker(NULL, "DRIVER LOADED", NULL);
-
 	return 0;
 
 unregister_driver:
