@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -51,7 +51,6 @@
 #define DEFAULT_SBUF_HEADROOM	20
 #define DEFAULT_UBWC_MALSIZE	0
 #define DEFAULT_UBWC_SWIZZLE	0
-#define DEFAULT_HIGHEST_BANK_BIT	0x2
 
 #define DEFAULT_MAXLINEWIDTH	4096
 
@@ -407,130 +406,6 @@ static const u32 sde_hw_rotator_v4_outpixfmts[] = {
 	SDE_PIX_FMT_BGRX_1010102_TILE,
 	SDE_PIX_FMT_ABGR_2101010_TILE,
 	SDE_PIX_FMT_XBGR_2101010_TILE,
-};
-
-static const u32 sde_hw_rotator_v5_inpixfmts[] = {
-	SDE_PIX_FMT_XRGB_8888,
-	SDE_PIX_FMT_ARGB_8888,
-	SDE_PIX_FMT_ABGR_8888,
-	SDE_PIX_FMT_RGBA_8888,
-	SDE_PIX_FMT_BGRA_8888,
-	SDE_PIX_FMT_RGBX_8888,
-	SDE_PIX_FMT_BGRX_8888,
-	SDE_PIX_FMT_XBGR_8888,
-	SDE_PIX_FMT_RGBA_5551,
-	SDE_PIX_FMT_ARGB_1555,
-	SDE_PIX_FMT_ABGR_1555,
-	SDE_PIX_FMT_BGRA_5551,
-	SDE_PIX_FMT_BGRX_5551,
-	SDE_PIX_FMT_RGBX_5551,
-	SDE_PIX_FMT_XBGR_1555,
-	SDE_PIX_FMT_XRGB_1555,
-	SDE_PIX_FMT_ARGB_4444,
-	SDE_PIX_FMT_RGBA_4444,
-	SDE_PIX_FMT_BGRA_4444,
-	SDE_PIX_FMT_ABGR_4444,
-	SDE_PIX_FMT_RGBX_4444,
-	SDE_PIX_FMT_XRGB_4444,
-	SDE_PIX_FMT_BGRX_4444,
-	SDE_PIX_FMT_XBGR_4444,
-	SDE_PIX_FMT_RGB_888,
-	SDE_PIX_FMT_BGR_888,
-	SDE_PIX_FMT_RGB_565,
-	SDE_PIX_FMT_BGR_565,
-	SDE_PIX_FMT_Y_CB_CR_H2V2,
-	SDE_PIX_FMT_Y_CR_CB_H2V2,
-	/*SDE_PIX_FMT_Y_CR_CB_GH2V2*/
-	SDE_PIX_FMT_Y_CBCR_H2V2,
-	SDE_PIX_FMT_Y_CRCB_H2V2,
-	/*SDE_PIX_FMT_Y_CBCR_H1V2*/
-	/*SDE_PIX_FMT_Y_CRCB_H1V2*/
-	/*SDE_PIX_FMT_Y_CBCR_H2V1*/
-	/*SDE_PIX_FMT_Y_CRCB_H2V1*/
-	/*SDE_PIX_FMT_YCBYCR_H2V1*/
-	SDE_PIX_FMT_Y_CBCR_H2V2_VENUS,
-	SDE_PIX_FMT_Y_CRCB_H2V2_VENUS,
-	SDE_PIX_FMT_RGBA_8888_UBWC,
-	/*SDE_PIX_FMT_RGBX_8888_UBWC*/
-	SDE_PIX_FMT_RGB_565_UBWC,
-	SDE_PIX_FMT_Y_CBCR_H2V2_UBWC,
-	SDE_PIX_FMT_RGBA_1010102,
-	SDE_PIX_FMT_RGBX_1010102,
-	SDE_PIX_FMT_ARGB_2101010,
-	SDE_PIX_FMT_XRGB_2101010,
-	SDE_PIX_FMT_BGRA_1010102,
-	SDE_PIX_FMT_BGRX_1010102,
-	SDE_PIX_FMT_ABGR_2101010,
-	SDE_PIX_FMT_XBGR_2101010,
-	SDE_PIX_FMT_RGBA_1010102_UBWC,
-	/*SDE_PIX_FMT_RGBX_1010102_UBWC*/
-	SDE_PIX_FMT_Y_CBCR_H2V2_P010,
-	SDE_PIX_FMT_Y_CBCR_H2V2_P010_VENUS,
-	/*SDE_PIX_FMT_Y_CBCR_H2V2_TP10*/
-	SDE_PIX_FMT_Y_CBCR_H2V2_TP10_UBWC,
-	SDE_PIX_FMT_Y_CBCR_H2V2_P010_UBWC,
-};
-
-static const u32 sde_hw_rotator_v5_outpixfmts[] = {
-
-	SDE_PIX_FMT_XRGB_8888,
-	SDE_PIX_FMT_ARGB_8888,
-	SDE_PIX_FMT_ABGR_8888,
-	SDE_PIX_FMT_RGBA_8888,
-	SDE_PIX_FMT_BGRA_8888,
-	SDE_PIX_FMT_RGBX_8888,
-	SDE_PIX_FMT_BGRX_8888,
-	SDE_PIX_FMT_XBGR_8888,
-	SDE_PIX_FMT_RGBA_5551,
-	SDE_PIX_FMT_ARGB_1555,
-	SDE_PIX_FMT_ABGR_1555,
-	SDE_PIX_FMT_BGRA_5551,
-	SDE_PIX_FMT_BGRX_5551,
-	SDE_PIX_FMT_RGBX_5551,
-	SDE_PIX_FMT_XBGR_1555,
-	SDE_PIX_FMT_XRGB_1555,
-	SDE_PIX_FMT_ARGB_4444,
-	SDE_PIX_FMT_RGBA_4444,
-	SDE_PIX_FMT_BGRA_4444,
-	SDE_PIX_FMT_ABGR_4444,
-	SDE_PIX_FMT_RGBX_4444,
-	SDE_PIX_FMT_XRGB_4444,
-	SDE_PIX_FMT_BGRX_4444,
-	SDE_PIX_FMT_XBGR_4444,
-	SDE_PIX_FMT_RGB_888,
-	SDE_PIX_FMT_BGR_888,
-	SDE_PIX_FMT_RGB_565,
-	SDE_PIX_FMT_BGR_565,
-	SDE_PIX_FMT_Y_CB_CR_H2V2,
-	SDE_PIX_FMT_Y_CR_CB_H2V2,
-	/*SDE_PIX_FMT_Y_CR_CB_GH2V2*/
-	SDE_PIX_FMT_Y_CBCR_H2V2,
-	SDE_PIX_FMT_Y_CRCB_H2V2,
-	/*SDE_PIX_FMT_Y_CBCR_H1V2*/
-	/*SDE_PIX_FMT_Y_CRCB_H1V2*/
-	/*SDE_PIX_FMT_Y_CBCR_H2V1*/
-	/*SDE_PIX_FMT_Y_CRCB_H2V1*/
-	/*SDE_PIX_FMT_YCBYCR_H2V1*/
-	SDE_PIX_FMT_Y_CBCR_H2V2_VENUS,
-	SDE_PIX_FMT_Y_CRCB_H2V2_VENUS,
-	/*SDE_PIX_FMT_RGBA_8888_UBWC*/
-	/*SDE_PIX_FMT_RGBX_8888_UBWC*/
-	/*SDE_PIX_FMT_RGB_565_UBWC*/
-	/*SDE_PIX_FMT_Y_CBCR_H2V2_UBWC*/
-	SDE_PIX_FMT_RGBA_1010102,
-	SDE_PIX_FMT_RGBX_1010102,
-	SDE_PIX_FMT_ARGB_2101010,
-	SDE_PIX_FMT_XRGB_2101010,
-	SDE_PIX_FMT_BGRA_1010102,
-	SDE_PIX_FMT_BGRX_1010102,
-	SDE_PIX_FMT_ABGR_2101010,
-	SDE_PIX_FMT_XBGR_2101010,
-	/*SDE_PIX_FMT_RGBA_1010102_UBWC*/
-	SDE_PIX_FMT_Y_CBCR_H2V2_P010,
-	SDE_PIX_FMT_Y_CBCR_H2V2_P010_VENUS,
-	/*SDE_PIX_FMT_Y_CBCR_H2V2_TP10*/
-	/*SDE_PIX_FMT_Y_CBCR_H2V2_TP10_UBWC*/
-	/*SDE_PIX_FMT_Y_CBCR_H2V2_P010_UBWC*/
 };
 
 static const u32 sde_hw_rotator_v4_inpixfmts_sbuf[] = {
@@ -3649,13 +3524,13 @@ static int sde_rotator_hw_rev_init(struct sde_hw_rotator *rot)
 		set_bit(SDE_CAPS_PARTIALWR,  mdata->sde_caps_map);
 		set_bit(SDE_CAPS_HW_TIMESTAMP, mdata->sde_caps_map);
 		rot->inpixfmts[SDE_ROTATOR_MODE_OFFLINE] =
-				sde_hw_rotator_v5_inpixfmts;
+				sde_hw_rotator_v4_inpixfmts;
 		rot->num_inpixfmt[SDE_ROTATOR_MODE_OFFLINE] =
-				ARRAY_SIZE(sde_hw_rotator_v5_inpixfmts);
+				ARRAY_SIZE(sde_hw_rotator_v4_inpixfmts);
 		rot->outpixfmts[SDE_ROTATOR_MODE_OFFLINE] =
-				sde_hw_rotator_v5_outpixfmts;
+				sde_hw_rotator_v4_outpixfmts;
 		rot->num_outpixfmt[SDE_ROTATOR_MODE_OFFLINE] =
-				ARRAY_SIZE(sde_hw_rotator_v5_outpixfmts);
+				ARRAY_SIZE(sde_hw_rotator_v4_outpixfmts);
 		rot->downscale_caps =
 			"LINEAR/1.5/2/4/8/16/32/64 TILE/1.5/2/4 TP10/1.5/2";
 	} else {
@@ -4060,9 +3935,8 @@ static void sde_hw_rotator_dump_status(struct sde_rot_mgr *mgr)
 static int sde_hw_rotator_parse_dt(struct sde_hw_rotator *hw_data,
 		struct platform_device *dev)
 {
-	int i, len = 0, ret = 0;
+	int ret = 0;
 	u32 data;
-	u32 ddr_type;
 
 	if (!hw_data || !dev)
 		return -EINVAL;
@@ -4081,20 +3955,15 @@ static int sde_hw_rotator_parse_dt(struct sde_hw_rotator *hw_data,
 		hw_data->mode = ROT_REGDMA_OFF;
 	}
 
-	hw_data->highest_bank = DEFAULT_HIGHEST_BANK_BIT;
-
-	len = sde_mdp_parse_dt_prop_len(dev, "qcom,mdss-highest-bank-bit");
-	if (len > 0) {
-		for (i = 0; i < len; i = i + 2) {
-			of_property_read_u32_index(dev->dev.of_node,
-					"qcom,mdss-highest-bank-bit", i, &ddr_type);
-			if (!ddr_type || (of_fdt_get_ddrtype() == ddr_type)) {
-				of_property_read_u32_index(dev->dev.of_node,
-						"qcom,mdss-highest-bank-bit", i+1, &data);
-				SDEROT_DBG("set highest bank bit to %d\n", data);
-				hw_data->highest_bank = data;
-			}
-		}
+	ret = of_property_read_u32(dev->dev.of_node,
+			"qcom,mdss-highest-bank-bit", &data);
+	if (ret) {
+		SDEROT_DBG("default to A5X bank\n");
+		ret = 0;
+		hw_data->highest_bank = 2;
+	} else {
+		SDEROT_DBG("set highest bank bit to %d\n", data);
+		hw_data->highest_bank = data;
 	}
 
 	ret = of_property_read_u32(dev->dev.of_node,

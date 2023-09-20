@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -419,10 +419,8 @@ static void sde_encoder_phys_wb_setup_fb(struct sde_encoder_phys *phys_enc,
 			out_width = ds_srcw;
 			out_height = ds_srch;
 		} else {
-			out_width = GET_MODE_WIDTH(
-				sde_crtc_is_connector_fsc(cstate), mode);
-			out_height = GET_MODE_HEIGHT(
-				sde_crtc_is_connector_fsc(cstate), mode);
+			out_width = mode->hdisplay;
+			out_height = mode->vdisplay;
 		}
 
 		if (cstate->user_roi_list.num_rects) {
@@ -521,13 +519,6 @@ static void _sde_encoder_phys_wb_setup_cwb(struct sde_encoder_phys *phys_enc,
 
 	if (!hw_pp || !hw_ctl || !hw_wb || hw_pp->idx >= PINGPONG_MAX) {
 		SDE_ERROR("invalid hw resources - return\n");
-		return;
-	}
-
-	if (crtc->num_mixers > MAX_CWB_PER_CTL_V1) {
-		SDE_ERROR("[enc:%d wb:%d] %d LM %d CWB case not supported\n",
-				DRMID(phys_enc->parent), WBID(wb_enc),
-				crtc->num_mixers, MAX_CWB_PER_CTL_V1);
 		return;
 	}
 
@@ -696,19 +687,13 @@ static int _sde_enc_phys_wb_validate_cwb(struct sde_encoder_phys *phys_enc,
 	const struct sde_format *fmt;
 	int data_pt;
 	int ds_in_use = false;
-	int i = 0, is_fsc = 0;
-	int num_lm, ret = 0;
+	int i = 0;
+	int ret = 0;
 
 	fb = sde_wb_connector_state_get_output_fb(conn_state);
 	if (!fb) {
 		SDE_DEBUG("no output framebuffer\n");
 		return 0;
-	}
-
-	num_lm = sde_crtc_get_num_datapath(crtc_state->crtc, conn_state->connector, crtc_state);
-	if (num_lm > MAX_CWB_PER_CTL_V1) {
-		SDE_ERROR("%d LM %d CWB case not supported\n", num_lm, MAX_CWB_PER_CTL_V1);
-		return -EINVAL;
 	}
 
 	fmt = sde_get_sde_format_ext(fb->format->format, fb->modifier);
@@ -747,8 +732,6 @@ static int _sde_enc_phys_wb_validate_cwb(struct sde_encoder_phys *phys_enc,
 		return -EINVAL;
 	}
 
-	is_fsc = sde_connector_get_property(conn_state, CONNECTOR_PROP_WB_FSC_MODE);
-
 	/* 1) No DS case: same restrictions for LM & DSSPP tap point
 	 *	a) wb-roi should be inside FB
 	 *	b) mode resolution & wb-roi should be same
@@ -771,8 +754,8 @@ static int _sde_enc_phys_wb_validate_cwb(struct sde_encoder_phys *phys_enc,
 		out_width = ds_srcw;
 		out_height = ds_srch;
 	} else {
-		out_width = GET_MODE_WIDTH(is_fsc, mode);
-		out_height = GET_MODE_HEIGHT(is_fsc, mode);
+		out_width = mode->hdisplay;
+		out_height = mode->vdisplay;
 	}
 
 	if (SDE_FORMAT_IS_YUV(fmt) && ((wb_roi.w != out_width) || (wb_roi.h != out_height))) {
@@ -847,7 +830,7 @@ static int sde_encoder_phys_wb_atomic_check(
 	const struct sde_format *fmt;
 	struct sde_rect wb_roi;
 	const struct drm_display_mode *mode = &crtc_state->mode;
-	int rc, out_width = 0, out_height = 0;
+	int rc;
 	bool clone_mode_curr = false;
 
 	SDE_DEBUG("[atomic_check:%d,\"%s\",%d,%d]\n",
@@ -936,17 +919,14 @@ static int sde_encoder_phys_wb_atomic_check(
 		return rc;
 	}
 
-	out_width = GET_MODE_WIDTH(sde_crtc_is_connector_fsc(cstate), mode);
-	out_height = GET_MODE_HEIGHT(sde_crtc_is_connector_fsc(cstate), mode);
-
 	if (wb_roi.w && wb_roi.h) {
-		if (wb_roi.w != out_width) {
+		if (wb_roi.w != mode->hdisplay) {
 			SDE_ERROR("invalid roi w=%d, mode w=%d\n", wb_roi.w,
-					out_width);
+					mode->hdisplay);
 			return -EINVAL;
-		} else if (wb_roi.h != out_height) {
+		} else if (wb_roi.h != mode->vdisplay) {
 			SDE_ERROR("invalid roi h=%d, mode h=%d\n", wb_roi.h,
-					out_height);
+					mode->vdisplay);
 			return -EINVAL;
 		} else if (wb_roi.x + wb_roi.w > fb->width) {
 			SDE_ERROR("invalid roi x=%d, w=%d, fb w=%d\n",
@@ -967,13 +947,13 @@ static int sde_encoder_phys_wb_atomic_check(
 			SDE_ERROR("invalid roi x=%d, y=%d\n",
 					wb_roi.x, wb_roi.y);
 			return -EINVAL;
-		} else if (fb->width != out_width) {
+		} else if (fb->width != mode->hdisplay) {
 			SDE_ERROR("invalid fb w=%d, mode w=%d\n", fb->width,
-					out_width);
+					mode->hdisplay);
 			return -EINVAL;
-		} else if (fb->height != out_height) {
+		} else if (fb->height != mode->vdisplay) {
 			SDE_ERROR("invalid fb h=%d, mode h=%d\n", fb->height,
-					out_height);
+					mode->vdisplay);
 			return -EINVAL;
 		} else if (fb->width > SDE_WB_MAX_LINEWIDTH(fmt, wb_cfg)) {
 			SDE_ERROR("invalid fb ubwc=%d w=%d, maxlinewidth=%u\n",
@@ -1505,6 +1485,7 @@ static void _sde_encoder_phys_wb_reset_state(
 	wb_enc->crtc = NULL;
 	phys_enc->hw_cdm = NULL;
 	phys_enc->hw_ctl = NULL;
+	phys_enc->in_clone_mode = false;
 }
 
 static int _sde_encoder_phys_wb_wait_for_commit_done(
@@ -1531,7 +1512,7 @@ static int _sde_encoder_phys_wb_wait_for_commit_done(
 		goto skip_wait;
 
 	/* signal completion if commit with no framebuffer */
-	if (!is_disable && !wb_enc->wb_fb) {
+	if (!wb_enc->wb_fb) {
 		SDE_DEBUG("no output framebuffer\n");
 		_sde_encoder_phys_wb_frame_done_helper(wb_enc, false);
 	}
