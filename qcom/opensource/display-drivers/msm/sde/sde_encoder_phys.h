@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -23,6 +23,7 @@
 #define SDE_ENCODER_NAME_MAX	16
 
 /* wait for at most 2 vsync for lowest refresh rate (24hz) */
+
 #define DEFAULT_KICKOFF_TIMEOUT_MS		84
 
 #define MAX_TE_PROFILE_COUNT		5
@@ -347,6 +348,18 @@ struct sde_encoder_phys {
 	int vfp_cached;
 	enum frame_trigger_mode_type frame_trigger_mode;
 	bool recovered;
+
+#ifdef OPLUS_FEATURE_DISPLAY
+	//2 : transferring (wr_ptr_irq)
+	//1 : transfer finish (pp_tx_done_irq)
+	//0 : panel read finish (rd_ptr_irq)
+	//disable qsync or wait vblank to avoid tearing
+	atomic_t frame_state;
+	//threshold for current frame
+	u32 current_sync_threshold_start;
+	//threshold for current qsync mode
+	u32 qsync_sync_threshold_start;
+#endif /* OPLUS_FEATURE_DISPLAY */
 };
 
 static inline int sde_encoder_phys_inc_pending(struct sde_encoder_phys *phys)
@@ -549,6 +562,15 @@ void sde_encoder_phys_setup_cdm(struct sde_encoder_phys *phys_enc,
 void sde_encoder_helper_get_pp_line_count(struct drm_encoder *drm_enc,
 		struct sde_hw_pp_vsync_info *info);
 
+#if defined(CONFIG_PXLW_IRIS)
+/**
+ * sde_encoder_get_transfer_time - get the mdp transfer time in usecs
+ * @drm_enc: Pointer to drm encoder structure
+ * @transfer_time_us: Pointer to store the output value
+ */
+void sde_encoder_get_transfer_time(struct drm_encoder *drm_enc,
+		u32 *transfer_time_us);
+#endif
 /**
  * sde_encoder_helper_get_kickoff_timeout_ms- get the kickoff timeout value based on fps
  * @drm_enc: Pointer to drm encoder structure

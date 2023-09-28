@@ -31,6 +31,31 @@
 								##__VA_ARGS__)
 #define DSI_DEBUG(fmt, ...)	DRM_DEV_DEBUG(NULL, "[msm-dsi-debug]: "fmt, \
 								##__VA_ARGS__)
+
+#ifdef OPLUS_FEATURE_DISPLAY
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+#define DSI_MM_ERR(fmt, ...)	\
+	do { \
+			DRM_DEV_ERROR(NULL, "[msm-dsi-error]: " fmt, ##__VA_ARGS__); \
+			mm_fb_display_kevent_named(MM_FB_KEY_RATELIMIT_1H, fmt, ##__VA_ARGS__); \
+		} while(0)
+#define DSI_MM_WARN(fmt, ...)	\
+	do { \
+			DRM_WARN("[msm-dsi-warn]: " fmt, ##__VA_ARGS__); \
+			mm_fb_display_kevent_named(MM_FB_KEY_RATELIMIT_1H, fmt, ##__VA_ARGS__); \
+		} while(0)
+#define DSI_MM_INFO(fmt, ...)	\
+	do { \
+			DRM_DEV_INFO(NULL, "[msm-dsi-info]: " fmt, ##__VA_ARGS__); \
+			mm_fb_display_kevent_named(MM_FB_KEY_RATELIMIT_1H, fmt, ##__VA_ARGS__); \
+		} while(0)
+#define DSI_MM_DEBUG(fmt, ...)	\
+	do { \
+			DRM_DEV_DEBUG(NULL, "[msm-dsi-debug]: " fmt, ##__VA_ARGS__); \
+			mm_fb_display_kevent_named(MM_FB_KEY_RATELIMIT_1H, fmt, ##__VA_ARGS__); \
+		} while(0)
+#endif /* OPLUS_FEATURE_DISPLAY */
+
 /**
  * enum dsi_pixel_format - DSI pixel formats
  * @DSI_PIXEL_FORMAT_RGB565:
@@ -296,8 +321,102 @@ enum dsi_cmd_set_type {
 	DSI_CMD_SET_POST_TIMING_SWITCH,
 	DSI_CMD_SET_QSYNC_ON,
 	DSI_CMD_SET_QSYNC_OFF,
+#ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
+	DSI_CMD_HBM_ON,
+	DSI_CMD_HBM_OFF,
+	DSI_CMD_AOR_ON,
+	DSI_CMD_AOR_OFF,
+	DSI_CMD_SET_NOLP_HPWM,
+	DSI_CMD_AOD_HIGH_LIGHT_MODE,
+	DSI_CMD_AOD_LOW_LIGHT_MODE,
+	DSI_CMD_ULTRA_LOW_POWER_AOD_ON,
+	DSI_CMD_ULTRA_LOW_POWER_AOD_OFF,
+#endif /* OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT */
+#ifdef OPLUS_FEATURE_DISPLAY
+	DSI_CMD_POST_ON_BACKLIGHT,
+	DSI_CMD_SEED_MODE0,
+	DSI_CMD_SEED_MODE1,
+	DSI_CMD_SEED_MODE2,
+	DSI_CMD_SEED_MODE3,
+	DSI_CMD_SEED_MODE4,
+	DSI_CMD_SEED_OFF,
+	DSI_CMD_SPR_MODE0,
+	DSI_CMD_SPR_MODE1,
+	DSI_CMD_SPR_MODE2,
+	DSI_CMD_DATA_DIMMING_ON,
+	DSI_CMD_DATA_DIMMING_OFF,
+	DSI_CMD_OSC_CLK_MODEO0,
+	DSI_CMD_OSC_CLK_MODEO1,
+	DSI_CMD_FFC_MODE0,
+	DSI_CMD_FFC_MODE1,
+	DSI_CMD_FFC_MODE2,
+	DSI_CMD_FFC_MODE3,
+	DSI_CMD_SET_PANEL_ID1,
+	DSI_CMD_READ_SAMSUNG_PANEL_REGISTER_ON,
+	DSI_CMD_READ_SAMSUNG_PANEL_REGISTER_OFF,
+	DSI_CMD_LOADING_EFFECT_MODE1,
+	DSI_CMD_LOADING_EFFECT_MODE2,
+	DSI_CMD_LOADING_EFFECT_OFF,
+	DSI_CMD_HBM_ENTER_SWITCH,
+	DSI_CMD_HBM_EXIT_SWITCH,
+	DSI_CMD_SKIPFRAME_DBV,
+	DSI_CMD_TEMPERATURE_COMPENSATION,
+	DSI_CMD_READ_COMPENSATION_REG1,
+	DSI_CMD_RESET_SCANLINE,
+	DSI_CMD_RECOVERY_SCANLINE,
+	DSI_CMD_SWITCH_AVDD,
+	DSI_CMD_SWITCH_ELVSS,
+	DSI_CMD_HIGH_FRE_120,
+	DSI_CMD_LOW_FRE_120,
+	DSI_CMD_SET_ON_HIGH_FRE,
+	DSI_CMD_SET_TIMING_SWITCH_HIGH_FRE,
+	DSI_CMD_SET_TIMING_SWITCH_120,
+	DSI_CMD_SET_LPWM_PULSE,
+	DSI_CMD_SET_HPWM_PULSE,
+#endif /* OPLUS_FEATURE_DISPLAY */
+#ifdef OPLUS_FEATURE_DISPLAY
+	DSI_CMD_QSYNC_MIN_FPS_0,
+	DSI_CMD_QSYNC_MIN_FPS_1,
+	DSI_CMD_QSYNC_MIN_FPS_2,
+	DSI_CMD_QSYNC_MIN_FPS_3,
+	DSI_CMD_QSYNC_MIN_FPS_4,
+	DSI_CMD_QSYNC_MIN_FPS_5,
+	DSI_CMD_QSYNC_MIN_FPS_6,
+	DSI_CMD_QSYNC_MIN_FPS_7,
+	DSI_CMD_QSYNC_MIN_FPS_8,
+	DSI_CMD_QSYNC_MIN_FPS_9,
+	DSI_CMD_FAKEFRAME,
+	DSI_CMD_ADFR_PRE_SWITCH,
+	DSI_CMD_DLY_ON,
+	DSI_CMD_DLY_OFF,
+	DSI_CMD_CABC_OFF,
+	DSI_CMD_CABC_UI,
+	DSI_CMD_CABC_IMAGE,
+	DSI_CMD_CABC_VIDEO,
+	DSI_CMD_ESD_SWITCH_PAGE,
+	DSI_CMD_CRC_CHECK_REG1,
+	DSI_CMD_CRC_CHECK_REG2,
+	DSI_CMD_CRC_CHECK_REG3,
+	DSI_CMD_CRC_CHECK_REG4,
+	DSI_CMD_CRC_CHECK_REG5,
+	DSI_CMD_CRC_CHECK_REG6,
+	DSI_CMD_PANEL_DATE_SWITCH,
+	DSI_CMD_PANEL_INFO_SWITCH_PAGE,
+	DSI_CMD_DEFAULT_SWITCH_PAGE,
+	DSI_CMD_SET_BACKLIGHT,
+	DSI_CMD_SET_BL_DEMURAL1,
+	DSI_CMD_SET_BL_DEMURAL2,
+	DSI_CMD_SET_BL_DEMURAL3,
+	DSI_CMD_SET_BL_DEMURAL4,
+	DSI_CMD_SET_BL_DEMURAL5,
+	DSI_CMD_SET_BL_DEMURAL6,
+#endif /* OPLUS_FEATURE_DISPLAY */
 	DSI_CMD_SET_MAX
 };
+
+#ifdef OPLUS_FEATURE_DISPLAY
+#define DSI_CMD_QSYNC_MIN_FPS_COUNTS 10
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 /**
  * enum dsi_cmd_set_state - command set state
@@ -512,6 +631,7 @@ struct dsi_host_common_cfg {
 	enum dsi_te_mode te_mode;
 	enum dsi_trigger_type mdp_cmd_trigger;
 	enum dsi_trigger_type dma_cmd_trigger;
+	enum dsi_trigger_type force_dma_cmd_trigger;
 	u32 cmd_trigger_stream;
 	enum dsi_color_swap_mode swap_mode;
 	bool bit_swap_red;
@@ -655,8 +775,35 @@ struct dsi_display_mode_priv_info {
 	struct msm_ratio pclk_scale;
 	struct msm_roi_caps roi_caps;
 	bool widebus_support;
+
+#ifdef OPLUS_FEATURE_DISPLAY
+	u32 qsync_min_fps_sets_size;
+	u32 qsync_min_fps_sets[DSI_CMD_QSYNC_MIN_FPS_COUNTS];
+	u32 current_qsync_mode;
+	// fakeframe_config: 0st Bit:firsttime 1st Bit:secondtime, 1:enable 0:disable
+	// for example, 3 mean both first and second time should send fake frame
+	u32 fakeframe_config;
+	u32 deferred_fakeframe_time;
+#endif /* OPLUS_FEATURE_DISPLAY */
 	u64 allowed_mode_switch;
 	bool disable_rsc_solver;
+#ifdef OPLUS_FEATURE_DISPLAY
+	/* Add for apollo */
+	/* width & period of vsync may not conform to refresh rate
+	 * add variable to store width & period of vsync
+	 */
+	u32 vsync_width;
+	u32 vsync_period;
+#endif /* OPLUS_FEATURE_DISPLAY */
+#ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
+	bool oplus_ofp_need_to_filter_backlight_dim_icon;
+	bool oplus_ofp_need_to_separate_backlight;
+	bool oplus_ofp_need_to_sync_data_in_aod_unlocking;
+	unsigned int oplus_ofp_backlight_on_period;
+	unsigned int oplus_ofp_hbm_on_period;
+	unsigned int oplus_ofp_aod_off_insert_black_frame;
+	unsigned int oplus_ofp_aod_off_black_frame_total_time;
+#endif /* OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT */
 };
 
 /**
@@ -673,10 +820,14 @@ struct dsi_display_mode {
 	struct dsi_mode_info timing;
 	u32 pixel_clk_khz;
 	u32 dsi_mode_flags;
+
 	u32 panel_mode_caps;
 	bool is_preferred;
 	u32 mode_idx;
 	struct dsi_display_mode_priv_info *priv_info;
+#ifdef OPLUS_FEATURE_DISPLAY
+	u32 vsync_source;
+#endif /* OPLUS_FEATURE_DISPLAY */
 };
 
 /**

@@ -19,6 +19,9 @@
 #define SDE_CONNECTOR_NAME_SIZE	16
 #define SDE_CONNECTOR_DHDR_MEMPOOL_MAX_SIZE	SZ_32
 #define MAX_CMD_RECEIVE_SIZE       256
+#if defined(CONFIG_PXLW_IRIS) || defined(CONFIG_PXLW_SOFT_IRIS)
+#define SDE_CONNECTOR_SYNC_DATA_NUM 3
+#endif
 
 struct sde_connector;
 struct sde_connector_state;
@@ -474,6 +477,16 @@ struct sde_connector_dyn_hdr_metadata {
 	bool dynamic_hdr_update;
 };
 
+#if defined(CONFIG_PXLW_IRIS) || defined(CONFIG_PXLW_SOFT_IRIS)
+struct sde_connector_sync_data {
+	bool panel_bl_dirty;
+	u32 panel_bl;
+	u32 bl_sync_dly;
+	/* wait (wait_vsync_flag - 1) periods of TE between send backlight and kickoff */
+	int wait_vsync_flag;
+};
+#endif
+
 /**
  * struct sde_connector - local sde connector structure
  * @base: Base drm connector structure
@@ -609,8 +622,44 @@ struct sde_connector {
 	u8 cmd_rx_buf[MAX_CMD_RECEIVE_SIZE];
 	int rx_len;
 
+#if defined(CONFIG_PXLW_IRIS) || defined(CONFIG_PXLW_SOFT_IRIS)
+	u32 bl_rd_index;
+	u32 bl_wr_index;
+	ktime_t rd_ptr_ktime;
+	spinlock_t bl_spinlock;
+	struct sde_connector_sync_data sync_data[SDE_CONNECTOR_SYNC_DATA_NUM];
+#endif
+
 	struct edid *cached_edid;
+
+#ifdef OPLUS_FEATURE_DISPLAY
+	/* indicate that whether the current frame backlight has been updated */
+	bool oplus_adfr_backlight_updated;
+	/* need qsync mode recovery after backlight status updated */
+	bool qsync_mode_recovery;
+	/* set timer to reset qsync after the backlight is no longer updated */
+	struct hrtimer qsync_mode_timer;
+	u32 qsync_dynamic_min_fps;
+	/* store the min fps value for next window setting */
+	u32 qsync_curr_dynamic_min_fps;
+	/* deferred min fps window setting status */
+	u32 qsync_deferred_window_status;
+	// Used to indicate whether to update panel backlight in crtc_commit
+	bool bl_need_sync;
+#endif /* OPLUS_FEATURE_DISPLAY */
 };
+
+#ifdef OPLUS_FEATURE_DISPLAY
+struct dc_apollo_pcc_sync {
+	wait_queue_head_t bk_wait;
+	int dc_pcc_updated;
+	__u32 pcc;
+	__u32 pcc_last;
+	__u32 pcc_current;
+	struct mutex lock;
+	int backlight_pending;
+};
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 /**
  * to_sde_connector - convert drm_connector pointer to sde connector pointer
@@ -657,6 +706,16 @@ struct sde_connector {
  * Returns: Current cached avr_step value for given connector
  */
 #define sde_connector_get_avr_step(C) ((C) ? to_sde_connector((C))->avr_step : 0)
+
+#ifdef OPLUS_FEATURE_DISPLAY
+/**
+ * sde_connector_get_qsync_dynamic_min_fps - get sde connector's qsync_dynamic_min_fps
+ * @C: Pointer to drm connector structure
+ * Returns: Current cached qsync_dynamic_min_fps for given connector
+ */
+#define sde_connector_get_qsync_dynamic_min_fps(C) \
+	((C) ? to_sde_connector((C))->qsync_dynamic_min_fps : 0)
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 /**
  * sde_connector_get_propinfo - get sde connector's property info pointer
@@ -1204,7 +1263,19 @@ int sde_connector_get_panel_vfp(struct drm_connector *connector,
  */
 int sde_connector_esd_status(struct drm_connector *connector);
 
+#ifdef OPLUS_FEATURE_DISPLAY
+int _sde_connector_update_bl_scale_(struct sde_connector *c_conn);
+#endif /* OPLUS_FEATURE_DISPLAY */
 const char *sde_conn_get_topology_name(struct drm_connector *conn,
 		struct msm_display_topology topology);
+
+#if defined(CONFIG_PXLW_IRIS) || defined(CONFIG_PXLW_SOFT_IRIS)
+/**
+ * sde_connector_update_panel_level - update panel level
+ * @connector: Pointer to sde connector structure
+ * Returns: Zero on success
+ */
+int sde_connector_update_panel_level(struct sde_connector *c_conn);
+#endif
 
 #endif /* _SDE_CONNECTOR_H_ */

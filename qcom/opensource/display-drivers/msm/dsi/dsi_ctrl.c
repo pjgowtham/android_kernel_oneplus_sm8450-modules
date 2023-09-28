@@ -22,6 +22,18 @@
 #include "dsi_panel.h"
 
 #include "sde_dbg.h"
+#if defined(CONFIG_PXLW_IRIS)
+#include "dsi_iris_api.h"
+#endif
+
+#ifdef OPLUS_FEATURE_DISPLAY
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+#include "../oplus/oplus_display_private_api.h"
+#endif /* OPLUS_FEATURE_DISPLAY */
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_THEIA)
+#include <soc/oplus/dfr/theia_send_event.h> /* for theia_send_event etc */
+#endif
 
 #define DSI_CTRL_DEFAULT_LABEL "MDSS DSI CTRL"
 
@@ -41,6 +53,15 @@
 		fmt, c->name, ##__VA_ARGS__)
 #define DSI_CTRL_WARN(c, fmt, ...)	DRM_WARN("[msm-dsi-warn]: %s: " fmt,\
 		c ? c->name : "inv", ##__VA_ARGS__)
+
+#ifdef OPLUS_FEATURE_DISPLAY
+#define DSI_CTRL_MM_ERR(c, fmt, ...) \
+	do { \
+		DRM_DEV_ERROR(NULL, "[msm-dsi-error]: %s: "\
+				fmt, c ? c->name : "inv", ##__VA_ARGS__); \
+		mm_fb_display_kevent_named(MM_FB_KEY_RATELIMIT_1H, fmt, ##__VA_ARGS__); \
+	} while(0)
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 struct dsi_ctrl_list_item {
 	struct dsi_ctrl *ctrl;
@@ -382,6 +403,13 @@ static void dsi_ctrl_dma_cmd_wait_for_done(struct dsi_ctrl *dsi_ctrl)
 	if (ret == 0 && !atomic_read(&dsi_ctrl->dma_irq_trig)) {
 		status = dsi_hw_ops.get_interrupt_status(&dsi_ctrl->hw);
 		if (status & mask) {
+#ifdef OPLUS_FEATURE_DISPLAY
+			DSI_CTRL_MM_ERR(dsi_ctrl, "DisplayDriverID@@416$$dma_tx done but irq not triggered, status=%X, mask=%X\n",
+					status, mask);
+#endif /* OPLUS_FEATURE_DISPLAY */
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_THEIA)
+			theia_send_event(THEIA_EVENT_PTR_TIMEOUT_BLACKSCREEN, THEIA_LOGINFO_KERNEL_LOG, current->pid, "dma_tx irq trigger error");
+#endif
 			status |= (DSI_CMD_MODE_DMA_DONE | DSI_BTA_DONE);
 			dsi_hw_ops.clear_interrupt_status(&dsi_ctrl->hw,
 					status);
@@ -392,6 +420,10 @@ static void dsi_ctrl_dma_cmd_wait_for_done(struct dsi_ctrl *dsi_ctrl)
 			SDE_EVT32(dsi_ctrl->cell_index, SDE_EVTLOG_ERROR);
 			DSI_CTRL_ERR(dsi_ctrl,
 					"Command transfer failed\n");
+#ifdef OPLUS_FEATURE_DISPLAY
+			DSI_CTRL_MM_ERR(dsi_ctrl, "DisplayDriverID@@401$$Command transfer failed, status=%X, mask=%X\n",
+					status, mask);
+#endif /* OPLUS_FEATURE_DISPLAY */
 		}
 		dsi_ctrl_disable_status_interrupt(dsi_ctrl,
 					DSI_SINT_CMD_MODE_DMA_DONE);
@@ -653,6 +685,10 @@ bool dsi_ctrl_validate_host_state(struct dsi_ctrl *dsi_ctrl)
 
 	return true;
 }
+
+#ifdef OPLUS_FEATURE_DISPLAY
+EXPORT_SYMBOL(dsi_ctrl_validate_host_state);
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 static void dsi_ctrl_update_state(struct dsi_ctrl *dsi_ctrl,
 				  enum dsi_ctrl_driver_ops op,
@@ -1144,6 +1180,12 @@ static int dsi_ctrl_enable_supplies(struct dsi_ctrl *dsi_ctrl, bool enable)
 		if (rc < 0) {
 			DSI_CTRL_ERR(dsi_ctrl,
 				"Power resource enable failed, rc=%d\n", rc);
+#ifdef OPLUS_FEATURE_DISPLAY
+			DSI_CTRL_MM_ERR(dsi_ctrl, "DisplayDriverID@@406$$Power resource enable failed, rc=%d\n", rc);
+#endif /* OPLUS_FEATURE_DISPLAY */
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_THEIA)
+			theia_send_event(THEIA_EVENT_HARDWARE_ERROR, THEIA_LOGINFO_KERNEL_LOG, current->pid, "Power resource enable failed");
+#endif
 			goto error;
 		}
 
@@ -1152,6 +1194,12 @@ static int dsi_ctrl_enable_supplies(struct dsi_ctrl *dsi_ctrl, bool enable)
 				&dsi_ctrl->pwr_info.host_pwr, true);
 			if (rc) {
 				DSI_CTRL_ERR(dsi_ctrl, "failed to enable host power regs\n");
+#ifdef OPLUS_FEATURE_DISPLAY
+				DSI_CTRL_MM_ERR(dsi_ctrl, "DisplayDriverID@@406$$failed to enable host power regs\n");
+#endif /* OPLUS_FEATURE_DISPLAY */
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_THEIA)
+				theia_send_event(THEIA_EVENT_HARDWARE_ERROR, THEIA_LOGINFO_KERNEL_LOG, current->pid, "failed to enable host power regs");
+#endif
 				goto error_get_sync;
 			}
 		}
@@ -1290,14 +1338,34 @@ int dsi_message_validate_tx_mode(struct dsi_ctrl *dsi_ctrl,
 			DSI_CTRL_ERR(dsi_ctrl, " Cannot transfer command,ops not defined\n");
 			return -ENOTSUPP;
 		}
+#if defined(CONFIG_PXLW_IRIS)
+		if (iris_is_chip_supported()) {
+			if ((cmd_len + 4) > IRIS_CMD_SIZE) {
+				DSI_CTRL_ERR(dsi_ctrl, "Cannot transfer,size is greater than %d\n"
+						, IRIS_CMD_SIZE);
+				return -ENOTSUPP;
+			}
+		} else {
+#endif
 		if ((cmd_len + 4) > SZ_4K) {
 			DSI_CTRL_ERR(dsi_ctrl, "Cannot transfer,size is greater than 4096\n");
 			return -ENOTSUPP;
 		}
+#if defined(CONFIG_PXLW_IRIS)
+		}
+#endif
 	}
 
 	if (*flags & DSI_CTRL_CMD_FETCH_MEMORY) {
 		if ((dsi_ctrl->cmd_len + cmd_len + 4) > SZ_4K) {
+#if defined(CONFIG_PXLW_IRIS)
+			if (iris_is_chip_supported()) {
+				if ((dsi_ctrl->cmd_len + cmd_len + 4) <= IRIS_CMD_SIZE)
+					return rc;
+				DSI_CTRL_ERR(dsi_ctrl, "Cannot transfer, size is greater than %d\n"
+						, IRIS_CMD_SIZE);
+			}
+#endif
 			DSI_CTRL_ERR(dsi_ctrl, "Cannot transfer,size is greater than 4096\n");
 			return -ENOTSUPP;
 		}
@@ -1315,6 +1383,16 @@ static void dsi_configure_command_scheduling(struct dsi_ctrl *dsi_ctrl,
 
 	line_no = dsi_ctrl->host_config.common_config.dma_sched_line;
 	window = dsi_ctrl->host_config.common_config.dma_sched_window;
+#if defined(CONFIG_PXLW_IRIS)
+	/*
+	 * adjust line no for video mode panel
+	 */
+	if ((dsi_ctrl->host_config.panel_mode == DSI_OP_VIDEO_MODE) &&
+		iris_is_chip_supported()) {
+		line_no = iris_schedule_line_no_get();
+		pr_debug("line_no: %d\n", line_no);
+	}
+#endif
 
 	SDE_EVT32(dsi_ctrl->cell_index, SDE_EVTLOG_FUNC_ENTRY, line_no, window);
 	/*
@@ -1428,6 +1506,10 @@ static void dsi_kickoff_msg_tx(struct dsi_ctrl *dsi_ctrl,
 
 	if (flags & DSI_CTRL_CMD_DEFER_TRIGGER) {
 		if (flags & DSI_CTRL_CMD_FETCH_MEMORY) {
+#if defined(CONFIG_PXLW_IRIS)
+			if (iris_is_chip_supported())
+				msm_gem_sync(dsi_ctrl->tx_cmd_buf);
+#endif
 			if (flags & DSI_CTRL_CMD_NON_EMBEDDED_MODE) {
 				dsi_hw_ops.kickoff_command_non_embedded_mode(
 							&dsi_ctrl->hw,
@@ -1496,6 +1578,40 @@ static void dsi_kickoff_msg_tx(struct dsi_ctrl *dsi_ctrl,
 	}
 }
 
+#ifdef OPLUS_FEATURE_DISPLAY
+static void print_cmd_desc(struct dsi_ctrl *dsi_ctrl, const struct mipi_dsi_msg *msg)
+{
+	char buf[512];
+	int len = 0;
+	size_t i;
+	char *tx_buf = (char*)msg->tx_buf;
+
+	memset(buf, 0, sizeof(buf));
+
+	/* Packet Info */
+	len += snprintf(buf, sizeof(buf) - len,  "%02X ", msg->type);
+	/* Last bit */
+	len += snprintf(buf + len, sizeof(buf) - len, "%02X ", (msg->flags & MIPI_DSI_MSG_LASTCOMMAND) ? 1 : 0);
+	len += snprintf(buf + len, sizeof(buf) - len, "%02X ", msg->channel);
+	len += snprintf(buf + len, sizeof(buf) - len, "%02X ", (unsigned int)msg->flags);
+	/* Delay */
+	len += snprintf(buf + len, sizeof(buf) - len, "%02X ", msg->wait_ms);
+	len += snprintf(buf + len, sizeof(buf) - len, "%02X %02X ", msg->tx_len >> 8, msg->tx_len & 0x00FF);
+
+	/* Packet Payload */
+	for (i = 0 ; i < msg->tx_len ; i++) {
+		len += snprintf(buf + len, sizeof(buf) - len, "%02X ", tx_buf[i]);
+		/* Break to prevent show too long command */
+		if (i > 160)
+			break;
+	}
+
+	//DSI_CTRL_ERR(dsi_ctrl, "%s\n", buf);
+	pr_err("kVRR: dsi %s\n", buf);
+}
+
+extern int oplus_dsi_log_type;
+#endif /* OPLUS_FEATURE_DISPLAY */
 static int dsi_message_tx(struct dsi_ctrl *dsi_ctrl, struct dsi_cmd_desc *cmd_desc)
 {
 	int rc = 0;
@@ -1511,7 +1627,14 @@ static int dsi_message_tx(struct dsi_ctrl *dsi_ctrl, struct dsi_cmd_desc *cmd_de
 
 	msg = &cmd_desc->msg;
 	flags = &cmd_desc->ctrl_flags;
+#ifdef OPLUS_FEATURE_DISPLAY
+	if (OPLUS_DEBUG_LOG_CMD & oplus_dsi_log_type)
+		print_cmd_desc(dsi_ctrl, msg);
+#endif /* OPLUS_FEATURE_DISPLAY */
 
+#if defined(CONFIG_PXLW_IRIS)
+	iris_dsi_ctrl_dump_desc_cmd(dsi_ctrl, msg);
+#endif
 	/* Validate the mode before sending the command */
 	rc = dsi_message_validate_tx_mode(dsi_ctrl, msg->tx_len, flags);
 	if (rc) {
@@ -1586,7 +1709,12 @@ static int dsi_message_tx(struct dsi_ctrl *dsi_ctrl, struct dsi_cmd_desc *cmd_de
 
 		cmdbuf = (u8 *)(dsi_ctrl->vaddr);
 
+#if defined(CONFIG_PXLW_IRIS)
+		if (!iris_is_chip_supported())
+			msm_gem_sync(dsi_ctrl->tx_cmd_buf);
+#else
 		msm_gem_sync(dsi_ctrl->tx_cmd_buf);
+#endif
 		for (cnt = 0; cnt < length; cnt++)
 			cmdbuf[dsi_ctrl->cmd_len + cnt] = buffer[cnt];
 
@@ -1823,6 +1951,10 @@ static int dsi_message_rx(struct dsi_ctrl *dsi_ctrl, struct dsi_cmd_desc *cmd_de
 
 	/* parse the data read from panel */
 	cmd = buff[header_offset];
+#if defined(CONFIG_PXLW_IRIS)
+	if (iris_is_chip_supported())
+		cmd &= 0x3F;
+#endif
 	switch (cmd) {
 	case MIPI_DSI_RX_ACKNOWLEDGE_AND_ERROR_REPORT:
 		DSI_CTRL_ERR(dsi_ctrl, "Rx ACK_ERROR 0x%x\n", cmd);
@@ -2708,6 +2840,11 @@ static bool dsi_ctrl_check_for_spurious_error_interrupts(
 			SDE_EVT32_IRQ(dsi_ctrl->cell_index,
 				      dsi_ctrl->error_interrupt_count,
 				      interrupt_threshold);
+#ifdef OPLUS_FEATURE_DISPLAY
+			if (get_eng_version() == AGING) {
+				SDE_DBG_DUMP_WQ(SDE_DBG_BUILT_IN_ALL, "panic");
+			}
+#endif /* OPLUS_FEATURE_DISPLAY */
 			return true;
 		}
 	} else {
@@ -2914,6 +3051,7 @@ static irqreturn_t dsi_ctrl_isr(int irq, void *ptr)
 static int _dsi_ctrl_setup_isr(struct dsi_ctrl *dsi_ctrl)
 {
 	int irq_num, rc;
+	uint32_t intr_idx;
 
 	if (!dsi_ctrl)
 		return -EINVAL;
@@ -2924,6 +3062,20 @@ static int _dsi_ctrl_setup_isr(struct dsi_ctrl *dsi_ctrl)
 	init_completion(&dsi_ctrl->irq_info.vid_frame_done);
 	init_completion(&dsi_ctrl->irq_info.cmd_frame_done);
 	init_completion(&dsi_ctrl->irq_info.bta_done);
+
+	/* If there is unbalanced refcount for any interrupt, irq_stat_mask
+	* remain non zero on suspend. Due to this, enable_irq does not get
+	* called on resume, leading to ctrl ISR permanently disabled.
+	* This is a defensive check to recover from such scenario.
+	*/
+	for (intr_idx = 0; intr_idx < DSI_STATUS_INTERRUPT_COUNT; intr_idx++) {
+		if (dsi_ctrl->irq_info.irq_stat_refcount[intr_idx]) {
+			DSI_CTRL_ERR(dsi_ctrl, "refcount mismatch: intr_idx %d\n", intr_idx);
+			dsi_ctrl->irq_info.irq_stat_refcount[intr_idx] = 0;
+		}
+	}
+
+	dsi_ctrl->irq_info.irq_stat_mask = 0x0;
 
 	irq_num = platform_get_irq(dsi_ctrl->pdev, 0);
 	if (irq_num < 0) {
@@ -3507,6 +3659,10 @@ int dsi_ctrl_cmd_transfer(struct dsi_ctrl *dsi_ctrl, struct dsi_cmd_desc *cmd)
 	return rc;
 }
 
+#ifdef OPLUS_FEATURE_DISPLAY
+EXPORT_SYMBOL(dsi_ctrl_cmd_transfer);
+#endif /* OPLUS_FEATURE_DISPLAY */
+
 /**
  * dsi_ctrl_transfer_unprepare() - Clean up post a command transfer
  * @dsi_ctrl:                 DSI controller handle.
@@ -3795,6 +3951,22 @@ int dsi_ctrl_set_tpg_state(struct dsi_ctrl *dsi_ctrl, bool on)
 	dsi_ctrl_update_state(dsi_ctrl, DSI_CTRL_OP_TPG, on);
 error:
 	mutex_unlock(&dsi_ctrl->ctrl_lock);
+	return rc;
+}
+
+int dsi_ctrl_override_dma_cmd_trig(struct dsi_ctrl *dsi_ctrl, enum dsi_trigger_type type)
+{
+	int rc = 0;
+
+	if (!dsi_ctrl || type == DSI_TRIGGER_MAX) {
+		DSI_CTRL_ERR(dsi_ctrl, "Invalid params\n");
+		return -EINVAL;
+	}
+
+	mutex_lock(&dsi_ctrl->ctrl_lock);
+	dsi_ctrl->host_config.common_config.force_dma_cmd_trigger = type;
+	mutex_unlock(&dsi_ctrl->ctrl_lock);
+
 	return rc;
 }
 
