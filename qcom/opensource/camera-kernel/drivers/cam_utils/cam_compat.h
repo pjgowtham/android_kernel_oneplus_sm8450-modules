@@ -61,6 +61,9 @@ int cam_req_mgr_ordered_list_cmp(void *priv,
 int cam_req_mgr_ordered_list_cmp(void *priv,
 	struct list_head *head_1, struct list_head *head_2);
 #endif
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+void dev_defer_supplier_debug(void *drv_ptr);
+#endif
 
 int cam_get_subpart_info(uint32_t *part_info, uint32_t max_num_cam);
 
