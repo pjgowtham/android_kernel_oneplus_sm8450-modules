@@ -3274,7 +3274,6 @@ int cancel_stats_work_sync(struct msm_vidc_inst *inst)
 		return -EINVAL;
 	}
 	cancel_delayed_work_sync(&inst->stats_work);
-
 	return 0;
 }
 

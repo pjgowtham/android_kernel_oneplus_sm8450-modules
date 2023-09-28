@@ -161,7 +161,11 @@ static struct msm_platform_core_capability core_data_diwali_v2[] = {
 	{MAX_RT_MBPF, 97920}, /* ((3840x2176)/256) x 3 */
 	{MAX_MBPF, 110592}, /* ((4096x2304)/256) x 3 */
 	/* max_load 4096x2304@30fps*/
+#ifndef OPLUS_BUG_STABILITY
 	{MAX_MBPS, 1224000}, /* Concurrency: UHD@30 decode + 1080p@30 encode */
+#else /* OPLUS_BUG_STABILITY */
+        {MAX_MBPS, 2669600}, /* max_load 4096x2304@50fps + 1920*1080@60 */
+#endif
 	{MAX_IMAGE_MBPF, 1048576},  /* (16384x16384)/256 */
 	{MAX_MBPF_HQ, 8160}, /* ((1920x1088)/256) */
 	{MAX_MBPS_HQ, 244800}, /* ((1920x1088)/256)@30fps */
