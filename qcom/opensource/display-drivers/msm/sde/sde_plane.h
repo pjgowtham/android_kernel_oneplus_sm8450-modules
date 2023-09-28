@@ -113,6 +113,9 @@ enum sde_plane_sclcheck_state {
  * @cdp_cfg:	CDP configuration
  * @cont_splash_populated: State was populated as part of cont. splash
  * @ubwc_stats_roi: cached roi for ubwc stats
+ * @csc_cfg: Decoded user configuration for csc
+ * @csc_usr_ptr: Points to csc_cfg if valid user config available
+ * @csc_ptr: Points to sde_csc_cfg structure to use for current
  */
 struct sde_plane_state {
 	struct drm_plane_state base;
@@ -148,6 +151,10 @@ struct sde_plane_state {
 	bool cont_splash_populated;
 
 	struct sde_drm_ubwc_stats_roi ubwc_stats_roi;
+
+	struct sde_csc_cfg csc_cfg;
+	struct sde_csc_cfg *csc_usr_ptr;
+	struct sde_csc_cfg *csc_ptr;
 };
 
 /**
