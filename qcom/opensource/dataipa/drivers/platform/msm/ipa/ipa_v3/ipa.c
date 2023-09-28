@@ -6443,7 +6443,14 @@ void ipa3_disable_clks(void)
 		return;
 	}
 
-	IPADBG("disabling IPA clocks and bus voting\n");
+	IPADBG("Disabling IPA clocks and bus voting\n");
+
+	//#ifdef OPLUS_BUG_DEBUG
+	if (atomic_read(&ipa3_ctx->ipa_clk_vote) == 0) {
+		IPAERR("Current clock vote is set to %d\n", ipa3_ctx->ipa_clk_vote);
+		return;
+	}
+	//#endif
 
 	/*
 	 * We see a NoC error on GSI on this flag sequence.

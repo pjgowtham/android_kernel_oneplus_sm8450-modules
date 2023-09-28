@@ -95,13 +95,26 @@ int ipa3_rmnet_ctl_init(void)
 	rmnet_ctl_ipa3_ctx = kzalloc(sizeof(*rmnet_ctl_ipa3_ctx),
 			GFP_KERNEL);
 
+	//#ifndef OPLUS_BUG_DEBUG
+	/*
 	if (!rmnet_ctl_ipa3_ctx)
 		return -ENOMEM;
+	*/
+	//else
+	if (!rmnet_ctl_ipa3_ctx) {
+		IPAERR("rmnet_ctl_ipa3_ctx allocation failed\n");
+		return -ENOMEM;
+	}
+	//#endif
 
 	snprintf(buff, IPA_RESOURCE_NAME_MAX, "rmnet_ctlwq");
 	rmnet_ctl_ipa3_ctx->wq = alloc_workqueue(buff,
 		WQ_MEM_RECLAIM | WQ_UNBOUND | WQ_SYSFS, 1);
 	if (!rmnet_ctl_ipa3_ctx->wq) {
+		//#ifdef OPLUS_BUG_DEBUG
+		IPAERR("rmnet_ctl_ipa3_ctx work-queue creation failed\n");
+		//#endif
+
 		kfree(rmnet_ctl_ipa3_ctx);
 		rmnet_ctl_ipa3_ctx = NULL;
 		return -ENOMEM;
