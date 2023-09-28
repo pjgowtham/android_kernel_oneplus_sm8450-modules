@@ -62,6 +62,30 @@ struct sensor_intf_params {
 	struct cam_req_mgr_crm_cb *crm_cb;
 };
 
+/*add for sensor power up in advance*/
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+enum cam_sensor_power_state {
+        CAM_SENSOR_POWER_OFF,
+        CAM_SENSOR_POWER_ON,
+};
+
+enum cam_sensor_setting_state {
+        CAM_SENSOR_SETTING_WRITE_INVALID,
+        CAM_SENSOR_SETTING_WRITE_SUCCESS,
+};
+
+struct cam_sensor_qsc_setting {
+	uint32_t                          qsc_reg_addr;
+	uint32_t                          eeprom_slave_addr;
+	uint32_t                          qsc_data_size;
+	uint32_t                          enable_qsc_write_in_advance;
+	uint32_t                          write_qsc_addr;
+	bool                              read_qsc_success;
+	struct cam_sensor_i2c_reg_setting qsc_setting;
+	enum cam_sensor_setting_state     sensor_qscsetting_state;
+};
+#endif
+
 /**
  * struct cam_sensor_ctrl_t: Camera control structure
  * @device_name: Sensor device name
@@ -112,6 +136,8 @@ struct cam_sensor_ctrl_t {
 	struct sensor_intf_params      bridge_intf;
 	uint32_t                       streamon_count;
 	uint32_t                       streamoff_count;
+	uint32_t                       power_up_advance;
+	uint32_t                       get_second_provision;
 	int                            bob_reg_index;
 	bool                           bob_pwm_switch;
 	uint32_t                       last_flush_req;
@@ -120,6 +146,19 @@ struct cam_sensor_ctrl_t {
 		CAM_SENSOR_NAME_MAX_SIZE];
 	bool                           is_aon_user;
 	bool                           hw_no_ops;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	int                            is_read_eeprom;
+	struct mutex                   sensor_power_state_mutex;
+	struct mutex                   sensor_initsetting_mutex;
+	enum cam_sensor_power_state    sensor_power_state;
+	enum cam_sensor_setting_state  sensor_initsetting_state;
+	struct task_struct             *sensor_open_thread;
+	int                            sensor_for_project;
+	bool                           use_rdi_sof_apply;  //lanhe add for explorer latency mipi tx.
+	struct work_struct             aon_wq;
+	int                            pid;
+	struct cam_sensor_qsc_setting  sensor_qsc_setting;
+#endif
 };
 
 /**

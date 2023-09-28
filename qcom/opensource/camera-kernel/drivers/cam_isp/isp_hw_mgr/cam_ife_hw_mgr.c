@@ -60,7 +60,9 @@ static uint32_t blob_type_hw_cmd_map[CAM_ISP_GENERIC_BLOB_TYPE_MAX] = {
 static struct cam_ife_hw_mgr g_ife_hw_mgr;
 static uint32_t g_num_ife, g_num_ife_lite, g_num_sfe;
 static uint32_t max_ife_out_res;
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+static uint32_t full_recovery_num = 0;
+#endif
 static int cam_isp_blob_ife_clock_update(
 	struct cam_isp_clock_config           *clock_config,
 	struct cam_ife_hw_mgr_ctx             *ctx);
@@ -135,7 +137,11 @@ static inline int __cam_ife_mgr_get_hw_soc_info(
 	struct cam_hw_intf        *hw_intf = NULL;
 	struct cam_isp_hw_mgr_res *hw_mgr_res;
 	struct cam_isp_hw_mgr_res *hw_mgr_res_temp;
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	uint32_t                  recov_val = 0;
+	struct platform_device    *pdev = NULL;
+	int                       ret = 0;
+#endif
 	list_for_each_entry_safe(hw_mgr_res, hw_mgr_res_temp,
 		res_list, list) {
 		if (!hw_mgr_res->hw_res[split_id])
@@ -161,7 +167,14 @@ static inline int __cam_ife_mgr_get_hw_soc_info(
 			break;
 		}
 	}
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	pdev = (*soc_info_ptr)->pdev;
+	ret = of_property_read_u32(pdev->dev.of_node, "f-recovery", &recov_val);
+	if (ret) {
+		CAM_DBG(CAM_ISP, "full recovery is supported");
+	}
+	full_recovery_num = recov_val;
+#endif
 	return rc;
 }
 
@@ -3498,7 +3511,10 @@ static int cam_ife_hw_mgr_acquire_res_ife_csid_rdi(
 		 */
 		csid_acquire.drop_enable = true;
 		csid_acquire.crop_enable = true;
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		//lanhe add
+		csid_acquire.use_rdi_sof = ife_ctx->flags.use_rdi_sof;
+#endif
 		if (in_port->usage_type)
 			csid_acquire.sync_mode = CAM_ISP_HW_SYNC_MASTER;
 		else
@@ -4845,6 +4861,19 @@ static int cam_ife_mgr_acquire_hw(void *hw_mgr_priv, void *acquire_hw_args)
 		ife_ctx->flags.is_rdi_only_context = true;
 		CAM_DBG(CAM_ISP, "RDI only context");
 	}
+#ifdef OPLUS_FEATURE_CAMERA_COMMON//lanhe todo:need confirm explorer online mode
+	if(acquire_args->op_flags & CAM_IFE_CTX_RDI_SOF_EN)
+	{
+		ife_ctx->flags.use_rdi_sof = true;
+		CAM_DBG(CAM_ISP, "use_rdi_sof %d op_flags:0x%x", ife_ctx->flags.use_rdi_sof, acquire_args->op_flags);
+	}
+	else
+	{
+		ife_ctx->flags.use_rdi_sof = false;
+	}
+	//clear CAM_IFE_CTX_RDI_SOF_EN flag
+	acquire_args->op_flags &= ~CAM_IFE_CTX_RDI_SOF_EN;
+#endif
 
 	/* Check if all output ports are of lite  */
 	if (total_lite_port == total_pix_port + total_rdi_port)
@@ -5201,6 +5230,11 @@ static int cam_ife_mgr_acquire_dev(void *hw_mgr_priv, void *acquire_hw_args)
 		ife_ctx->flags.is_rdi_only_context = true;
 		CAM_DBG(CAM_ISP, "RDI only context");
 	}
+#ifdef OPLUS_FEATURE_CAMERA_COMMON//lanhe todo:need confirm explorer online mode
+	{
+		ife_ctx->flags.use_rdi_sof = true;
+	}
+#endif
 
 	/* acquire HW resources */
 	for (i = 0; i < acquire_args->num_acq; i++) {
@@ -5975,9 +6009,15 @@ static int cam_ife_mgr_config_hw(void *hw_mgr_priv,
 
 		if (cfg->init_packet || hw_update_data->mup_en ||
 			(ctx->ctx_config & CAM_IFE_CTX_CFG_SW_SYNC_ON)) {
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+			rem_jiffies = cam_common_wait_for_completion_timeout(
+				&ctx->config_done_complete,
+				msecs_to_jiffies(100));
+#else
 			rem_jiffies = cam_common_wait_for_completion_timeout(
 				&ctx->config_done_complete,
 				msecs_to_jiffies(60));
+#endif
 			if (rem_jiffies == 0) {
 				CAM_ERR(CAM_ISP,
 					"config done completion timeout for req_id=%llu ctx_index %d",
@@ -12238,6 +12278,7 @@ static int cam_ife_hw_mgr_handle_csid_error(
 	if (err_type & CAM_ISP_HW_ERROR_CSID_SENSOR_FRAME_DROP)
 		cam_ife_hw_mgr_handle_csid_frame_drop(event_info, ctx);
 
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	if ((err_type & (CAM_ISP_HW_ERROR_CSID_LANE_FIFO_OVERFLOW |
 		CAM_ISP_HW_ERROR_CSID_PKT_HDR_CORRUPTED |
 		CAM_ISP_HW_ERROR_CSID_MISSING_PKT_HDR_DATA |
@@ -12247,7 +12288,10 @@ static int cam_ife_hw_mgr_handle_csid_error(
 		CAM_ISP_HW_ERROR_CSID_MISSING_EOT |
 		CAM_ISP_HW_ERROR_CSID_PKT_PAYLOAD_CORRUPTED)) &&
 		g_ife_hw_mgr.debug_cfg.enable_csid_recovery) {
-
+#else
+	if ((err_type & CAM_ISP_HW_ERROR_CSID_FATAL) &&
+		(g_ife_hw_mgr.debug_cfg.enable_csid_recovery || full_recovery_num) ) {
+#endif
 		error_event_data.error_type = CAM_ISP_HW_ERROR_CSID_FATAL;
 
 		if (err_type & CAM_ISP_HW_ERROR_CSID_SENSOR_SWITCH_ERROR)
@@ -12367,6 +12411,23 @@ static int cam_ife_hw_mgr_handle_csid_camif_sof(
 			CAM_ISP_HW_SECONDARY_EVENT, (void *)&sec_evt_data);
 	}
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON //lanhe todo:
+	if (ctx->flags.use_rdi_sof && (CAM_IFE_PIX_PATH_RES_RDI_2 == event_info->res_id))
+	{
+		struct cam_isp_hw_sof_event_data      sof_done_event_data;
+		ife_hw_irq_sof_cb = ctx->common.event_cb;
+		//sof_done_event_data.is_secondary_evt = false;
+		sof_done_event_data.boot_time = 0;
+		sof_done_event_data.timestamp = 0;
+		sof_done_event_data.res_id = CAM_ISP_HW_VFE_IN_RDI0;//for hack RDI SOF just for timestamp backup
+		ife_hw_irq_sof_cb(ctx->common.cb_priv,
+			CAM_ISP_HW_EVENT_SOF, (void *)&sof_done_event_data);
+		CAM_DBG(CAM_ISP,
+				"Received CSID RDI0 SOF res: %d as secondary evt",
+				event_info->res_id);
+		return 0;
+	}
+#endif
 	return rc;
 }
 
@@ -12707,8 +12768,14 @@ static int cam_ife_hw_mgr_handle_hw_sof(
 	case CAM_ISP_HW_VFE_IN_RDI1:
 	case CAM_ISP_HW_VFE_IN_RDI2:
 	case CAM_ISP_HW_VFE_IN_RDI3:
+#ifndef OPLUS_FEATURE_CAMERA_COMMON //lanhe todo:
 		if (!ife_hw_mgr_ctx->flags.is_rdi_only_context)
 			break;
+#else
+		if (!ife_hw_mgr_ctx->flags.is_rdi_only_context && !ife_hw_mgr_ctx->flags.use_rdi_sof)
+			break;
+		sof_done_event_data.res_id = event_info->res_id;//for hack RDI SOF just for timestamp backup
+#endif
 		cam_ife_mgr_cmd_get_sof_timestamp(ife_hw_mgr_ctx,
 			&sof_done_event_data.timestamp,
 			&sof_done_event_data.boot_time, NULL);
@@ -13297,6 +13364,9 @@ static int cam_ife_hw_mgr_debug_register(void)
 	debugfs_create_file("sfe_cache_debug", 0644,
 		g_ife_hw_mgr.debug_cfg.dentry, NULL, &cam_ife_sfe_cache_debug);
 end:
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	g_ife_hw_mgr.debug_cfg.enable_recovery = 1;
+#endif
 	g_ife_hw_mgr.debug_cfg.enable_csid_recovery = 1;
 	return rc;
 }

@@ -955,6 +955,9 @@ static int cam_csiphy_cphy_data_rate_config(
 	uint32_t reg_addr = 0, reg_data = 0, reg_param_type = 0;
 	uint8_t  skew_cal_enable = 0;
 	int32_t  delay = 0;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	uint64_t supported_min_phy_bw = 0;
+#endif
 
 	if ((csiphy_device == NULL) || (csiphy_device->ctrl_reg == NULL)) {
 		CAM_ERR(CAM_CSIPHY, "Device is NULL");
@@ -994,6 +997,13 @@ static int cam_csiphy_cphy_data_rate_config(
 
 		CAM_DBG(CAM_CSIPHY, "table[%d] BW : %llu Selected",
 			data_rate_idx, supported_phy_bw);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		supported_min_phy_bw = data_rate_idx > 0 ? drate_settings[data_rate_idx-1].bandwidth : 0;
+		/* ((data+_rate GSpS) * (10^9) * (2.28 bits/symbol)) rounded value*/
+		CAM_INFO(CAM_CSIPHY, "The selected setting's mipi data rate is between %llu~%llu MSpS",
+			supported_min_phy_bw/2280000, supported_phy_bw/2280000);
+#endif
+
 		lane_enable = csiphy_device->csiphy_info[idx].lane_enable;
 		lane_assign = csiphy_device->csiphy_info[idx].lane_assign;
 		lane_idx = -1;

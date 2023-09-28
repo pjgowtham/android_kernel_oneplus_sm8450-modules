@@ -13,6 +13,10 @@
 #include "cam_debug_util.h"
 #include "cam_common_util.h"
 #include "cam_packet_util.h"
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#include "oplus_cam_eeprom_core.h"
+#include "oplus_cam_kevent_fb.h"
+#endif
 
 #define MAX_READ_SIZE  0x7FFFF
 
@@ -34,7 +38,9 @@ static int cam_eeprom_read_memory(struct cam_eeprom_ctrl_t *e_ctrl,
 	struct cam_eeprom_memory_map_t    *emap = block->map;
 	struct cam_eeprom_soc_private     *eb_info = NULL;
 	uint8_t                           *memptr = block->mapdata;
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	char fb_payload[PAYLOAD_LENGTH] = {0};
+#endif
 	if (!e_ctrl) {
 		CAM_ERR(CAM_EEPROM, "e_ctrl is NULL");
 		return -EINVAL;
@@ -103,19 +109,35 @@ static int cam_eeprom_read_memory(struct cam_eeprom_ctrl_t *e_ctrl,
 			}
 		}
 
-		if (emap[j].mem.valid_size) {
-			rc = camera_io_dev_read_seq(&e_ctrl->io_master_info,
-				emap[j].mem.addr, memptr,
-				emap[j].mem.addr_type,
-				emap[j].mem.data_type,
-				emap[j].mem.valid_size);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		if (e_ctrl->io_master_info.cci_client->sid==0x24) {
+			rc = oplus_cam_eeprom_read_memory(e_ctrl, emap, j, memptr);
 			if (rc < 0) {
-				CAM_ERR(CAM_EEPROM, "read failed rc %d",
-					rc);
+				CAM_ERR(CAM_EEPROM, "cam_eeprom_read_memory_oem failed rc %d",rc);
+				KEVENT_FB_EEPRPOM_WR_FAILED(fb_payload, "camera eeprom read failed", rc);
 				return rc;
 			}
-			memptr += emap[j].mem.valid_size;
-		}
+			if(j > 0){
+				memptr += total_size;
+			}
+		}else{
+#endif
+    		if (emap[j].mem.valid_size) {
+    			rc = camera_io_dev_read_seq(&e_ctrl->io_master_info,
+    				emap[j].mem.addr, memptr,
+    				emap[j].mem.addr_type,
+    				emap[j].mem.data_type,
+    				emap[j].mem.valid_size);
+    			if (rc < 0) {
+    				CAM_ERR(CAM_EEPROM, "read failed rc %d",
+    					rc);
+    				return rc;
+    			}
+    			memptr += emap[j].mem.valid_size;
+    		}
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+        }
+#endif
 
 		if (emap[j].pageen.valid_size) {
 			i2c_reg_settings.addr_type = emap[j].pageen.addr_type;
@@ -135,6 +157,9 @@ static int cam_eeprom_read_memory(struct cam_eeprom_ctrl_t *e_ctrl,
 			}
 		}
 	}
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+            total_size = 0;
+#endif
 	return rc;
 }
 
@@ -189,6 +214,15 @@ static int cam_eeprom_power_up(struct cam_eeprom_ctrl_t *e_ctrl,
 			goto cci_failure;
 		}
 	}
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	if (e_ctrl->change_cci && (chip_version_old == FALSE)) {
+		rc = camera_io_init(&(e_ctrl->io_master_info_ois));
+		if (rc) {
+			CAM_ERR(CAM_EEPROM, "cci_init failed");
+			return -EINVAL;
+		}
+	}
+#endif
 	return rc;
 cci_failure:
 	if (cam_sensor_util_power_down(power_info, soc_info))
@@ -232,6 +266,11 @@ static int cam_eeprom_power_down(struct cam_eeprom_ctrl_t *e_ctrl)
 
 	if (e_ctrl->io_master_info.master_type == CCI_MASTER)
 		camera_io_release(&(e_ctrl->io_master_info));
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	if (e_ctrl->change_cci && (chip_version_old == FALSE)) {
+		camera_io_release(&(e_ctrl->io_master_info_ois));
+	}
+#endif
 
 	return rc;
 }
@@ -1458,6 +1497,9 @@ int32_t cam_eeprom_driver_cmd(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 	int                            rc = 0;
 	struct cam_eeprom_query_cap_t  eeprom_cap = {0};
 	struct cam_control            *cmd = (struct cam_control *)arg;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	char fb_payload[PAYLOAD_LENGTH] = {0};
+#endif
 
 	if (!e_ctrl || !cmd) {
 		CAM_ERR(CAM_EEPROM, "Invalid Arguments");
@@ -1471,6 +1513,14 @@ int32_t cam_eeprom_driver_cmd(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 	}
 
 	mutex_lock(&(e_ctrl->eeprom_mutex));
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	rc = cam_eeprom_driver_cmd_oem(e_ctrl,arg);
+	if (rc) {
+		CAM_ERR(CAM_EEPROM, "Failed in check eeprom data");
+		KEVENT_FB_EEPRPOM_WR_FAILED(fb_payload, "camera eeprom write failed", rc);
+		goto release_mutex;
+	}
+#endif
 	switch (cmd->op_code) {
 	case CAM_QUERY_CAP:
 		eeprom_cap.slot_info = e_ctrl->soc_info.index;

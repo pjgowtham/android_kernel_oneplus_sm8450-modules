@@ -48,6 +48,24 @@ enum cam_actuator_state {
 	CAM_ACTUATOR_START,
 };
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+enum cam_actuator_power_state {
+	CAM_ACTUATOR_POWER_ON,
+	CAM_ACTUATOR_POWER_OFF,
+};
+#endif
+
+enum cam_actuator_power_down_thread_state {
+	CAM_ACTUATOR_POWER_DOWN_THREAD_RUNNING,
+	CAM_ACTUATOR_POWER_DOWN_THREAD_STOPPED,
+};
+
+enum cam_actuator_parklens_thread_state {
+	CAM_ACTUATOR_PARKLENS_THREAD_RUNNING,
+	CAM_ACTUATOR_PARKLENS_THREAD_STOPPED,
+};
+
+
 /**
  * struct cam_actuator_i2c_info_t - I2C info
  * @slave_addr      :   slave address
@@ -115,6 +133,26 @@ struct cam_actuator_ctrl_t {
 	struct cam_actuator_query_cap act_info;
 	struct actuator_intf_params bridge_intf;
 	uint32_t last_flush_req;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+        bool is_actuator_ready;
+        struct cam_sensor_i2c_reg_array poll_register;
+        enum camera_sensor_i2c_type addr_type;
+        enum camera_sensor_i2c_type data_type;
+	uint32_t is_aon_af;
+	uint32_t aon_af_slave;
+	uint32_t aon_eeprom_slave;
+	char aon_af_name[32];
+	uint32_t infPos;
+	uint32_t middPos;
+	uint32_t macroPos;
+	enum cam_actuator_power_state aon_af_power;
+	bool actuator_power_down_thread_exit;
+	enum cam_actuator_power_state cam_atc_power_state;
+	struct mutex actuator_parklens_mutex;
+	bool actuator_parklens_thread_exit;
+	uint32_t is_af_parklens;
+
+#endif
 };
 
 /**

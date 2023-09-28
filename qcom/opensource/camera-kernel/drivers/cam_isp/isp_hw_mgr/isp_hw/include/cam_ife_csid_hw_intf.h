@@ -225,6 +225,10 @@ struct cam_csid_hw_reserve_resource_args {
 	bool                                      can_use_lite;
 	bool                                      sfe_en;
 	bool                                      use_wm_pack;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	//lanhe add
+	bool                                      use_rdi_sof;
+#endif
 	bool                                      secure_mode;
 };
 

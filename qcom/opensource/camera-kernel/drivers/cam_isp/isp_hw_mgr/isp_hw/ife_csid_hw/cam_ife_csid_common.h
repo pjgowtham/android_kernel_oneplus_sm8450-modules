@@ -316,6 +316,10 @@ struct cam_ife_csid_hw_flags {
 	bool                  offline_mode;
 	bool                  rdi_lcr_en;
 	bool                  sfe_en;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	//lanhe add
+	bool                  use_rdi_sof;
+#endif
 };
 
 /*

@@ -25,6 +25,11 @@
 #include "cam_ife_hw_mgr.h"
 #include "cam_subdev.h"
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+//lanhe add
+#include "cam_vfe_hw_intf.h"
+#endif
+
 static const char isp_dev_name[] = "cam-isp";
 
 static struct cam_isp_ctx_debug isp_ctx_debug;
@@ -1250,7 +1255,11 @@ static void __cam_isp_ctx_send_sof_boot_timestamp(
 static void __cam_isp_ctx_send_unified_timestamp(
 	struct cam_isp_context *ctx_isp, uint64_t request_id)
 {
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	struct cam_req_mgr_message   req_msg = {0};
+#else
 	struct cam_req_mgr_message   req_msg;
+#endif
 
 	req_msg.session_hdl = ctx_isp->base->session_hdl;
 	req_msg.u.frame_msg_v2.frame_id = ctx_isp->frame_id;
@@ -1328,7 +1337,12 @@ static void __cam_isp_ctx_send_sof_timestamp(
 		return;
 	}
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	if ((ctx_isp->use_frame_header_ts) && (request_id) &&
+		(sof_event_status == CAM_REQ_MGR_SOF_EVENT_SUCCESS))
+#else
 	if ((ctx_isp->use_frame_header_ts) || (request_id == 0))
+#endif
 		goto end;
 
 	req_msg.session_hdl = ctx_isp->base->session_hdl;
@@ -6328,7 +6342,10 @@ static int __cam_isp_ctx_acquire_hw_v2(struct cam_context *ctx,
 	param.acquire_info_size = cmd->data_size;
 	param.acquire_info = (uint64_t) acquire_hw_info;
 	param.mini_dump_cb = __cam_isp_ctx_minidump_cb;
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+    //lanhe add
+    param.op_flags |= cmd->reserved;
+#endif
 	/* call HW manager to reserve the resource */
 	rc = ctx->hw_mgr_intf->hw_acquire(ctx->hw_mgr_intf->hw_mgr_priv,
 		&param);
@@ -7266,6 +7283,33 @@ static int __cam_isp_ctx_handle_irq_in_activated(void *context,
 		(struct cam_isp_context *)ctx->ctx_priv;
 
 	spin_lock(&ctx->lock);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON //lanhe todo:
+	if(evt_id == CAM_ISP_HW_EVENT_SOF)
+	{
+		uint32_t res_id =
+			((struct cam_isp_hw_sof_event_data *)evt_data)->res_id;
+		if(res_id == CAM_ISP_HW_VFE_IN_RDI0)
+		{
+			struct cam_req_mgr_trigger_notify  notify;
+			ctx_isp->rdi_frame_id++;
+			//add process logic
+			if (ctx_isp->subscribe_event & CAM_TRIGGER_POINT_SOF) {
+				notify.link_hdl = ctx->link_hdl;
+				notify.dev_hdl = ctx->dev_hdl;
+				notify.frame_id = ctx_isp->rdi_frame_id;
+				notify.trigger = CAM_TRIGGER_POINT_RDI_SOF;
+				notify.req_id = ctx_isp->req_info.last_bufdone_req_id;
+				notify.sof_timestamp_val = ctx_isp->sof_timestamp_val;
+
+				ctx->ctx_crm_intf->notify_trigger(&notify);
+				CAM_DBG(CAM_ISP, "Notify CRM  RDI SOF frame %lld",
+					ctx_isp->rdi_frame_id);
+			}
+			spin_unlock(&ctx->lock);
+			return rc;
+		}
+	}
+#endif
 	trace_cam_isp_activated_irq(ctx, ctx_isp->substate_activated, evt_id,
 		__cam_isp_ctx_get_event_ts(evt_id, evt_data));
 
@@ -7612,6 +7656,9 @@ int cam_isp_context_init(struct cam_isp_context *ctx,
 
 	ctx->base = ctx_base;
 	ctx->frame_id = 0;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON //lanhe todo:
+	ctx->rdi_frame_id = 0;
+#endif
 	ctx->custom_enabled = false;
 	ctx->use_frame_header_ts = false;
 	ctx->use_default_apply = false;
