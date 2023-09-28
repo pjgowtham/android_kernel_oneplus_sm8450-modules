@@ -29,6 +29,18 @@
 #include "internal.h"
 #include "asoc/bolero-slave-internal.h"
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include "feedback/oplus_audio_kernel_fb.h"
+#ifdef dev_err
+#undef dev_err
+#define dev_err dev_err_fb_delay
+#endif
+#ifdef pr_err
+#undef pr_err
+#define pr_err pr_err_fb_delay
+#endif
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
 #define WCD9370_VARIANT 0
 #define WCD9375_VARIANT 5
 #define WCD937X_VARIANT_ENTRY_SIZE 32
@@ -1679,9 +1691,15 @@ static int wcd937x_get_logical_addr(struct swr_device *swr_dev)
 	do {
 		ret = swr_get_logical_dev_num(swr_dev, swr_dev->addr, &devnum);
 		if (ret) {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+			dev_info(&swr_dev->dev,
+				"%s get devnum %d for dev addr %lx failed\n",
+				__func__, devnum, swr_dev->addr);
+#else
 			dev_err(&swr_dev->dev,
 				"%s get devnum %d for dev addr %lx failed\n",
 				__func__, devnum, swr_dev->addr);
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 			/* retry after 1ms */
 			usleep_range(1000, 1010);
 		}
@@ -1736,6 +1754,10 @@ static int wcd937x_event_notify(struct notifier_block *block,
 	case BOLERO_SLV_EVT_SSR_DOWN:
 		wcd937x->mbhc->wcd_mbhc.deinit_in_progress = true;
 		mbhc = &wcd937x->mbhc->wcd_mbhc;
+		#ifdef OPLUS_ARCH_EXTENDS
+		mbhc->plug_before_ssr = mbhc->current_plug;
+		pr_info("%s: mbhc->plug_before_ssr=%d\n", __func__, mbhc->plug_before_ssr);
+		#endif /* OPLUS_ARCH_EXTENDS */
 		wcd937x->usbc_hs_status = get_usbc_hs_status(component,
 						mbhc->mbhc_cfg);
 		wcd937x_mbhc_ssr_down(wcd937x->mbhc, component);
