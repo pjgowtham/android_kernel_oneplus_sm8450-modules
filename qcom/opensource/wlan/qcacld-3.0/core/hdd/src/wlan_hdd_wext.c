@@ -3907,6 +3907,17 @@ static int hdd_we_set_nss(struct hdd_adapter *adapter, int nss)
 	if (QDF_IS_STATUS_ERROR(status))
 		hdd_err("cfg set failed, value %d status %d", nss, status);
 
+//#ifdef OPLUS_FEATURE_WIFI_WSA
+//Add for STBC&MRC
+        if (!QDF_IS_STATUS_ERROR(status) && (nss == 1)) {
+            send_oplus_uevent("forcemrc=status:Success,enable=True");
+        } else if (!QDF_IS_STATUS_ERROR(status) && (nss == 2)) {
+            send_oplus_uevent("forcemrc=status:Success,enable=False");
+        } else {
+            send_oplus_uevent("forcemrc=status:Success,reason=SendActionFail");
+        }
+//#endif /* OPLUS_FEATURE_WIFI_WSA */
+
 	return qdf_status_to_os_return(status);
 }
 

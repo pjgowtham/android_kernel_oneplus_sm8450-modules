@@ -2462,6 +2462,26 @@ struct hdd_channel_info {
 	u_int8_t vht_center_freq_seg1;
 };
 
+#ifdef OPLUS_FEATURE_WIFI_DCS_SWITCH
+//Add for wifi switch monitor
+enum wlan_hostdriver_loadstatus {
+	INSMOD_SUCCESS = 1,
+	INSMOD_FAIL,
+	RMMOD_SUCCESS,
+	RMMOD_FAIL,
+	INI_PRASE_SUCCESS,
+	INI_PRASE_FAIL,
+};
+
+struct wlan_hostdriver_loadresult {
+	u_int8_t insmod_status;
+	u_int8_t rmmod_status;
+	u_int8_t ini_prase_status;
+};
+
+void wlan_driver_send_uevent(char *enable);
+#endif /* OPLUS_FEATURE_WIFI_DCS_SWITCH */
+
 /**
  * struct hdd_chwidth_info - channel width related info
  * @sir_chwidth_valid: If nl_chan_width is valid in Sir
@@ -5331,4 +5351,10 @@ static inline int hdd_set_suspend_mode(struct hdd_context *hdd_ctx)
 	return 0;
 }
 #endif
+
+//#ifdef OPLUS_FEATURE_WIFI_WSA
+//Add for STBC&MRC
+int send_oplus_uevent(const char *src);
+//#endif OPLUS_FEATURE_WIFI_WSA
+
 #endif /* end #if !defined(WLAN_HDD_MAIN_H) */

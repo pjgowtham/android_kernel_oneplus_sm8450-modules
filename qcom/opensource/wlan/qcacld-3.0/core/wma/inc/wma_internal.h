@@ -1754,4 +1754,10 @@ int wma_latency_level_event_handler(void *wma_ctx, uint8_t *event_buff,
  */
 int wma_get_ani_level_evt_handler(void *handle, uint8_t *event_buf,
 				  uint32_t len);
+#ifdef OPLUS_FEATURE_CONN_POWER_MONITOR
+//add for connectivity power monitor
+int oplusLpmUeventInit(void);
+void oplusConnUeventDeinit(void);
+#endif /* OPLUS_FEATURE_CONN_POWER_MONITOR */
+
 #endif

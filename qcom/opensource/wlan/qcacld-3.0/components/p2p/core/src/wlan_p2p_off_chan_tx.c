@@ -3067,6 +3067,7 @@ QDF_STATUS p2p_process_mgmt_tx(struct tx_action_context *tx_ctx)
 {
 	struct p2p_soc_priv_obj *p2p_soc_obj;
 	struct p2p_roc_context *curr_roc_ctx;
+	struct wlan_objmgr_vdev *vdev;
 	uint8_t *mac_to;
 	QDF_STATUS status;
 
@@ -3120,16 +3121,26 @@ QDF_STATUS p2p_process_mgmt_tx(struct tx_action_context *tx_ctx)
 		tx_ctx->no_ack = 1;
 	}
 
-	if (!tx_ctx->off_chan || !tx_ctx->chan_freq) {
+	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(
+			p2p_soc_obj->soc, tx_ctx->vdev_id, WLAN_P2P_ID);
+
+	if (!tx_ctx->off_chan || !tx_ctx->chan_freq ||
+	    (tx_ctx->chan_freq == wlan_get_operation_chan_freq(vdev) &&
+	     !tx_ctx->duration)) {
 		if (!tx_ctx->chan_freq)
 			p2p_check_and_update_channel(tx_ctx);
 		status = p2p_execute_tx_action_frame(tx_ctx);
 		if (status != QDF_STATUS_SUCCESS) {
 			p2p_err("execute tx fail");
+			wlan_objmgr_vdev_release_ref(vdev, WLAN_P2P_ID);
 			goto fail;
-		} else
+		} else {
+			wlan_objmgr_vdev_release_ref(vdev, WLAN_P2P_ID);
 			return QDF_STATUS_SUCCESS;
+		}
 	}
+
+	wlan_objmgr_vdev_release_ref(vdev, WLAN_P2P_ID);
 
 	/* For off channel tx case */
 	curr_roc_ctx = p2p_find_current_roc_ctx(p2p_soc_obj);

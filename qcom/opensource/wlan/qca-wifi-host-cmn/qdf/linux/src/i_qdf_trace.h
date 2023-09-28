@@ -45,6 +45,7 @@
 #ifdef WLAN_QCOM_MINIDUMP
 #include <soc/qcom/minidump.h>
 #endif
+#include <soc/oplus/system/oplus_project.h>
 
 #if !defined(__printf)
 #define __printf(a, b)
@@ -389,7 +390,16 @@ void __qdf_bug(void);
 #else /* CONFIG_SLUB_DEBUG */
 static inline void __qdf_bug(void)
 {
-	BUG();
+//#ifndef OPLUS_BUG_STABILITY
+//modify for: close bug in user build
+//	BUG();
+//#else /* OPLUS_BUG_STABILITY */
+	if (AGING == get_eng_version()) {
+		BUG();
+	} else {
+		WARN_ON(1);
+	}
+//#endif /* OPLUS_BUG_STABILITY */
 }
 #endif /* CONFIG_SLUB_DEBUG */
 

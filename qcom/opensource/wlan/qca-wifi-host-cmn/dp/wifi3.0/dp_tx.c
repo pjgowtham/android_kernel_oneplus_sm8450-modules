@@ -1082,8 +1082,10 @@ struct dp_tx_desc_s *dp_tx_prepare_desc_single(struct dp_vdev *vdev,
 	}
 
 	/* Packets marked by upper layer (OS-IF) to be sent to FW */
-	if (dp_tx_is_nbuf_marked_exception(soc, nbuf))
+	if (dp_tx_is_nbuf_marked_exception(soc, nbuf)) {
+		dp_info("Frame marked toFW=1");
 		is_exception = 1;
+	}
 	/*
 	 * For special modes (vdev_type == ocb or mesh), data frames should be
 	 * transmitted using varying transmit parameters (tx spec) which include
@@ -1548,8 +1550,7 @@ dp_tx_ring_access_end_wrapper(struct dp_soc *soc,
 				 RTPM_ID_DW_TX_HW_ENQUEUE, true);
 	switch (ret) {
 	case 0:
-		if (hif_system_pm_state_check(soc->hif_handle) ||
-					qdf_unlikely(soc->is_tx_pause)) {
+		if (hif_system_pm_state_check(soc->hif_handle)) {
 			dp_tx_hal_ring_access_end_reap(soc, hal_ring_hdl);
 			hal_srng_set_event(hal_ring_hdl, HAL_SRNG_FLUSH_EVENT);
 			hal_srng_inc_flush_cnt(hal_ring_hdl);
@@ -1597,8 +1598,7 @@ dp_tx_ring_access_end_wrapper(struct dp_soc *soc,
 			      hal_ring_handle_t hal_ring_hdl,
 			      int coalesce)
 {
-	if (hif_system_pm_state_check(soc->hif_handle) ||
-					qdf_unlikely(soc->is_tx_pause)) {
+	if (hif_system_pm_state_check(soc->hif_handle)) {
 		dp_tx_hal_ring_access_end_reap(soc, hal_ring_hdl);
 		hal_srng_set_event(hal_ring_hdl, HAL_SRNG_FLUSH_EVENT);
 		hal_srng_inc_flush_cnt(hal_ring_hdl);

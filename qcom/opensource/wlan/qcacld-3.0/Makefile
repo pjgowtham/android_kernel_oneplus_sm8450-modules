@@ -24,6 +24,9 @@ KBUILD_OPTIONS += $(WLAN_SELECT)
 KBUILD_OPTIONS += $(KBUILD_EXTRA) # Extra config if any
 endif
 
+KBUILD_EXTRA_SYMBOLS += $(KERNEL_SRC)/../vendor/oplus/kernel/wifi/oplus_wificapcenter/Module.symvers
+#endif
+
 all:
 	$(MAKE) -C $(KERNEL_SRC) M=$(M) modules $(KBUILD_OPTIONS)
 

@@ -581,6 +581,7 @@ dp_cfr_rcc_mode_status(struct dp_pdev *pdev)
 }
 #endif /* WLAN_CFR_ENABLE && WLAN_ENH_CFR_ENABLE */
 
+
 /*
  * dp_rx_mon_deliver(): function to deliver packets to stack
  * @soc: DP soc

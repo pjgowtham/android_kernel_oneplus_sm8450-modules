@@ -712,6 +712,10 @@ ifneq ($(TARGET_BUILD_VARIANT),user)
 	CONFIG_WLAN_DEBUG_CRASH_INJECT := y
 endif
 
+#ifdef OPLUS_FEATURE_WIFI_SWITCH_RECOVERY
+    CONFIG_WLAN_DEBUG_CRASH_INJECT := y
+#endif /* OPLUS_FEATURE_WIFI_SWITCH_RECOVERY */
+
 #Disable pktlog feature for lithium based target
 ifeq (y,$(filter y,$(CONFIG_LITHIUM) $(CONFIG_BERYLLIUM)))
 	CONFIG_FEATURE_PKTLOG := n
@@ -1492,3 +1496,6 @@ endif
 ifeq ($(CONFIG_LITHIUM), y)
 CONFIG_DP_TX_TRACKING := y
 endif
+
+CONFIG_OPLUS_FEATURE_WIFI_OPLUSWFD := m
+
