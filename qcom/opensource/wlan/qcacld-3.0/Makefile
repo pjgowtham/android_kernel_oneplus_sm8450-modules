@@ -24,12 +24,9 @@ KBUILD_OPTIONS += \
     DYNAMIC_SINGLE_CHIP=qca6490 \
     MODNAME=qca_cld3_qca6490 \
     DEVNAME=qca6490 \
-    BOARD_PLATFORM=waipio \
+    BOARD_PLATFORM=taro \
     WLAN_CTRL_NAME=wlan
 endif
-
-KBUILD_EXTRA_SYMBOLS += $(KERNEL_SRC)/../vendor/oplus/kernel/wifi/oplus_wificapcenter/Module.symvers
-#endif
 
 all:
 	$(MAKE) -C $(KERNEL_SRC) M=$(M) modules $(KBUILD_OPTIONS)
