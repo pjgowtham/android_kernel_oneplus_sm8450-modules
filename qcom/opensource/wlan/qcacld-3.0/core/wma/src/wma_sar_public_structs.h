@@ -1,6 +1,5 @@
 /*
  * Copyright (c) 2018 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -24,8 +23,7 @@ struct sar_limit_event;
 
 enum sar_version {
 	SAR_VERSION_1,
-	SAR_VERSION_2,
-	SAR_VERSION_3
+	SAR_VERSION_2
 };
 
 /**
