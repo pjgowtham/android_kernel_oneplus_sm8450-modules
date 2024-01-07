@@ -184,8 +184,12 @@ static DEVICE_ATTR(fswitch, 0660, cam_flash_switch_show,cam_flash_switch_store);
 void oplus_cam_flash_proc_init(struct cam_flash_ctrl *flash_ctl,
     struct platform_device *pdev)
 {
+    int err = 0;
     if (flash_proc_init(flash_ctl) < 0) {
-        device_create_file(&pdev->dev, &dev_attr_fswitch);
+        err = device_create_file(&pdev->dev, &dev_attr_fswitch);
+        if (err) {
+            pr_err("device_create_file fail!\n");
+        }
     }
 }
 

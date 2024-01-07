@@ -15,6 +15,7 @@
 #ifdef OPLUS_FEATURE_CAMERA_COMMON
 #include "oplus_cam_actuator_core.h"
 #include "oplus_cam_kevent_fb.h"
+#include "oplus_cam_actuator_dev.h"
 #endif
 
 int32_t cam_actuator_construct_default_power_setting(
@@ -586,6 +587,42 @@ int32_t cam_actuator_i2c_pkt_parse(struct cam_actuator_ctrl_t *a_ctrl,
 			case CAMERA_SENSOR_CMD_TYPE_PWR_DOWN:
 				CAM_DBG(CAM_ACTUATOR,
 					"Received power settings buffer");
+				if(!strstr(a_ctrl->aon_af_name, "sem1217s"))
+				{
+					mutex_lock(&(a_ctrl->actuator_parklens_mutex));
+					if (a_ctrl->is_af_parklens &&
+						a_ctrl->cam_atc_power_state == CAM_ACTUATOR_POWER_ON)
+					{
+						CAM_ERR(CAM_ACTUATOR,"camera actuator is still powered on, no need to power on agaiin");
+						a_ctrl->actuator_power_down_thread_exit = true;
+						mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
+						continue;
+					}
+					mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
+				}
+				else
+				{
+					mutex_lock(&(a_ctrl->actuator_parklens_second_mutex));
+					if (a_ctrl->cam_atc_power_second_state == CAM_ACTUATOR_POWER_OFF &&
+						power_info->power_setting != NULL &&
+						power_info->power_down_setting != NULL)
+					{
+						CAM_ERR(CAM_ACTUATOR, "SDS shaking happened, free power settings while opening");
+						kfree(power_info->power_setting);
+						kfree(power_info->power_down_setting);
+						power_info->power_setting_size = 0;
+						power_info->power_down_setting_size = 0;
+					}
+					if (a_ctrl->is_af_parklens &&
+						a_ctrl->cam_atc_power_second_state == CAM_ACTUATOR_POWER_ON)
+					{
+						CAM_ERR(CAM_ACTUATOR,"camera tele actuator is still powered on, no need to power on agaiin");
+						a_ctrl->actuator_power_down_second_thread_exit = true;
+						mutex_unlock(&(a_ctrl->actuator_parklens_second_mutex));
+						continue;
+					}
+					mutex_unlock(&(a_ctrl->actuator_parklens_second_mutex));
+				}
 				rc = cam_sensor_update_power_settings(
 					cmd_buf,
 					total_cmd_buf_in_bytes,

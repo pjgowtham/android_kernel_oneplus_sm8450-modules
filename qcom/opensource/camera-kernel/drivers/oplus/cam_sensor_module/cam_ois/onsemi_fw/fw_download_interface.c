@@ -4,7 +4,7 @@
 #include "LC898124/Ois.h"
 #include "linux/proc_fs.h"
 #include "BU24721/bu24721_fw.h"
-
+#include "SEM1217S/sem1217_fw.h"
 
 
 extern unsigned char SelectDownload(uint8_t GyroSelect,
@@ -21,6 +21,7 @@ extern uint8_t WrGyAcOffsetData( uint8_t UcMode );
 extern uint32_t MeasGyAcOffset(  void  );
 
 #define MAX_DATA_NUM 64
+#define MAX_SEM1217S_DATA_NUM 128
 extern bool chip_version_old;
 
 struct mutex ois_mutex;
@@ -943,8 +944,8 @@ int RohmOisWrite(struct cam_ois_ctrl_t *o_ctrl, uint32_t addr, uint32_t data)
 			CAM_ERR(CAM_OIS, "ois type=%d,write 0x%04x failed, retry:%d",o_ctrl->ois_type, addr, i+1);
 		} else {
 
-        CAM_ERR(CAM_OIS, "write cci device=%d master=%d",o_ctrl->io_master_info.cci_client->cci_device,o_ctrl->io_master_info.cci_client->cci_i2c_master);
-            CAM_ERR(CAM_OIS, "write success ois type=%d,write 0x%04x ,data=%d",o_ctrl->ois_type, addr,data);
+        CAM_DBG(CAM_OIS, "write cci device=%d master=%d",o_ctrl->io_master_info.cci_client->cci_device,o_ctrl->io_master_info.cci_client->cci_i2c_master);
+            CAM_DBG(CAM_OIS, "write success ois type=%d,write 0x%04x ,data=%d",o_ctrl->ois_type, addr,data);
 			return rc;
 		}
 	}
@@ -1303,6 +1304,9 @@ int WriteOisGyroGianToRam(struct cam_ois_ctrl_t *o_ctrl,DUAL_OIS_CALI_RESULTS* c
 			CAM_ERR(CAM_OIS, "after write ss_gyro_gain_z = 0x%x",SsGyroC);
 
 			break;
+		default:
+			CAM_ERR(CAM_OIS, "WriteOisGyroGianToRam switch function not match mode");
+			break;
 
 	}
 
@@ -1437,8 +1441,32 @@ int DoBU24721GyroOffset(struct cam_ois_ctrl_t *o_ctrl, uint32_t *gyro_data)
 
 	FADJCAL= Gyro_offset_cal();
 
-	ReadGyroOffset_X = (( FADJCAL.gl_GX_OFS >> 16) & 0x0000FFFF );
-	ReadGyroOffset_Y = (( FADJCAL.gl_GY_OFS >> 16) & 0x0000FFFF );
+	ReadGyroOffset_X = FADJCAL.gl_GX_OFS;
+	ReadGyroOffset_Y = FADJCAL.gl_GY_OFS;
+	*gyro_data = ReadGyroOffset_Y << 16 | ReadGyroOffset_X;
+
+	return rc;
+
+}
+
+int DoSEM1217SGyroOffset(struct cam_ois_ctrl_t *o_ctrl, uint32_t *gyro_data)
+{
+	int rc = 0;
+	uint32_t ReadGyroOffset_X = 0, ReadGyroOffset_Y = 0;
+	struct SEM1217S_FACT_ADJ FADJCAL = { 0x0000, 0x0000};
+
+	if (!o_ctrl)
+	{
+		CAM_ERR(CAM_OIS, "Invalid Args");
+		return -EINVAL;
+	}
+
+	ois_ctrl = o_ctrl;
+
+	FADJCAL = SEM1217S_Gyro_offset_cal();
+
+	ReadGyroOffset_X = FADJCAL.gl_GX_OFS ;
+	ReadGyroOffset_Y = FADJCAL.gl_GY_OFS ;
 	*gyro_data = ReadGyroOffset_Y << 16 | ReadGyroOffset_X;
 
 	return rc;
@@ -1634,8 +1662,8 @@ static int Download124Or128FW(struct cam_ois_ctrl_t *o_ctrl)
 		//msleep(40);
 		//CAM_INFO(CAM_OIS, "ois FlashProgram129 rc=%d", rc);
 
-		if (0 == rc)
-		{
+		//if (0 == rc)
+		//{
 
 			//select gyro vendor
 			RamWrite32A(0xF015, 0x00000000);
@@ -1717,7 +1745,7 @@ static int Download124Or128FW(struct cam_ois_ctrl_t *o_ctrl)
 				mutex_unlock(&(o_ctrl->ois_hall_data_mutex));
 			}
 
-		} else {
+		/*} else {
 			switch (rc&0xF0)
 			{
 				case 0x00:
@@ -1755,7 +1783,7 @@ static int Download124Or128FW(struct cam_ois_ctrl_t *o_ctrl)
 					CAM_ERR(CAM_OIS, "Unkown error code");
 					break;
 			}
-		}
+		}*/
 	}
 	else
 	{
@@ -1777,7 +1805,15 @@ int DownloadFW(struct cam_ois_ctrl_t *o_ctrl)
 	if (o_ctrl)
 	{
 		mutex_lock(&ois_mutex);
-		if(o_ctrl->opcode.prog == 1)
+		if (strstr(o_ctrl->ois_name, "ov64b_ois_sem1217s"))
+		{
+			CAM_ERR(CAM_OIS, "sem1217s firmware download");
+			ois_ctrl = o_ctrl;
+			rc = sem1217s_fw_download(o_ctrl);
+			mutex_unlock(&ois_mutex);
+			return rc;
+		}
+		else if (o_ctrl->opcode.prog == 1)
 		{
 			CAM_INFO(CAM_OIS, "update gyro vendor to =%d",o_ctrl->opcode.prog);
 			if(o_ctrl->ois_type == CAM_OIS_MASTER)
@@ -2398,6 +2434,8 @@ exit:
 
 
 #define OIS_HALL_DATA_SIZE   52
+#define OIS_HALL_DATA_SET_SIZE 4
+#define OIS_HALL_DATA_SET_COUNT 11
 struct hall_info
 {
     uint32_t timeStampSec;  //us
@@ -3038,6 +3076,119 @@ int OIS_READ_HALL_DATA_TO_UMD_129 (struct cam_ois_ctrl_t *o_ctrl,struct i2c_sett
 	return rc;
 }
 
+int OIS_READ_HALL_DATA_TO_UMD_SEM1217S (struct cam_ois_ctrl_t *o_ctrl,struct i2c_settings_array *i2c_settings)
+{
+
+	int32_t 						rc = 0,i=0;
+	struct i2c_settings_list	   *i2c_list;
+	uint8_t 					   *read_buff = NULL;
+	uint32_t						buff_length = 0;
+	uint32_t						read_length = 0;
+	uint64_t						fifo_count = 0;
+	uint32_t						hall_data_x = 0,hall_data_y = 0;
+	int 							j=0;
+	uint8_t 					   *temp_buff = NULL;
+	uint8_t 					   *temp_data = NULL;
+	uint32_t						delayCount = 0, delayTime = 0;
+	uint64_t						qtimer_ns = 0;
+	uint64_t						qtimer_ns_1 = 0;
+
+	list_for_each_entry(i2c_list,
+		&(i2c_settings->list_head), list) {
+		read_buff = i2c_list->i2c_settings.read_buff;
+		buff_length = i2c_list->i2c_settings.read_buff_len;
+		if ((read_buff == NULL) || (buff_length == 0)) {
+				CAM_DBG(CAM_OIS,
+						"Invalid input buffer, buffer: %pK, length: %d",
+						read_buff, buff_length);
+				return -EINVAL;
+		}
+		read_length = OIS_HALL_DATA_SET_SIZE*OIS_HALL_DATA_SET_COUNT;
+		temp_buff = kzalloc(read_length, GFP_KERNEL);
+		memset(temp_buff, 0, read_length);
+		CAM_DBG(CAM_OIS,"buffer: %pK, fbufer_length: %d  read_length=%d",read_buff, buff_length,read_length);
+		CAM_DBG(CAM_OIS,"start read");
+
+		cam_sensor_util_get_current_qtimer_ns(&qtimer_ns_1);
+
+		//RohmOisWrite(o_ctrl, 0x0B00, 1);
+		OISCountinueRead(o_ctrl, 0x1100, (void *)temp_buff, read_length);
+		cam_sensor_util_get_current_qtimer_ns(&qtimer_ns);
+
+		fifo_count = temp_buff[0] & 0xF;
+		read_buff[56] = fifo_count;
+		CAM_DBG(CAM_OIS,"read done fifo_count %x %x%x, %x%x qtimer %lld ns_1 %lld laps %lld",
+			fifo_count, temp_buff[0], temp_buff[1], temp_buff[2], temp_buff[3], qtimer_ns, qtimer_ns_1, (qtimer_ns-qtimer_ns_1));
+#if 0
+		{
+			uint32_t shiftX = 0;
+			uint32_t shiftY = 0;
+			rc = camera_io_dev_read(&(o_ctrl->io_master_info), 0x1104, &shiftX, CAMERA_SENSOR_I2C_TYPE_WORD, CAMERA_SENSOR_I2C_TYPE_WORD);
+			if (rc < 0)
+			{
+				CAM_ERR(CAM_OIS, "ois type=%d,Continue read failed, rc:%d, retry:%d",o_ctrl->ois_type, rc, 0);
+			}
+			rc = camera_io_dev_read(&(o_ctrl->io_master_info), 0x1106, &shiftY, CAMERA_SENSOR_I2C_TYPE_WORD, CAMERA_SENSOR_I2C_TYPE_WORD);
+			if (rc < 0)
+			{
+				CAM_ERR(CAM_OIS, "ois type=%d,Continue read failed, rc:%d, retry:%d",o_ctrl->ois_type, rc, 0);
+			}
+			CAM_DBG(CAM_OIS,"read done shiftX 0x%x, shiftY 0x%x", shiftX, shiftY);
+		}
+#endif
+		if(fifo_count > OIS_HALL_DATA_SET_COUNT-1) {
+				CAM_DBG(CAM_OIS,"ois have drop data fifo_count=%d",fifo_count);
+				fifo_count = OIS_HALL_DATA_SET_COUNT-1;
+				read_buff[56] = fifo_count;
+		}
+
+		// 0        1..3            4.5.6.7       40.41.42.43
+		// fifo   reservred        HALL XY0        HALL XY9
+		// big-little ending/new-old data order convert
+		temp_data = &temp_buff[4];
+		if (fifo_count > 0)
+		{
+			j=0;
+			for(i=((fifo_count * OIS_HALL_DATA_SET_SIZE/4)-1); i>=0; i--,j++)
+			{
+				read_buff[i*4+1] = temp_data[j*4+0]; // HALL X
+				read_buff[i*4+0] = temp_data[j*4+1]; // HALL X
+				read_buff[i*4+3] = temp_data[j*4+2]; // HALL Y
+				read_buff[i*4+2] = temp_data[j*4+3]; // HALL Y
+			}
+		}
+
+		delayCount = 0; // ((uint32_t)(temp_buff[j + 1] << 8) | temp_buff[j + 2]);
+		delayTime = delayCount * 17800; //nano sec
+		qtimer_ns -= delayTime;
+
+		//set qtimer
+		read_buff[48] = (qtimer_ns >> 56) & 0xFF;
+		read_buff[49] = (qtimer_ns >> 48) & 0xFF;
+		read_buff[50] = (qtimer_ns >> 40) & 0xFF;
+		read_buff[51] = (qtimer_ns >> 32)& 0xFF;
+		read_buff[52] = (qtimer_ns >> 24) & 0xFF;
+		read_buff[53] = (qtimer_ns >> 16) & 0xFF;
+		read_buff[54] = (qtimer_ns >> 8) & 0xFF;
+		read_buff[55] = qtimer_ns & 0xFF;
+
+		CAM_DBG(CAM_OIS,"READ fifo_count=%d,i=%d,j=%d",fifo_count, i, j);
+		CAM_DBG(CAM_OIS,"Rqtimer value: 0x%x", qtimer_ns);
+
+		if(fifo_count > 0) {
+			for(i=0 ; i<fifo_count; i++){
+				hall_data_x=((read_buff[i*4]<<8)+read_buff[i*4+1]);
+				hall_data_y=((read_buff[i*4+2]<<8)+read_buff[i*4+3]);
+				CAM_DBG(CAM_OIS,"hall_data_x=%d hall_data_y=%d ",
+					hall_data_x,
+					hall_data_y);
+			}
+		}
+	}
+	kfree(temp_buff);
+	return rc;
+}
+
 void ReadOISHALLData(struct cam_ois_ctrl_t *o_ctrl, void *data)
 {
 	uint32_t data_size = 0;
@@ -3331,6 +3482,34 @@ void DeinitOIS(struct cam_ois_ctrl_t *o_ctrl)
 	}
 }
 
+int update_ois_firmware_1217s(void *arg)
+{
+	struct cam_ois_ctrl_t *o_ctrl = (struct cam_ois_ctrl_t *)arg;
+	int rc = 0;
+	CAM_INFO(CAM_OIS, "update_ois_firmware_1217s");
+	o_ctrl->io_master_info.master_type = CCI_MASTER;
+	o_ctrl->io_master_info.cci_client->sid = 0x61;
+	o_ctrl->io_master_info.cci_client->i2c_freq_mode = I2C_FAST_PLUS_MODE;
+	o_ctrl->io_master_info.cci_client->retries = 3;
+	o_ctrl->io_master_info.cci_client->id_map = 0;
+	ois_ctrls[CAM_OIS_MASTER] = o_ctrl;
+	ois_ctrl = o_ctrl;
+
+	cam_ois_power_up(o_ctrl);
+	msleep(10);
+
+	rc = sem1217s_fw_download(o_ctrl);
+	if(rc == 0)
+	{
+		CAM_INFO(CAM_OIS, "sm1217s download successed!");
+	}
+
+	cam_ois_power_down(o_ctrl);
+	CAM_INFO(CAM_OIS, "exit update_ois_firmware_1217s rc:%d", rc);
+
+	return rc;
+}
+
 int update_ois_firmware_129(void *arg)
 {
 	struct cam_ois_ctrl_t *o_ctrl = (struct cam_ois_ctrl_t *)arg;
@@ -3408,6 +3587,11 @@ void InitOISResource(struct cam_ois_ctrl_t *o_ctrl)
 		{
 			CAM_INFO(CAM_OIS, "create ois download fw thread");
 			o_ctrl->ois_downloadfw_thread = kthread_run(update_ois_firmware_129, o_ctrl, o_ctrl->ois_name);
+		}
+		else if (strstr(o_ctrl->ois_name, "SEM1217S"))
+		{
+			CAM_ERR(CAM_OIS, "create ois download fw thread for sm1217");
+			o_ctrl->ois_downloadfw_thread = kthread_run(update_ois_firmware_1217s, o_ctrl, o_ctrl->ois_name);
 		}
 
 		if (o_ctrl->ois_type == CAM_OIS_MASTER)
@@ -3576,6 +3760,89 @@ free_power_settings:
 }
 
 int32_t oplus_cam_ois_construct_default_power_setting_129(
+	struct cam_sensor_power_ctrl_t *power_info)
+{
+	int rc = 0;
+
+	power_info->power_setting_size = 6;
+	power_info->power_setting = kzalloc(sizeof(struct cam_sensor_power_setting)*6, GFP_KERNEL);
+	if (!power_info->power_setting)
+		return -ENOMEM;
+
+	power_info->power_setting[0].seq_type = SENSOR_VIO;
+	power_info->power_setting[0].seq_val = CAM_VIO;
+	power_info->power_setting[0].config_val = 1;
+	power_info->power_setting[0].delay = 0;
+
+	power_info->power_setting[1].seq_type = SENSOR_VDIG;
+	power_info->power_setting[1].seq_val = CAM_VDIG;
+	power_info->power_setting[1].config_val = 1;
+	power_info->power_setting[1].delay = 0;
+
+	power_info->power_setting[2].seq_type = SENSOR_CUSTOM_REG1;
+	power_info->power_setting[2].seq_val = CAM_V_CUSTOM1;
+	power_info->power_setting[2].config_val = 1;
+	power_info->power_setting[2].delay = 0;
+
+	power_info->power_setting[3].seq_type = SENSOR_VAF;
+	power_info->power_setting[3].seq_val = CAM_VAF;
+	power_info->power_setting[3].config_val = 1;
+	power_info->power_setting[3].delay = 10;
+
+	power_info->power_setting[4].seq_type = SENSOR_VANA;
+	power_info->power_setting[4].seq_val = CAM_VANA;
+	power_info->power_setting[4].config_val = 1;
+	power_info->power_setting[4].delay = 0;
+
+	power_info->power_setting[5].seq_type = SENSOR_CUSTOM_REG2;
+	power_info->power_setting[5].seq_val = CAM_V_CUSTOM2;
+	power_info->power_setting[5].config_val = 1;
+	power_info->power_setting[5].delay = 10;
+
+	power_info->power_down_setting_size = 6;
+	power_info->power_down_setting =
+		kzalloc(sizeof(struct cam_sensor_power_setting)*6,
+			GFP_KERNEL);
+	if (!power_info->power_down_setting) {
+		rc = -ENOMEM;
+		goto free_power_settings;
+	}
+
+	power_info->power_down_setting[0].seq_type = SENSOR_VAF;
+	power_info->power_down_setting[0].seq_val = CAM_VAF;
+	power_info->power_down_setting[0].config_val = 0;
+
+	power_info->power_down_setting[1].seq_type = SENSOR_VIO;
+	power_info->power_down_setting[1].seq_val = CAM_VIO;
+	power_info->power_down_setting[1].config_val = 0;
+
+	power_info->power_down_setting[2].seq_type = SENSOR_VANA;
+	power_info->power_down_setting[2].seq_val = CAM_VANA;
+	power_info->power_down_setting[2].config_val = 0;
+
+	power_info->power_down_setting[3].seq_type = SENSOR_CUSTOM_REG2;
+	power_info->power_down_setting[3].seq_val = CAM_V_CUSTOM2;
+	power_info->power_down_setting[3].config_val = 0;
+
+	power_info->power_down_setting[4].seq_type = SENSOR_CUSTOM_REG1;
+	power_info->power_down_setting[4].seq_val = CAM_V_CUSTOM1;
+	power_info->power_down_setting[4].config_val = 0;
+
+	power_info->power_down_setting[5].seq_type = SENSOR_VDIG;
+	power_info->power_down_setting[5].seq_val = CAM_VDIG;
+	power_info->power_down_setting[5].config_val = 0;
+
+
+	return rc;
+
+free_power_settings:
+	kfree(power_info->power_setting);
+	power_info->power_setting = NULL;
+	power_info->power_setting_size = 0;
+	return rc;
+}
+
+int32_t oplus_cam_ois_construct_default_power_setting_1217s(
 	struct cam_sensor_power_ctrl_t *power_info)
 {
 	int rc = 0;
@@ -3861,6 +4128,21 @@ uint16_t I2C_OIS_16bit__read(uint32_t addr)
 	return (uint16_t)data;
 }
 
+uint16_t sem1217_16bit_read(uint32_t addr)
+{
+	uint32_t data = 0xff;
+	int32_t rc = 0;
+
+	if (ois_ctrl == NULL) {
+		CAM_ERR(CAM_OIS, "Invalid Args");
+		return -EINVAL;
+	}
+
+	rc = camera_io_dev_read(&(ois_ctrl->io_master_info), addr,&data,
+	               CAMERA_SENSOR_I2C_TYPE_WORD, CAMERA_SENSOR_I2C_TYPE_WORD);
+	return (uint16_t)data;
+}
+
 uint32_t I2C_OIS_32bit__read(uint32_t addr)
 {
 	uint32_t data = 0xff;
@@ -4045,6 +4327,22 @@ uint8_t I2C_FW_8bit__read(uint32_t addr)
 	return (uint8_t)data;
 }
 
+uint8_t sem1217_8bit_read(uint32_t addr)
+{
+	uint32_t data = 0xff;
+	int32_t rc = 0;
+
+	if (ois_ctrl == NULL) {
+		CAM_ERR(CAM_OIS, "Invalid Args");
+		return -EINVAL;
+	}
+
+	rc = camera_io_dev_read(&(ois_ctrl->io_master_info), addr,&data,
+			CAMERA_SENSOR_I2C_TYPE_WORD, CAMERA_SENSOR_I2C_TYPE_BYTE);
+
+	return (uint8_t)data;
+}
+
 uint32_t I2C_FM_32bit__read(uint32_t addr)
 {
 	uint32_t data = 0xff;
@@ -4106,6 +4404,45 @@ int I2C_FM_8bit_write(uint32_t addr, uint8_t data)
 		}
 	}
 	ois_ctrls[CAM_OIS_SLAVE]->io_master_info.cci_client->sid = sid_defult;
+	return rc;
+}
+
+int sem1217_8bit_write(uint32_t addr, uint8_t data)
+{
+	int32_t rc = 0;
+	int retry = 3;
+	int i;
+
+	struct cam_sensor_i2c_reg_array i2c_write_setting = {
+		.reg_addr = addr,
+		.reg_data = data,
+		.delay = 0x00,
+		.data_mask = 0x00,
+	};
+	struct cam_sensor_i2c_reg_setting i2c_write = {
+		.reg_setting = &i2c_write_setting,
+		.size = 1,
+		.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD,
+		.data_type = CAMERA_SENSOR_I2C_TYPE_BYTE,
+		.delay = 0x00,
+	};
+
+	if (ois_ctrl == NULL) {
+		CAM_ERR(CAM_OIS, "Invalid Args");
+		return -EINVAL;
+	}
+
+	for(i = 0; i < retry; i++) {
+		rc = camera_io_dev_write(&(ois_ctrl->io_master_info), &i2c_write);
+		if (rc < 0) {
+			CAM_ERR(CAM_OIS, "ois type=%d,I2C_OIS_8bit_write 0x%04x failed, retry:%d", ois_ctrl->ois_type, addr, i+1);
+		}
+		else
+		{
+			return rc;
+		}
+	}
+
 	return rc;
 }
 
@@ -4230,7 +4567,76 @@ void I2C_FM_block_write(void* register_data,int size)
 }
 
 
+int sem1217_block_write(void* register_data,int size)
+{
+	uint8_t *data =  (uint8_t *)register_data;
+	int32_t rc = 0;
+	int i = 0;
+	int reg_data_cnt = size - 2;
+	int continue_cnt = 0;
+	int retry = 3;
+	static struct cam_sensor_i2c_reg_array *i2c_write_setting_gl = NULL;
 
+	struct cam_sensor_i2c_reg_setting i2c_write;
+
+	if (ois_ctrl == NULL)
+	{
+		CAM_ERR(CAM_OIS, "Invalid Args");
+		return -1;
+	}
+
+	if (i2c_write_setting_gl == NULL)
+	{
+		i2c_write_setting_gl = (struct cam_sensor_i2c_reg_array *)kzalloc(
+		                           sizeof(struct cam_sensor_i2c_reg_array)*MAX_SEM1217S_DATA_NUM*2, GFP_KERNEL);
+		if(!i2c_write_setting_gl)
+		{
+			CAM_ERR(CAM_OIS, "Alloc i2c_write_setting_gl failed");
+			return -1;
+		}
+	}
+
+	memset(i2c_write_setting_gl, 0, sizeof(struct cam_sensor_i2c_reg_array)*MAX_SEM1217S_DATA_NUM*2);
+
+	for(i = 0; i< reg_data_cnt; i++)
+	{
+		if (i == 0)
+		{
+			i2c_write_setting_gl[continue_cnt].reg_addr = ((data[0]&0xff)<<8)|(data[1]&0xff);
+			i2c_write_setting_gl[continue_cnt].reg_data = data[2];
+			i2c_write_setting_gl[continue_cnt].delay = 0x00;
+			i2c_write_setting_gl[continue_cnt].data_mask = 0x00;
+		}
+		else
+		{
+			i2c_write_setting_gl[continue_cnt].reg_data = data[i+2];
+			i2c_write_setting_gl[continue_cnt].delay = 0x00;
+			i2c_write_setting_gl[continue_cnt].data_mask = 0x00;
+		}
+		continue_cnt++;
+	}
+	i2c_write.reg_setting = i2c_write_setting_gl;
+	i2c_write.size = continue_cnt;
+	i2c_write.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+	i2c_write.data_type = CAMERA_SENSOR_I2C_TYPE_BYTE;
+	i2c_write.delay = 0x01;
+
+	for(i = 0; i < retry; i++)
+	{
+		rc = camera_io_dev_write_continuous(&(ois_ctrl->io_master_info),
+		                                    &i2c_write, 1);
+		if (rc < 0)
+		{
+			CAM_ERR(CAM_OIS, "ois type=%d,Continue write failed, rc:%d, retry:%d",ois_ctrl->ois_type, rc, i+1);
+		}
+		else
+		{
+			break;
+		}
+	}
+
+	return rc;
+}
 
 void Wait(int us)
 {

@@ -34,6 +34,7 @@ int cam_ois_power_up(struct cam_ois_ctrl_t *o_ctrl);
 int cam_ois_power_down(struct cam_ois_ctrl_t *o_ctrl);
 
 int ois_power_down_thread(void *arg);
+int cam_ois_do_init_in_advance(struct cam_ois_ctrl_t *o_ctrl);
 #endif
 
 #endif

@@ -46,6 +46,9 @@ enum cam_actuator_state {
 	CAM_ACTUATOR_ACQUIRE,
 	CAM_ACTUATOR_CONFIG,
 	CAM_ACTUATOR_START,
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	CAM_ACTUATOR_LOCK,
+#endif
 };
 
 #ifdef OPLUS_FEATURE_CAMERA_COMMON
@@ -147,11 +150,20 @@ struct cam_actuator_ctrl_t {
 	uint32_t macroPos;
 	enum cam_actuator_power_state aon_af_power;
 	bool actuator_power_down_thread_exit;
+	bool actuator_power_down_second_thread_exit;
 	enum cam_actuator_power_state cam_atc_power_state;
+	enum cam_actuator_power_state cam_atc_power_second_state;
 	struct mutex actuator_parklens_mutex;
+	struct mutex actuator_parklens_second_mutex;
 	bool actuator_parklens_thread_exit;
+	bool actuator_parklens_second_thread_exit;
 	uint32_t is_af_parklens;
-
+	uint32_t is_only_powerdown;
+	bool camera_actuator_shake_detect_enable;
+	enum cam_actuator_state cam_act_last_state;
+	uint32_t ssd_actuator_cci_i2c_master_num;
+	uint32_t ssd_actuator_cci_num;
+	struct mutex actuator_ioctl_mutex;
 #endif
 };
 

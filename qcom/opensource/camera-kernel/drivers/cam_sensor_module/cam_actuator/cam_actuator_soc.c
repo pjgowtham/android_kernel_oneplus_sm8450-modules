@@ -25,6 +25,9 @@ int32_t cam_actuator_parse_dt(struct cam_actuator_ctrl_t *a_ctrl,
 
 	/* Initialize mutex */
 	mutex_init(&(a_ctrl->actuator_mutex));
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	mutex_init(&(a_ctrl->actuator_ioctl_mutex));
+#endif
 
 	rc = cam_soc_util_get_dt_properties(soc_info);
 	if (rc < 0) {
@@ -66,6 +69,20 @@ int32_t cam_actuator_parse_dt(struct cam_actuator_ctrl_t *a_ctrl,
 	else
 	{
 		CAM_INFO(CAM_ACTUATOR, "read is_af_parklens success, value:%d", a_ctrl->is_af_parklens);
+	}
+#endif
+
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	rc = of_property_read_u32(of_node, "is_only_powerdown", &a_ctrl->is_only_powerdown);
+	if (rc)
+	{
+		a_ctrl->is_only_powerdown = 0;
+ 		CAM_ERR(CAM_ACTUATOR, "get failed for is_only_powerdown parklens = %d",a_ctrl->is_only_powerdown);
+ 	}
+	else
+	{
+ 		CAM_INFO(CAM_ACTUATOR, "read is_only_powerdown parklens success, value:%d", a_ctrl->is_only_powerdown);
 	}
 #endif
 

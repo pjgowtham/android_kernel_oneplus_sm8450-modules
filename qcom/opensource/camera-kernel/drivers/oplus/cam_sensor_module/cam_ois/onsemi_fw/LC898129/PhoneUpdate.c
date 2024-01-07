@@ -530,9 +530,10 @@ UINT_8	FlashBlockErase( UINT_8 SelMat , UINT_32 SetAddress )
 	if( ans != 0 )	return( ans ) ;
 
 	WritePermission() ;
-	if( SelMat == TRIM_MAT ){
-		IOWrite32A( 0xE07CCC, 0x00005B29 ) ;
-	} else if (SelMat != USER_MAT ){
+	//if( SelMat == TRIM_MAT ){
+	//	IOWrite32A( 0xE07CCC, 0x00005B29 ) ;
+	//} else
+	if (SelMat != USER_MAT ){
 		IOWrite32A( 0xE07CCC, 0x0000C5AD ) ;
 	}
 	AdditionalUnlockCodeSet() ;
@@ -714,8 +715,9 @@ UINT_8 FlashProgram129( UINT_8 ModuleVendor, UINT_8 ActVer,struct cam_ois_ctrl_t
 {
 	CODE_TBL_EXT* ptr ;
 	UINT_32 ois_version = 0;
-	UINT_32 fw_version = 0;
+	UINT_64 fw_version = 0;
 	UINT_32 oem_version = 0;
+	INT_32  sizeFromDts = 0;
 	int32_t rc = 0;
 	struct cam_hw_soc_info *soc_info = &o_ctrl->soc_info;
 	struct device_node *of_node = NULL;
@@ -725,11 +727,14 @@ UINT_8 FlashProgram129( UINT_8 ModuleVendor, UINT_8 ActVer,struct cam_ois_ctrl_t
 
 	ptr = ( CODE_TBL_EXT * )CdTbl ;
 
-	ptr->SizeFromCode = of_property_count_u8_elems(of_node, "fw_data");
-	if (ptr->SizeFromCode <= 0) {
+	sizeFromDts = of_property_count_u8_elems(of_node, "fw_data");
+	if (sizeFromDts <= 0) {
 		CAM_ERR(CAM_OIS, "ptr->SizeFromCode <= 0 s:%d",of_property_count_u8_elems(of_node, "fw_data"));
 		return 0;
 	}
+
+	ptr->SizeFromCode = sizeFromDts;
+
 	CAM_INFO(CAM_OIS,"allocating fw_data_size: %d", ptr->SizeFromCode);
 
 	vaddr = vmalloc(sizeof(uint8_t) * ptr->SizeFromCode);
@@ -762,10 +767,10 @@ UINT_8 FlashProgram129( UINT_8 ModuleVendor, UINT_8 ActVer,struct cam_ois_ctrl_t
 		if( ptr->Index == ( ((UINT_16)ModuleVendor << 8) + ActVer) ) {
 			if((!RamRead32A(0x8000, & ois_version)) && (!RamRead32A(0x8004, & oem_version)))
 			{
-				fw_version = ptr->FromCode[158] << 24 |
-					ptr->FromCode[159] << 16 |
-					ptr->FromCode[160] << 8  |
-					ptr->FromCode[161];
+				fw_version = ((UINT_32)ptr->FromCode[158]) << 24 |
+					((UINT_32)ptr->FromCode[159]) << 16 |
+					((UINT_32)ptr->FromCode[160]) << 8  |
+					(UINT_32)ptr->FromCode[161];
 				CAM_INFO(CAM_OIS, "ois_version:0x%x  fw_version:0x%x oem_version:0x%x" ,ois_version, fw_version, oem_version);
 				if(ois_version >= fw_version && (oem_version == 0x000107ff || oem_version == 0x00010700)){
 					CAM_INFO(CAM_OIS, "ois_version >= fw_version no need to update");

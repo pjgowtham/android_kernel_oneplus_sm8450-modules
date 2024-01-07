@@ -16,11 +16,18 @@ int32_t oplus_cam_actuator_driver_cmd(struct cam_actuator_ctrl_t *a_ctrl, void *
 void oplus_cam_actuator_power_down(struct cam_actuator_ctrl_t *a_ctrl);
 int32_t oplus_cam_actuator_power_up(struct cam_actuator_ctrl_t *a_ctrl, int32_t rc);
 int actuator_power_down_thread(void *arg);
+
+void oplus_cam_second_actuator_power_down(struct cam_actuator_ctrl_t *a_ctrl);
+int32_t oplus_cam_second_actuator_power_up(struct cam_actuator_ctrl_t *a_ctrl, int32_t rc);
+int actuator_power_down_second_thread(void *arg);
+int actuator_power_up_parklens_second_thread(void *arg);
+
 void oplus_cam_actuator_parklens(struct cam_actuator_ctrl_t *a_ctrl);
 int actuator_power_up_parklens_thread(void *arg);
+int actuator_power_up_parklens_second_thread(void *arg);
 void oplus_cam_parklens_init(struct cam_actuator_ctrl_t *a_ctrl);
 uint32_t oplus_cam_actuator_read_vaule(struct cam_actuator_ctrl_t *a_ctrl, uint32_t addr);
 int32_t cam_actuator_ramwrite(struct cam_actuator_ctrl_t *a_ctrl,
-	uint32_t addr, uint32_t data, unsigned short mdelay,enum camera_sensor_i2c_type addr_type,enum camera_sensor_i2c_type data_type);
+uint32_t addr, uint32_t data, unsigned short mdelay,enum camera_sensor_i2c_type addr_type,enum camera_sensor_i2c_type data_type);
 
 #endif /* _CAM_ACTUATOR_CORE_H_ */

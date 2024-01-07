@@ -148,11 +148,13 @@ struct cam_ois_ctrl_t {
 	struct task_struct *ois_poll_thread;
 	struct kfifo ois_hall_data_fifo;
 	struct kfifo ois_hall_data_fifoV2;
+	bool isDeviceAcquired;
 #ifdef ENABLE_OIS_DELAY_POWER_DOWN
 	struct mutex ois_power_down_mutex;
 	enum cam_ois_power_down_thread_state ois_power_down_thread_state;
 	enum cam_ois_power_state ois_power_state;
 	bool ois_power_down_thread_exit;
+	bool is_ois_thread_running;
 #endif
 	uint8_t ois_eis_function;
 	uint8_t ois_change_cci;
@@ -162,6 +164,7 @@ struct cam_ois_ctrl_t {
 	enum cam_ois_download_fw_state ois_download_fw_done;
 	enum cam_ois_close_state ois_fd_have_close_state;
 	int  cam_ois_download_fw_in_advance;
+	struct task_struct *ois_init_thread;
 #endif
 };
 

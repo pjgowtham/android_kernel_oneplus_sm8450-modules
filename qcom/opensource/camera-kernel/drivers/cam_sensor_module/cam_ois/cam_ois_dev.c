@@ -71,6 +71,9 @@ static long cam_ois_subdev_ioctl(struct v4l2_subdev *sd,
 	case VIDIOC_CAM_SENSOR_STOP:
 		cam_ois_do_power_down(o_ctrl);
 		break;
+	case VIDIOC_OIS_INIT_IN_ADVANCE:
+		cam_ois_do_init_in_advance(o_ctrl);
+		break;
 #endif
 	default:
 		CAM_ERR(CAM_OIS, "Wrong IOCTL cmd: %u", cmd);
@@ -409,6 +412,7 @@ static int cam_ois_component_bind(struct device *dev,
 		CAM_ERR(CAM_OIS, "failed to init ois_hall_data_fifoV2");
 	}
 	InitOISResource(o_ctrl);
+	o_ctrl->is_ois_thread_running = FALSE;
 #endif
 	return rc;
 unreg_subdev:
