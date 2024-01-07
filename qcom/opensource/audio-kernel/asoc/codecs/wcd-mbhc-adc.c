@@ -308,6 +308,10 @@ static int wcd_check_cross_conn(struct wcd_mbhc *mbhc)
 	u8 adc_mode = 0;
 	u8 elect_ctl = 0;
 	u8 adc_en = 0;
+#ifdef OPLUS_ARCH_EXTENDS
+	int micbias_mv = 0;
+	int hphl_cross_conn_thr = 0, hphr_cross_conn_thr = 0;
+#endif /* OPLUS_ARCH_EXTENDS */
 
 #ifdef OPLUS_ARCH_EXTENDS
 #undef pr_debug
@@ -372,8 +376,13 @@ static int wcd_check_cross_conn(struct wcd_mbhc *mbhc)
 	}
 	#else
 	pr_debug("%s: hphl_adc_res = %d, hphr_adc_res = %d.\n", __func__, hphl_adc_res, hphr_adc_res);
-	if (hphl_adc_res > mbhc->hphl_cross_conn_thr / 2 ||
-	    hphr_adc_res > mbhc->hphr_cross_conn_thr / 2) {
+	micbias_mv = wcd_mbhc_get_micbias(mbhc);
+	hphl_cross_conn_thr = (mbhc->hphl_cross_conn_thr * micbias_mv) / WCD_MBHC_ADC_MICBIAS_MV;
+	hphr_cross_conn_thr = (mbhc->hphr_cross_conn_thr * micbias_mv) / WCD_MBHC_ADC_MICBIAS_MV;
+	pr_debug("%s: hphl_cross_conn_thr = %d\n", __func__, hphl_cross_conn_thr);
+	pr_debug("%s: hphr_cross_conn_thr = %d\n", __func__, hphr_cross_conn_thr);
+	if (hphl_adc_res > hphl_cross_conn_thr ||
+	    hphr_adc_res > hphr_cross_conn_thr) {
 		plug_type = MBHC_PLUG_TYPE_GND_MIC_SWAP;
 		pr_debug("%s: Cross connection identified\n", __func__);
 	} else {
@@ -690,7 +699,7 @@ static void wcd_mbhc_adc_detect_plug_type(struct wcd_mbhc *mbhc)
 	#ifdef OPLUS_ARCH_EXTENDS
 	/* Add for dio switch plug in pop noise. */
 	/* change micbias to 1v first */
-	if (mbhc->need_cross_conn) {
+	if (mbhc->need_cross_conn && mbhc->mbhc_cfg && mbhc->mbhc_cfg->swap_gnd_mic) {
 		pr_debug("%s: change micbias to 1v\n", __func__);
 		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_MICB2_VOUT, 0x00);
 	}
@@ -872,7 +881,7 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 	struct wcd_mbhc *mbhc;
 	struct snd_soc_component *component;
 	enum wcd_mbhc_plug_type plug_type = MBHC_PLUG_TYPE_INVALID;
-	unsigned long timeout;
+	unsigned long timeout = 0;
 	bool wrk_complete = false;
 	int pt_gnd_mic_swap_cnt = 0;
 	int no_gnd_mic_swap_cnt = 0;
@@ -880,14 +889,14 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 	int ret = 0;
 	int spl_hs_count = 0;
 	int output_mv = 0;
-	int cross_conn;
+	int cross_conn = 0;
 	int try = 0;
-	int hs_threshold, micbias_mv;
+	int hs_threshold = 0, micbias_mv = 0;
 	#ifdef OPLUS_ARCH_EXTENDS
 	int headset_count = 0;
 	int headphone_count = 0;
 	int high_hph_count = 0;
-	int hph_threshold;
+	int hph_threshold = 0;
 	enum wcd_mbhc_plug_type plug_type_second = MBHC_PLUG_TYPE_INVALID;
 	int output_mv_second = 0;
 	/* added for record the MBHC_PLUG_TYPE_GND_MIC_SWAP type has been detected after mic swap */
@@ -912,6 +921,8 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 	micbias_mv = wcd_mbhc_get_micbias(mbhc);
 	hs_threshold = wcd_mbhc_adc_get_hs_thres(mbhc);
 	#ifdef OPLUS_ARCH_EXTENDS
+	/* Add for log */
+	pr_info("%s: micbias_mv %d mv\n", __func__, micbias_mv);
 	pr_info("%s: hs_threshold %d mv\n", __func__, hs_threshold);
 	hph_threshold = wcd_mbhc_adc_get_hph_thres(mbhc);
 	pr_info("%s: hph_threshold %d mv\n", __func__, hph_threshold);
@@ -935,10 +946,6 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 			 __func__, plug_type);
 		goto correct_plug_type;
 	}
-
-	/* Find plug type */
-	output_mv = wcd_measure_adc_continuous(mbhc);
-	plug_type = wcd_mbhc_get_plug_from_adc(mbhc, output_mv);
 	#else /* OPLUS_ARCH_EXTENDS */
 	if (mbhc->need_cross_conn && mbhc->mbhc_cfg->swap_gnd_mic) {
 		/* Check for cross connection */
@@ -950,15 +957,21 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 		/* close micbias before switch gnd and mic for pop noise issue */
 		pr_debug("%s: close micbias before switch gnd and mic for pop noise issue.\n", __func__);
 		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_MICB_CTRL, 0);
-		msleep(10);
+		usleep_range(10000, 10100);
 
 		if (cross_conn > 0) {
-			mbhc->mbhc_cfg->swap_gnd_mic(component,true);
+			mbhc->mbhc_cfg->swap_gnd_mic(component, true);
 		}
 
 		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_MICB2_VOUT, 0x22);
 		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_MICB_CTRL, 1);
-		msleep(3);
+		/* Add 10ms delay for micbias to settle */
+		usleep_range(10000, 10100);
+		/* After micbias change, reget value for micbias_mv/hs_threshold */
+		micbias_mv = wcd_mbhc_get_micbias(mbhc);
+		pr_info("%s: get micbias_mv %d mv\n", __func__, micbias_mv);
+		hs_threshold = wcd_mbhc_adc_get_hs_thres(mbhc);
+		hph_threshold = wcd_mbhc_adc_get_hph_thres(mbhc);
 
 		try = 0;
 		while (try <= mbhc->swap_thr && cross_conn) {
@@ -971,25 +984,24 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 			swap_type_cnt = true;
 		}
 	}
+	#endif /* OPLUS_ARCH_EXTENDS */
 
 	/* Find plug type */
 	output_mv = wcd_measure_adc_continuous(mbhc);
-	pr_info("%s: output_mv %d\n", __func__, output_mv);
 	plug_type = wcd_mbhc_get_plug_from_adc(mbhc, output_mv);
-	#endif /* OPLUS_ARCH_EXTENDS */
 
 	#ifdef OPLUS_ARCH_EXTENDS
 	if (((plug_type != MBHC_PLUG_TYPE_HEADSET) ||
 			(output_mv < TRY_SWITCH_THRESHOLD_MV)) &&
 	    (mbhc->mbhc_cfg->enable_usbc_analog) &&
 	    (!wcd_swch_level_remove(mbhc))) {
-	    if (mbhc->mbhc_cfg->swap_gnd_mic &&
+		if (mbhc->mbhc_cfg->swap_gnd_mic &&
 			mbhc->mbhc_cfg->swap_gnd_mic(component, true)) {
-			pr_debug("%s: check headphone,flip switch\n", __func__);
+			pr_info("%s: check headphone, flip switch\n", __func__);
 			msleep(10);
 			output_mv_second = wcd_measure_adc_continuous(mbhc);
 			plug_type_second = wcd_mbhc_get_plug_from_adc(mbhc, output_mv_second);
-			pr_err("%s: second check output_mv = %d, plug_type = %d\n",
+			pr_info("%s: second check output_mv = %d, plug_type = %d\n",
 				__func__, output_mv_second, plug_type_second);
 			//not headset, switch back to last connection state, else stay new connection state
 			if (plug_type_second != MBHC_PLUG_TYPE_HEADSET) {
@@ -1027,7 +1039,7 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 		#ifdef OPLUS_ARCH_EXTENDS
 		if(mbhc->mbhc_cfg->enable_usbc_analog &&
 			mbhc->current_plug == MBHC_PLUG_TYPE_HEADSET) {
-			pr_err("%s: headset report\n", __func__);
+			pr_info("%s: headset report\n", __func__);
 			goto enable_supply;
 		}
 		#endif /* OPLUS_ARCH_EXTENDS */
@@ -1142,7 +1154,7 @@ correct_plug_type:
 						(mbhc->mbhc_cfg->enable_usbc_analog) && (!wcd_swch_level_remove(mbhc))) {
 						pr_info("%s: special headphone insert need check mic adc to figure out type\n", __func__);
 						plug_type = wcd_mbhc_get_plug_from_adc(mbhc, output_mv);
-						pr_err("%s: output_mv = %d, plug_type = %d\n", __func__, output_mv, plug_type);
+						pr_info("%s: output_mv = %d, plug_type = %d\n", __func__, output_mv, plug_type);
 					} else {
 					    plug_type = MBHC_PLUG_TYPE_GND_MIC_SWAP;
 					}
@@ -1250,7 +1262,7 @@ correct_plug_type:
 						if (headphone_count < 5) {
 						    continue;
 						}
-						pr_err("%s: headphone_count = %d\n",
+						pr_info("%s: headphone_count = %d\n",
 						    __func__, headphone_count);
 					}
 					#endif /* OPLUS_ARCH_EXTENDS */
@@ -1362,7 +1374,9 @@ enable_supply:
 	 */
 
 	#ifdef OPLUS_ARCH_EXTENDS
-	if (plug_type == MBHC_PLUG_TYPE_HEADSET) {
+	/* Add for delay 500ms before close the micbias to solve iPhone can't record issue */
+	/* If micbias alway on, no need to add delay */
+	if ((plug_type == MBHC_PLUG_TYPE_HEADSET) && !mbhc->micbias_enable) {
 		msleep(500);
 	}
 	#endif
