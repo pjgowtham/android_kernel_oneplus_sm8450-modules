@@ -14,7 +14,7 @@
 
 int iris_dbgfs_emv_init(struct dsi_display *display);
 void irisSetDisableDsppPq(bool enable);
-void irisSetExtMvFrc(struct extmv_frc_meta meta);
+void irisSetExtMvFrc(struct extmv_frc_meta *meta);
 bool iris_emv_game_size_changed(void);
 int iris_emv_mode_get(void);
 void iris_emv_clockinout(int index);

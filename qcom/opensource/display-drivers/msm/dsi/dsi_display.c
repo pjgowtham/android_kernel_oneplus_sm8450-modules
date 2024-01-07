@@ -26,6 +26,10 @@
 #include "dsi_iris_api.h"
 #endif
 
+#ifdef OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION
+#include "../oplus/oplus_display_temp_compensation.h"
+#endif /* OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION */
+
 #ifdef OPLUS_FEATURE_DISPLAY
 #include "sde_trace.h"
 #include "../oplus/oplus_adfr.h"
@@ -36,7 +40,6 @@
 #include <linux/notifier.h>
 #include "../oplus/oplus_display_private_api.h"
 #include "../oplus/oplus_display_panel.h"
-#include "../oplus/oplus_display_temperature.h"
 
 extern int oplus_display_panel_get_id2(void);
 extern int lcd_closebl_flag;
@@ -278,6 +281,7 @@ int dsi_display_set_backlight(struct drm_connector *connector,
 
 #ifdef OPLUS_FEATURE_DISPLAY
 	bl_lvl = oplus_panel_silence_backlight(panel, bl_lvl);
+	oplus_printf_backlight_log(dsi_display, bl_lvl);
 #endif /* OPLUS_FEATURE_DISPLAY */
 
 	panel->bl_config.bl_level = bl_lvl;
@@ -1129,9 +1133,11 @@ int dsi_display_check_status(struct drm_connector *connector, void *display,
 
 	panel = dsi_display->panel;
 
-#ifdef OPLUS_FEATURE_DISPLAY
-	oplus_display_temp_check(dsi_display);
-#endif /* OPLUS_FEATURE_DISPLAY */
+#ifdef OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION
+	if (oplus_temp_compensation_is_supported()) {
+		oplus_temp_compensation_temp_check(display);
+	}
+#endif /* OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION */
 
 	dsi_panel_acquire_panel_lock(panel);
 
@@ -4493,9 +4499,14 @@ static int dsi_display_res_init(struct dsi_display *display)
 		goto error_ctrl_put;
 	}
 
+#ifdef OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION
+	oplus_temp_compensation_init(display->panel);
+#endif /* OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION */
+
 #if defined(CONFIG_PXLW_IRIS) || defined(CONFIG_PXLW_SOFT_IRIS)
 	iris_dsi_display_res_init(display);
 #endif
+
 	display->panel->te_using_watchdog_timer |= display->sw_te_using_wd;
 
 	if (!dsi_display_validate_panel_resources(display)) {
@@ -7510,7 +7521,7 @@ int dsi_display_get_modes(struct dsi_display *display,
 		}
 
 #ifdef OPLUS_FEATURE_DISPLAY
-		if (display_mode.vsync_source < 0 || display_mode.vsync_source > 15) {
+		if (display_mode.vsync_source > 15) {
 			display_mode.vsync_source = display->te_source;
 			if (oplus_adfr_is_support() && (oplus_adfr_get_vsync_mode() == OPLUS_DOUBLE_TE_VSYNC))
 				display_mode.vsync_source = OPLUS_TE_SOURCE_TP;
@@ -8610,12 +8621,13 @@ int dsi_display_prepare(struct dsi_display *display)
 		DSI_ERR("invalid platform device\n");
 		return -EINVAL;
 	}
-
-	if(is_project(22803) || is_project(22881)){
-		/*get io-channels to get panel temperature*/
-		oplus_display_register_ntc_channel(display);
-	}
 #endif /* OPLUS_FEATURE_DISPLAY */
+
+#ifdef OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION
+	if (oplus_temp_compensation_is_supported()) {
+		oplus_temp_compensation_register_ntc_channel(display);
+	}
+#endif /* OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION */
 
 	SDE_EVT32(SDE_EVTLOG_FUNC_ENTRY);
 	mutex_lock(&display->display_lock);
@@ -8739,8 +8751,8 @@ int dsi_display_prepare(struct dsi_display *display)
 			}
 		}
 	}
-	goto error;
 
+	goto error;
 error_ctrl_link_off:
 	(void)dsi_display_clk_ctrl(display->dsi_clk_handle,
 			DSI_LINK_CLK, DSI_CLK_OFF);
@@ -9166,12 +9178,6 @@ int dsi_display_enable(struct dsi_display *display)
 		goto error;
 	}
 
-#ifdef OPLUS_FEATURE_DISPLAY
-	mutex_lock(&display->panel->panel_lock);
-	oplus_display_temp_compensation_set(display->panel, true);
-	mutex_unlock(&display->panel->panel_lock);
-#endif
-
 	if (display->config.panel_mode == DSI_OP_VIDEO_MODE) {
 		DSI_DEBUG("%s:enable video timing eng\n", __func__);
 		rc = dsi_display_vid_engine_enable(display);
@@ -9201,10 +9207,13 @@ error_disable_panel:
 error:
 	mutex_unlock(&display->display_lock);
 
-#ifdef OPLUS_FEATURE_DISPLAY
-	oplus_display_change_compensation_params_ref_reg(display);
-	oplus_display_temp_check(display);
+#ifdef OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION
+	if (oplus_temp_compensation_is_supported()) {
+		oplus_temp_compensation_data_update(display);
+	}
+#endif /* OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION */
 
+#ifdef OPLUS_FEATURE_DISPLAY
 	if (oplus_adfr_is_support()) {
 		dsi_display_qsync_restore(display);
 	}

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -3040,10 +3040,6 @@ void sde_encoder_virt_restore(struct drm_encoder *drm_enc)
 		sde_enc->cur_master->ops.restore(sde_enc->cur_master);
 
 	_sde_encoder_virt_enable_helper(drm_enc);
-
-	if (sde_enc->cur_master->ops.reset_tearcheck_rd_ptr)
-		sde_enc->cur_master->ops.reset_tearcheck_rd_ptr(sde_enc->cur_master);
-
 	sde_encoder_control_te(drm_enc, true);
 }
 
@@ -4859,6 +4855,7 @@ int oplus_sync_panel_brightness_v2(struct drm_encoder *drm_enc)
 	last_te_timestamp = te_timestamp->timestamp;
 
 	sync_backlight = c_conn->bl_need_sync;
+	display->panel->oplus_priv.need_sync = sync_backlight;
 	c_conn->bl_need_sync = false;
 
 	if (sync_backlight) {
@@ -4869,7 +4866,10 @@ int oplus_sync_panel_brightness_v2(struct drm_encoder *drm_enc)
 			SDE_EVT32(us_per_frame, last_te_timestamp, delay);
 			usleep_range(delay, delay + 100);
 		}
-
+		if ((ktime_to_us(ktime_sub(ktime_get(), last_te_timestamp)) % us_per_frame) > (us_per_frame - DEBOUNCE_TIME)) {
+			SDE_EVT32(us_per_frame, last_te_timestamp);
+			usleep_range(DEBOUNCE_TIME + vsync_width, DEBOUNCE_TIME + 100 + vsync_width);
+		}
 		snprintf(tag_name, sizeof(tag_name), "%s: %d", display->display_type, brightness);
 		SDE_ATRACE_BEGIN(tag_name);
 		rc = oplus_set_brightness(c_conn->bl_device, brightness);
@@ -4880,26 +4880,17 @@ int oplus_sync_panel_brightness_v2(struct drm_encoder *drm_enc)
 	return rc;
 }
 
-int dc_apollo_sync_hbmon(struct dsi_display *display)
+bool dc_apollo_sync_hbmon(struct dsi_display *display)
 {
 	if (display == NULL)
-		return 0;
+		return false;
 	if (display->panel == NULL)
-		return 0;
+		return false;
 
 	if (display->panel->oplus_priv.dc_apollo_sync_enable) {
-#ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
-		if (oplus_ofp_is_supported() && !oplus_ofp_oled_capacitive_is_enabled()
-				&& !oplus_ofp_ultrasonic_is_enabled()) {
-			if (oplus_ofp_get_hbm_state()) {
-				return 1;
-			}
-		}
-#endif /* OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT */
-
-		return 0;
+		return false;
 	} else {
-		return 0;
+		return true;
 	}
 }
 #endif /* OPLUS_FEATURE_DISPLAY */
@@ -5074,7 +5065,7 @@ void sde_encoder_kickoff(struct drm_encoder *drm_enc, bool config_changed)
 
 #ifdef OPLUS_FEATURE_DISPLAY
 /* Add for backlight smooths */
-	if ((is_support_apollo_bk(sde_enc->cur_master->connector) == true) && backlight_smooth_enable && !dc_apollo_sync_hbmon(get_main_display())) {
+	if ((is_support_apollo_bk(sde_enc->cur_master->connector) == true) && backlight_smooth_enable) {
 		if (sde_enc->num_phys_encs > 0 ) {
 			oplus_sync_panel_brightness(OPLUS_POST_KICKOFF_METHOD, drm_enc);
 		}
@@ -5101,7 +5092,7 @@ void sde_encoder_kickoff(struct drm_encoder *drm_enc, bool config_changed)
 
 #if defined(CONFIG_PXLW_IRIS) || defined(CONFIG_PXLW_SOFT_IRIS)
 	if (iris_is_chip_supported() || iris_is_softiris_supported()) {
-		if (sde_enc->cur_master && sde_enc->cur_master->connector && (iris_backlight_update > 0)) {
+		if (sde_enc && sde_enc->cur_master && sde_enc->cur_master->connector && (iris_backlight_update > 0)) {
 			sde_encoder_wait_vblack(sde_enc->cur_master->connector, drm_enc, 1);
 			sde_encoder_pre_kickoff_update_panel_level(sde_enc->cur_master->connector, drm_enc);
 		} else {
@@ -5119,7 +5110,7 @@ void sde_encoder_kickoff(struct drm_encoder *drm_enc, bool config_changed)
 
 #if defined(CONFIG_PXLW_IRIS) || defined(CONFIG_PXLW_SOFT_IRIS)
 	if (iris_is_chip_supported() || iris_is_softiris_supported()) {
-		if (sde_enc->cur_master && sde_enc->cur_master->connector && (iris_backlight_update > 0)) {
+		if (sde_enc && sde_enc->cur_master && sde_enc->cur_master->connector && (iris_backlight_update > 0)) {
 			sde_encoder_post_kickoff_update_panel_level(
 					sde_enc->cur_master->connector);
 		} else {
@@ -6093,24 +6084,15 @@ int sde_encoder_wait_for_event(struct drm_encoder *drm_enc,
 	return ret;
 }
 
-void sde_encoder_helper_get_jitter_bounds_ns(struct drm_encoder *drm_enc,
-		u64 *l_bound, u64 *u_bound)
+void sde_encoder_helper_get_jitter_bounds_ns(u32 frame_rate,
+		u32 jitter_num, u32 jitter_denom,
+		ktime_t *l_bound, ktime_t *u_bound)
 {
-	struct sde_encoder_virt *sde_enc;
-	u64 jitter_ns, frametime_ns;
-	struct msm_mode_info *info;
+	ktime_t jitter_ns, frametime_ns;
 
-	if (!drm_enc) {
-		SDE_ERROR("invalid encoder\n");
-		return;
-	}
-
-	sde_enc = to_sde_encoder_virt(drm_enc);
-	info = &sde_enc->mode_info;
-
-	frametime_ns = (1 * 1000000000) / info->frame_rate;
-	jitter_ns =  info->jitter_numer * frametime_ns;
-	do_div(jitter_ns, info->jitter_denom * 100);
+	frametime_ns = (1 * 1000000000) / frame_rate;
+	jitter_ns =  jitter_num * frametime_ns;
+	do_div(jitter_ns, jitter_denom * 100);
 
 	*l_bound = frametime_ns - jitter_ns;
 	*u_bound = frametime_ns + jitter_ns;

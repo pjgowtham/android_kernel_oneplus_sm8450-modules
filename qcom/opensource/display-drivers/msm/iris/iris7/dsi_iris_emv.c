@@ -1911,153 +1911,158 @@ bool isValidMvdBlockSize(int blockSize)
 	return (blockSize == 4 || blockSize == 8 || blockSize == 16);
 }
 
-void irisSetExtMvFrc(struct extmv_frc_meta meta)
+void irisSetExtMvFrc(struct extmv_frc_meta *meta)
 {
 	struct iris_cfg *pcfg = iris_get_cfg();
 
-	IRIS_LOGI("external MV frc meta: mode %d valid %d, bmvsize %d, orientation %d",
-		meta.mode,
-		meta.valid,
-		meta.bmvSize,
-		meta.orientation);
+	if (meta == NULL) {
+		IRIS_LOGE("meta is invalid!");
+		return;
+	}
 
-	if (meta.mode == 0xECEA) {
+	IRIS_LOGI("external MV frc meta: mode %d valid %d, bmvsize %d, orientation %d",
+		meta->mode,
+		meta->valid,
+		meta->bmvSize,
+		meta->orientation);
+
+	if (meta->mode == 0xECEA) {
 		int mvdHeight = 0;
 		int mvdWidth = 0;
 		int mvdBlockSize = 0;
 
-		if ((meta.gameWidthSrc&(u32)0x1) != 0)
-			meta.gameWidth = meta.gameWidthSrc + 1;
+		if ((meta->gameWidthSrc&(u32)0x1) != 0)
+			meta->gameWidth = meta->gameWidthSrc + 1;
 		else
-			meta.gameWidth = meta.gameWidthSrc;
-		if ((meta.gameHeightSrc&(u32)0x1) != 0)
-			meta.gameHeight = meta.gameHeightSrc + 1;
+			meta->gameWidth = meta->gameWidthSrc;
+		if ((meta->gameHeightSrc&(u32)0x1) != 0)
+			meta->gameHeight = meta->gameHeightSrc + 1;
 		else
-			meta.gameHeight = meta.gameHeightSrc;
+			meta->gameHeight = meta->gameHeightSrc;
 
-		if ((meta.containerWidth != 0) && (meta.containerHeight != 0)) {
-			if (meta.gameWidth == meta.gmvdWidthSrc
-				|| meta.gameWidthSrc == meta.gmvdWidthSrc) {
+		if ((meta->containerWidth != 0) && (meta->containerHeight != 0)) {
+			if (meta->gameWidth == meta->gmvdWidthSrc
+				|| meta->gameWidthSrc == meta->gmvdWidthSrc) {
 				//layout 0 1 2
 				iris_emv_layout = 0;
 
-				if (meta.gmvdTop > 0)
+				if (meta->gmvdTop > 0)
 					iris_emv_layout = 1;
-				else if (meta.gmvdHeightSrc == meta.containerHeight)
+				else if (meta->gmvdHeightSrc == meta->containerHeight)
 					iris_emv_layout = 2;
 
-				mvdHeight = meta.gmvdHeightSrc - meta.gameHeightSrc - 1;
-				mvdBlockSize = toMvdBlockSizeHeight(meta.gameHeight, mvdHeight);
+				mvdHeight = (int)(meta->gmvdHeightSrc - meta->gameHeightSrc - 1);
+				mvdBlockSize = toMvdBlockSizeHeight(meta->gameHeight, mvdHeight);
 				if (!isValidMvdBlockSize(mvdBlockSize)) {
 					if (iris_emv_layout != 2) {
-						meta.mode = 0;
+						meta->mode = 0;
 						IRIS_LOGE("i7:META: Fatal! Invalid EMV block size(%d) for layout %d",
 							mvdBlockSize, iris_emv_layout);
 						return;
 					}
 					mvdBlockSize = 4;//only 4x4 supported for layout2
-					mvdHeight = toMvdHeight(meta.gameHeight, mvdBlockSize);
+					mvdHeight = toMvdHeight((int)meta->gameHeight, mvdBlockSize);
 				}
-				mvdWidth = toMvdWidth(meta.gameWidth, mvdBlockSize);
-				meta.gameLeft = meta.gmvdLeft;
-				meta.gameTop = meta.gmvdTop + meta.gmvdHeightSrc - meta.gameHeightSrc;
-				meta.mvd0Left = meta.gmvdLeft;
-				meta.mvd0Top = meta.gmvdTop + 1;
+				mvdWidth = toMvdWidth((int)meta->gameWidth, mvdBlockSize);
+				meta->gameLeft = meta->gmvdLeft;
+				meta->gameTop = meta->gmvdTop + meta->gmvdHeightSrc - meta->gameHeightSrc;
+				meta->mvd0Left = meta->gmvdLeft;
+				meta->mvd0Top = meta->gmvdTop + 1;
 				if (iris_emv_layout == 2)
-					meta.mvd0Top = meta.gameTop - mvdHeight;
-				meta.mvd0Width = mvdWidth;
-				meta.mvd0Height = mvdHeight;
-				meta.mvd1Left = meta.mvd0Left + mvdWidth;
-				meta.mvd1Top = meta.mvd0Top;
-				meta.mvd1Width = mvdWidth;
-				meta.mvd1Height = mvdHeight;
-			} else if (meta.gmvdHeightSrc == meta.containerHeight) {
+					meta->mvd0Top = meta->gameTop - mvdHeight;
+				meta->mvd0Width = mvdWidth;
+				meta->mvd0Height = mvdHeight;
+				meta->mvd1Left = meta->mvd0Left + mvdWidth;
+				meta->mvd1Top = meta->mvd0Top;
+				meta->mvd1Width = mvdWidth;
+				meta->mvd1Height = mvdHeight;
+			} else if (meta->gmvdHeightSrc == meta->containerHeight) {
 				iris_emv_layout = 3;
-				mvdWidth = meta.gmvdWidthSrc - meta.gameWidthSrc;
-				mvdBlockSize = toMvdBlockSizeWidth(meta.gameWidth, mvdWidth);
+				mvdWidth = (int)(meta->gmvdWidthSrc - meta->gameWidthSrc);
+				mvdBlockSize = toMvdBlockSizeWidth((int)meta->gameWidth, mvdWidth);
 				if (!isValidMvdBlockSize(mvdBlockSize)) {
-					meta.mode = 0;
+					meta->mode = 0;
 					IRIS_LOGE("i7:META: Fatal! Invalid EMV block size(%d) for layout 3",
 						mvdBlockSize);
 					return;
 				}
-				mvdHeight = toMvdHeight(meta.gameHeight, mvdBlockSize);
-				meta.gameLeft = meta.gmvdLeft;
-				meta.gameTop = meta.gmvdTop + meta.gmvdHeightSrc - meta.gameHeightSrc;
+				mvdHeight = toMvdHeight((int)meta->gameHeight, mvdBlockSize);
+				meta->gameLeft = meta->gmvdLeft;
+				meta->gameTop = meta->gmvdTop + meta->gmvdHeightSrc - meta->gameHeightSrc;
 #ifdef MV0_AT_BOTTOM
-				meta.mvd0Left = meta.gmvdLeft + meta.gameWidthSrc;
-				meta.mvd0Top = meta.gmvdTop + meta.gmvdHeightSrc - mvdHeight;
-				meta.mvd0Width = mvdWidth;
-				meta.mvd0Height = mvdHeight;
-				meta.mvd1Left = meta.mvd0Left;
-				meta.mvd1Top = meta.mvd0Top - mvdHeight;
-				meta.mvd1Width = mvdWidth;
-				meta.mvd1Height = mvdHeight;
+				meta->mvd0Left = meta->gmvdLeft + meta->gameWidthSrc;
+				meta->mvd0Top = meta->gmvdTop + meta->gmvdHeightSrc - mvdHeight;
+				meta->mvd0Width = mvdWidth;
+				meta->mvd0Height = mvdHeight;
+				meta->mvd1Left = meta->mvd0Left;
+				meta->mvd1Top = meta->mvd0Top - mvdHeight;
+				meta->mvd1Width = mvdWidth;
+				meta->mvd1Height = mvdHeight;
 #else
-				meta.mvd1Left = meta.gmvdLeft + meta.gameWidthSrc;
-				meta.mvd1Top = meta.gmvdTop + meta.gmvdHeightSrc - mvdHeight;
-				meta.mvd1Width = mvdWidth;
-				meta.mvd1Height = mvdHeight;
-				meta.mvd0Left = meta.mvd1Left;
-				meta.mvd0Top = meta.mvd1Top - mvdHeight;
-				meta.mvd0Width = mvdWidth;
-				meta.mvd0Height = mvdHeight;
+				meta->mvd1Left = meta->gmvdLeft + meta->gameWidthSrc;
+				meta->mvd1Top = meta->gmvdTop + meta->gmvdHeightSrc - mvdHeight;
+				meta->mvd1Width = mvdWidth;
+				meta->mvd1Height = mvdHeight;
+				meta->mvd0Left = meta->mvd1Left;
+				meta->mvd0Top = meta->mvd1Top - mvdHeight;
+				meta->mvd0Width = mvdWidth;
+				meta->mvd0Height = mvdHeight;
 #endif
 			}
 		}
 
-		meta.overflow = 0;
+		meta->overflow = 0;
 		if (iris_emv_layout == 0)
-			mvdHeight = meta.gmvdHeightSrc - meta.gameHeightSrc - 1;
+			mvdHeight = (int)(meta->gmvdHeightSrc - meta->gameHeightSrc - 1);
 
 		if (mvdHeight <= 0) {
-			meta.mode = 0;
+			meta->mode = 0;
 			return;
 		}
-		if (meta.gameWidth*meta.gameHeight > iris_emv_limit) {
+		if (meta->gameWidth*meta->gameHeight > iris_emv_limit) {
 			int mvdBlockNumMax = 0;
 
-			meta.gameHeight = mvdHeight*4;
-			meta.gameWidth = iris_emv_limit/meta.gameHeight;
-			mvdBlockNumMax = (meta.gameWidth + 3)/4;
+			meta->gameHeight = mvdHeight*4;
+			meta->gameWidth = iris_emv_limit/meta->gameHeight;
+			mvdBlockNumMax = (meta->gameWidth + 3)/4;
 			if (mvdBlockNumMax <= 0)
 				return;
-			mvdBlockSize = (meta.gameWidthSrc + mvdBlockNumMax - 1)/mvdBlockNumMax;
+			mvdBlockSize = (meta->gameWidthSrc + mvdBlockNumMax - 1)/mvdBlockNumMax;
 			if (mvdBlockSize <= 0)
 				return;
-			mvdWidth = (meta.gameWidthSrc + mvdBlockSize - 1)/mvdBlockSize;
-			meta.gameWidth = mvdWidth*4;
-			meta.overflow = 0xe0;
+			mvdWidth = (meta->gameWidthSrc + mvdBlockSize - 1)/mvdBlockSize;
+			meta->gameWidth = mvdWidth*4;
+			meta->overflow = 0xe0;
 			IRIS_LOGI("i7:META: mvdH=%d,mvdW=%d,BlockMax=%d,BlockSize=%d, frc %dx%d",
 			mvdHeight, mvdWidth,
 			mvdBlockNumMax, mvdBlockSize,
-			meta.gameWidth, meta.gameHeight);
+			meta->gameWidth, meta->gameHeight);
 			if (mvdHeight <= 0 || mvdWidth <= 0) {
-				meta.mode = 0;
-				meta.gameWidth = 160;
-				meta.gameHeight = 160;
+				meta->mode = 0;
+				meta->gameWidth = 160;
+				meta->gameHeight = 160;
 				IRIS_LOGE("i7:META: Fatal! Invalid EMV meta!");
 			}
 		}
 
 		IRIS_LOGI("META:src %dx%d,pa:%d,%d,gmvd:%d,%d,%dx%d,game:%d,%d,%dx%d,ov 0x%x,mv0:%d,%d,mv1:%d,%d,%dx%d",
-			meta.gameWidthSrc, meta.gameHeightSrc,
-			meta.gameWidthSrc&(u32)0x1,
-			meta.gameHeightSrc&(u32)0x1,
-			meta.gmvdLeft, meta.gmvdTop,
-			meta.gmvdWidthSrc, meta.gmvdHeightSrc,
-			meta.gameLeft, meta.gameTop,
-			meta.gameWidth, meta.gameHeight,
-			meta.overflow,
-			meta.mvd0Left, meta.mvd0Top,
-			meta.mvd1Left, meta.mvd1Top,
-			meta.mvd1Width, meta.mvd1Height);
+			meta->gameWidthSrc, meta->gameHeightSrc,
+			meta->gameWidthSrc&(u32)0x1,
+			meta->gameHeightSrc&(u32)0x1,
+			meta->gmvdLeft, meta->gmvdTop,
+			meta->gmvdWidthSrc, meta->gmvdHeightSrc,
+			meta->gameLeft, meta->gameTop,
+			meta->gameWidth, meta->gameHeight,
+			meta->overflow,
+			meta->mvd0Left, meta->mvd0Top,
+			meta->mvd1Left, meta->mvd1Top,
+			meta->mvd1Width, meta->mvd1Height);
 	}
-	memcpy(&pcfg->emv_info, &meta, sizeof(struct extmv_frc_meta));
-	if (meta.mode == 0xECEA) {
+	memcpy(&pcfg->emv_info, meta, sizeof(struct extmv_frc_meta));
+	if ((int)meta->mode == 0xECEA) {
 		iris_extmv_frc_mode = 1;
-		iris_emv_bmv_size = meta.bmvSize;
-		iris_emv_game_landscape = (meta.orientation > 0) ? 1 : 0;
+		iris_emv_bmv_size = (int)meta->bmvSize;
+		iris_emv_game_landscape = (meta->orientation > 0) ? 1 : 0;
 		iris_emv_frc_mode_en_set(true);
 	} else {
 		iris_extmv_frc_mode = 0;

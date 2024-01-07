@@ -1579,11 +1579,12 @@ static void dsi_kickoff_msg_tx(struct dsi_ctrl *dsi_ctrl,
 }
 
 #ifdef OPLUS_FEATURE_DISPLAY
-static void print_cmd_desc(struct dsi_ctrl *dsi_ctrl, const struct mipi_dsi_msg *msg)
+static void print_cmd_desc(struct dsi_ctrl *dsi_ctrl, const struct dsi_cmd_desc *cmd)
 {
 	char buf[512];
 	int len = 0;
 	size_t i;
+	const struct mipi_dsi_msg *msg = &cmd->msg;
 	char *tx_buf = (char*)msg->tx_buf;
 
 	memset(buf, 0, sizeof(buf));
@@ -1595,7 +1596,7 @@ static void print_cmd_desc(struct dsi_ctrl *dsi_ctrl, const struct mipi_dsi_msg 
 	len += snprintf(buf + len, sizeof(buf) - len, "%02X ", msg->channel);
 	len += snprintf(buf + len, sizeof(buf) - len, "%02X ", (unsigned int)msg->flags);
 	/* Delay */
-	len += snprintf(buf + len, sizeof(buf) - len, "%02X ", msg->wait_ms);
+	len += snprintf(buf + len, sizeof(buf) - len, "%02X ", cmd->post_wait_ms);
 	len += snprintf(buf + len, sizeof(buf) - len, "%02X %02X ", msg->tx_len >> 8, msg->tx_len & 0x00FF);
 
 	/* Packet Payload */
@@ -1606,8 +1607,7 @@ static void print_cmd_desc(struct dsi_ctrl *dsi_ctrl, const struct mipi_dsi_msg 
 			break;
 	}
 
-	//DSI_CTRL_ERR(dsi_ctrl, "%s\n", buf);
-	pr_err("kVRR: dsi %s\n", buf);
+	pr_err("dsi_cmd_desc: %s\n", buf);
 }
 
 extern int oplus_dsi_log_type;
@@ -1628,8 +1628,9 @@ static int dsi_message_tx(struct dsi_ctrl *dsi_ctrl, struct dsi_cmd_desc *cmd_de
 	msg = &cmd_desc->msg;
 	flags = &cmd_desc->ctrl_flags;
 #ifdef OPLUS_FEATURE_DISPLAY
-	if (OPLUS_DEBUG_LOG_CMD & oplus_dsi_log_type)
-		print_cmd_desc(dsi_ctrl, msg);
+	if (OPLUS_DEBUG_LOG_CMD & oplus_dsi_log_type) {
+		print_cmd_desc(dsi_ctrl, cmd_desc);
+	}
 #endif /* OPLUS_FEATURE_DISPLAY */
 
 #if defined(CONFIG_PXLW_IRIS)

@@ -369,7 +369,7 @@ static void _iris_parse_misc_info(void)
 				v = Change_Id[i]/16;
 			else
 				v = Change_Id[i]%16;
-			if ((v >= 0) && (v <= 9))
+			if (v <= 9)
 				str[(i-1)*2+j+1] = v + 48;
 			else
 				str[(i-1)*2+j+1] = v + 87;
@@ -613,12 +613,8 @@ load_done:
 	spin_lock(&fw_status_lock);
 	fw_calibrated_status = fw_ccf_status;
 	fw_loaded_status = (firmware_state == 0x1f ? FIRMWARE_LOAD_SUCCESS : FIRMWARE_LOAD_FAIL);
-	spin_unlock(&fw_status_lock);
-	IRIS_LOGI("%s(), load firmware: %s, state: %#x",
-			__func__,
-			fw_loaded_status == FIRMWARE_LOAD_SUCCESS ? "success" : "fail",
-			firmware_state);
 	if (fw_loaded_status == FIRMWARE_LOAD_SUCCESS) {
+		spin_unlock(&fw_status_lock);
 		mutex_lock(&fw_attach_cmd_lock);
 		ret = iris_attach_cmd_to_ipidx(data, (sizeof(data))/(sizeof(data[0])),
 				pip_index);
@@ -628,7 +624,13 @@ load_done:
 		_iris_send_lut_for_dma();
 		_iris_parse_misc_info();
 		mutex_unlock(&fw_attach_cmd_lock);
-	}
+	} else
+		spin_unlock(&fw_status_lock);
+
+	IRIS_LOGI("%s(), load firmware: %s, state: %#x",
+		__func__,
+		firmware_state == 0x1f ? "success" : "fail",
+		firmware_state);
 
 	iris_release_firmware(&fw);
 	iris_release_firmware(&ccf1_fw);
@@ -729,12 +731,6 @@ int iris_send_lut(u8 lut_type, u8 lut_table_index)
 	case IOINC1D_PP_LUT_SHARP:
 	case IOINC1D_LUT_9TAP:
 	case IOINC1D_LUT_SHARP_9TAP:
-		if ((lut_table_index & 0x3f) >= SCALER1D_LUT_NUMBER) {
-			IRIS_LOGW("%s(%d), invalid table index %d of type: %#x.",
-					__func__, __LINE__, lut_table_index, lut_type);
-			break;
-		}
-
 		lut_opt_id = lut_table_index & 0xff;
 		_iris_fomat_lut_cmds(lut_type, lut_opt_id);
 		IRIS_LOGD("%s(), call SCALER1D, i_p: %#x, index: %d.", __func__,

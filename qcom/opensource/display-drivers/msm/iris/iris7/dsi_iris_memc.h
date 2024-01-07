@@ -184,7 +184,7 @@ void iris_pt_sr_reset(void);
 void iris_sr_update(void);
 int iris_low_latency_mode_get(void);
 int iris_tnr_mode_get(void);
-int iris_debug_memc_option_get(char *kbuf, int size);
+u32 iris_debug_memc_option_get(char *kbuf, u32 size);
 void iris_debug_memc_option_set(u32 type, u32 value);
 void iris_dport_output_mode_reset(void);
 void iris_mcu_state_set(u32 mode);

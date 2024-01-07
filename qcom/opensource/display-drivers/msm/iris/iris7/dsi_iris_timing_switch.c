@@ -1025,6 +1025,8 @@ void iris_dump_cmdlist(uint32_t val)
 
 	for (ip_type = 0; ip_type < iris_get_cmd_list_cnt(); ip_type++) {
 		pip_index = iris_get_ip_idx(ip_type);
+		if (pip_index == NULL)
+			continue;
 		pr_err("\n");
 		if (ip_type == cmd_list_index)
 			pr_err("*iris-cmd-list-%d*\n", ip_type);

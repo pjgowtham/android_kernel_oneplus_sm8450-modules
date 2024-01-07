@@ -184,9 +184,14 @@ struct dsi_panel_oplus_privite {
 	bool crc_check_enabled;
 	bool pwm_turbo_support;
 	bool pwm_turbo_enabled;
+	u32 oplus_pwm_switch_state;
 	bool pwm_power_on;
 	bool pwm_turbo_status;
 	int last_demua_status;
+	bool pwm_turbo_ignore_set_dbv_frame;
+	bool need_sync;
+	bool pwm_switch_support;
+	bool power_seq_adj;
 };
 
 struct dsi_panel_oplus_serial_number {
@@ -217,6 +222,7 @@ struct dsi_backlight_config {
 	u32 global_hbm_case_id;
 	u32 global_hbm_threshold;
 	bool global_hbm_scale_mapping;
+	u32 pwm_turbo_gamma_bl_threshold;
 #endif /* OPLUS_FEATURE_DISPLAY */
 
 	/* current brightness value */

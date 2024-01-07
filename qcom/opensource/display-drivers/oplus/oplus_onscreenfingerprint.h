@@ -14,10 +14,11 @@
 #include "oplus_display_private_api.h"
 
 enum oplus_ofp_log_level {
-	OPLUS_OFP_LOG_LEVEL_ERR = 0,
-	OPLUS_OFP_LOG_LEVEL_WARN = 1,
-	OPLUS_OFP_LOG_LEVEL_INFO = 2,
-	OPLUS_OFP_LOG_LEVEL_DEBUG = 3,
+	OPLUS_OFP_LOG_LEVEL_NONE = 0,
+	OPLUS_OFP_LOG_LEVEL_ERR,
+	OPLUS_OFP_LOG_LEVEL_WARN,
+	OPLUS_OFP_LOG_LEVEL_INFO,
+	OPLUS_OFP_LOG_LEVEL_DEBUG,
 };
 
 enum oplus_ofp_display_id {
@@ -174,7 +175,6 @@ int oplus_ofp_pressed_icon_status_update(void *sde_encoder_phys, unsigned int ir
 void oplus_ofp_uiready_event_work_handler(struct work_struct *work_item);
 int oplus_ofp_notify_uiready(void *sde_encoder_phys);
 bool oplus_ofp_backlight_filter(void *dsi_panel, unsigned int bl_level);
-bool oplus_ofp_backlight_filter_for_demura(void *dsi_panel, unsigned int bl_level);
 bool oplus_ofp_need_pcc_change(void *s_crtc);
 int oplus_ofp_set_dspp_pcc_feature(void *sde_hw_cp_cfg, void *s_crtc, bool before_setup_pcc);
 int oplus_ofp_bypass_dspp_gamut(void *sde_hw_cp_cfg, void *s_crtc);

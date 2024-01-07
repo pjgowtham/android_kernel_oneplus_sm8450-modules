@@ -65,7 +65,10 @@ extern int oplus_dsi_log_type;
  * @OPLUS_DEBUG_LOG_DISABLED:    disable all debug log
  * @OPLUS_DEBUG_LOG_CMD:         dump register log
  * @OPLUS_DEBUG_LOG_BACKLIGHT:   backlight log
+ * @OPLUS_DEBUG_LOG_COMMON:      common log
  * @OPLUS_DEBUG_LOG_OFP:         OFP log
+ * @OPLUS_DEBUG_LOG_ADFR:        ADFR log
+ * @OPLUS_DEBUG_LOG_TEMP_COMPENSATION:temp compensation log
  */
 enum oplus_debug_log {
 	OPLUS_DEBUG_LOG_DISABLED = 0,
@@ -73,12 +76,15 @@ enum oplus_debug_log {
 	OPLUS_DEBUG_LOG_BACKLIGHT = BIT(1),
 	OPLUS_DEBUG_LOG_COMMON = BIT(2),
 	OPLUS_DEBUG_LOG_OFP = BIT(3),
-	OPLUS_DEBUG_LOG_COMPENSATION = BIT(4),
+	OPLUS_DEBUG_LOG_ADFR = BIT(4),
+	OPLUS_DEBUG_LOG_TEMP_COMPENSATION = BIT(6),
 };
 
 enum oplus_display_trace_enable {
 	OPLUS_DISPLAY_DISABLE_TRACE = 0,
 	OPLUS_DISPLAY_OFP_TRACE_ENABLE = BIT(0),
+	OPLUS_DISPLAY_ADFR_TRACE_ENABLE = BIT(1),
+	OPLUS_DISPLAY_TEMP_COMPENSATION_TRACE_ENABLE = BIT(3),
 };
 
 int oplus_set_display_vendor(struct dsi_display *display);
@@ -100,5 +106,8 @@ int dsi_display_oplus_set_power(struct drm_connector *connector, int power_mode,
 
 int dsi_panel_read_panel_reg_unlock(struct dsi_display_ctrl *ctrl,
 		struct dsi_panel *panel, u8 cmd, void *rbuf,  size_t len);
+
+int dsi_display_read_panel_reg(struct dsi_display *display, u8 cmd, void *data,
+		size_t len);
 
 #endif /* _OPLUS_DISPLAY_PRIVATE_API_H_ */

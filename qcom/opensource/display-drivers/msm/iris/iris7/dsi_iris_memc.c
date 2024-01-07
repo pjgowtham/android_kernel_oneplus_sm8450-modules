@@ -2250,10 +2250,10 @@ void iris_memc_vfr_update_work_init(struct iris_cfg *pcfg)
 	INIT_WORK(&pcfg->vfr_update_work, iris_memc_vfr_update_work);
 }
 
-int iris_debug_memc_option_get(char *kbuf, int size)
+u32 iris_debug_memc_option_get(char *kbuf, u32 size)
 {
-	int len = 0;
-	int index = 0;
+	u32 len = 0;
+	u32 index = 0;
 	struct iris_cfg *pcfg = iris_get_cfg();
 
 	len += snprintf(kbuf, size,

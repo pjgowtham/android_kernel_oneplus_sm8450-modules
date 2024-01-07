@@ -21,6 +21,7 @@
 
 #ifdef OPLUS_FEATURE_DISPLAY
 #include <soc/oplus/system/boot_mode.h>
+#include <soc/oplus/system/oplus_project.h>
 #include "../oplus/oplus_display_private_api.h"
 #include "../oplus/oplus_dc_diming.h"
 #include "../oplus/oplus_display_panel_common.h"
@@ -30,6 +31,10 @@
 #include "../oplus/oplus_display_panel_seed.h"
 #include "sde_trace.h"
 #endif /* OPLUS_FEATURE_DISPLAY */
+
+#ifdef OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION
+#include "../oplus/oplus_display_temp_compensation.h"
+#endif /* OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION */
 
 #ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
 #include "../oplus/oplus_onscreenfingerprint.h"
@@ -516,19 +521,29 @@ static int dsi_panel_power_on(struct dsi_panel *panel)
 #endif /* OPLUS_FEATURE_DISPLAY */
 
 #ifdef OPLUS_FEATURE_DISPLAY
-	if (!strcmp(panel->oplus_priv.vendor_name, "NT37705") || !strcmp(panel->oplus_priv.vendor_name, "TM_NT37705") || !strcmp(panel->oplus_priv.vendor_name, "TM_NT37705_DVT")){
+	if (str_equal(panel->oplus_priv.vendor_name, "NT37705")
+			|| str_equal(panel->oplus_priv.vendor_name, "TM_NT37705")
+			|| str_equal(panel->oplus_priv.vendor_name, "TM_NT37705_DVT")
+			|| str_equal(panel->oplus_priv.vendor_name, "BOE_NT37705")
+			|| panel->oplus_priv.power_seq_adj) {
 		DSI_INFO("delay 10ms before reset panel");
 		usleep_range(10000, 10000 + 10);
 	}
 #endif /* OPLUS_FEATURE_DISPLAY */
 
 #ifdef OPLUS_FEATURE_DISPLAY
-	if (!strcmp(panel->name,"senna22623 ab575 tm nt37705 dsc cmd mode panel")) {
+	rc = 0;
+	if (str_equal(panel->name,"senna22623 ab575 tm nt37705 dsc cmd mode panel")) {
 		usleep_range(10, 11);
+	} else  if (str_equal(panel->oplus_priv.vendor_name, "BOE_NT37705") || panel->oplus_priv.power_seq_adj) {
+		/* do nothing*/
 	} else {
 		rc = dsi_panel_reset(panel);
 	}
+#else
+	rc = dsi_panel_reset(panel);
 #endif /* OPLUS_FEATURE_DISPLAY */
+
 	if (rc) {
 		DSI_ERR("[%s] failed to reset panel, rc=%d\n", panel->name, rc);
 		goto error_disable_gpio;
@@ -563,9 +578,12 @@ static int dsi_panel_power_off(struct dsi_panel *panel)
 	if (gpio_is_valid(panel->reset_config.disp_en_gpio))
 		gpio_set_value(panel->reset_config.disp_en_gpio, 0);
 
-	if ((!strcmp(panel->oplus_priv.vendor_name, "BF092_AB241")) || (!strcmp(panel->oplus_priv.vendor_name, "TM_NT37705")) ||
-			(!strcmp(panel->oplus_priv.vendor_name, "TM_NT37705_DVT")) ||
-			(!strcmp(panel->oplus_priv.vendor_name, "NT37705")))
+	if ((str_equal(panel->oplus_priv.vendor_name, "BF092_AB241"))
+			|| (str_equal(panel->oplus_priv.vendor_name, "TM_NT37705"))
+			|| (str_equal(panel->oplus_priv.vendor_name, "TM_NT37705_DVT"))
+			|| (str_equal(panel->oplus_priv.vendor_name, "NT37705"))
+			|| (str_equal(panel->oplus_priv.vendor_name, "BOE_NT37705"))
+			|| panel->oplus_priv.power_seq_adj)
 		usleep_range(3000, 3000 + 10);
 
 	if (gpio_is_valid(panel->reset_config.reset_gpio) &&
@@ -577,18 +595,21 @@ static int dsi_panel_power_off(struct dsi_panel *panel)
 
 
 #ifdef OPLUS_FEATURE_DISPLAY
-	if (!strcmp(panel->oplus_priv.vendor_name, "NT37705")) {
+	if ((str_equal(panel->oplus_priv.vendor_name, "NT37705"))
+			|| (str_equal(panel->oplus_priv.vendor_name, "BOE_NT37705"))
+			|| panel->oplus_priv.power_seq_adj) {
 		DSI_INFO("delay 10ms after reset");
 		usleep_range(10000, 10000 + 10);
 	}
 
-	if (gpio_is_valid(panel->reset_config.panel_vout_gpio) && strcmp(panel->oplus_priv.vendor_name, "NT37705")) {
-		if (1 == gpio_get_value(panel->reset_config.panel_vout_gpio)) {
-			DSI_INFO("set dvdd to 0 rc=%d", rc);
-			gpio_set_value(panel->reset_config.panel_vout_gpio, 0);
-		}
-	} else {
+	if (str_equal(panel->oplus_priv.vendor_name, "NT37705")
+			|| str_equal(panel->oplus_priv.vendor_name,"BOE_NT37705")
+			|| panel->oplus_priv.power_seq_adj) {
 		DSI_INFO("do not set dvdd to 0 again rc=%d", rc);
+	} else if (gpio_is_valid(panel->reset_config.panel_vout_gpio)
+			&& (1 == gpio_get_value(panel->reset_config.panel_vout_gpio))) {
+		DSI_INFO("set dvdd to 0 rc=%d", rc);
+		gpio_set_value(panel->reset_config.panel_vout_gpio, 0);
 	}
 
 	if (gpio_is_valid(panel->reset_config.panel_vddr_aod_en_gpio))
@@ -677,9 +698,11 @@ int dsi_panel_tx_cmd_set(struct dsi_panel *panel,
 		|| type == DSI_CMD_SET_TIMING_SWITCH
 		|| type == DSI_CMD_SET_TIMING_SWITCH_HIGH_FRE
 		|| type == DSI_CMD_SET_NOLP
-		|| type == DSI_CMD_SET_NOLP_HPWM) {
+		|| type == DSI_CMD_SET_NOLP_HPWM
+		|| type == DSI_CMD_SET_LP1
+		|| type == DSI_CMD_SET_LP1_HPWM) {
 		if (oplus_panel_tx_cmd_update(panel, &type) != 0)
-			DSI_ERR("[%s] oplus_panel_tx_cmd_update type(%d) failed\n",panel->name, type);
+			pr_info("[%s] oplus_panel_tx_cmd_update type(%d) failed\n",panel->name, type);
 	}
 #endif /* OPLUS_FEATURE_DISPLAY */
 
@@ -701,9 +724,10 @@ int dsi_panel_tx_cmd_set(struct dsi_panel *panel,
 		&& type != DSI_CMD_SET_BL_DEMURAL4
 		&& type != DSI_CMD_SET_BL_DEMURAL5
 		&& type != DSI_CMD_SET_BL_DEMURAL6
-		&& type != DSI_CMD_TEMPERATURE_COMPENSATION
+		&& type != DSI_CMD_SET_LPWM_PULSE
+		&& type != DSI_CMD_SET_HPWM_PULSE
 		&& type != DSI_CMD_SET_BACKLIGHT) {
-			pr_err("<%s> dsi_cmd %s\n",panel->oplus_priv.vendor_name, cmd_set_prop_map[type]);
+			pr_info("<%s> dsi_cmd %s\n",panel->oplus_priv.vendor_name, cmd_set_prop_map[type]);
 	}
 
 	if (oplus_seed_backlight) {
@@ -2243,11 +2267,16 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-post-mode-switch-on-command",
 	"qcom,mdss-dsi-qsync-on-commands",
 	"qcom,mdss-dsi-qsync-off-commands",
+#ifdef OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION
+	"qcom,mdss-dsi-read-temp-compensation-reg-command",
+	"qcom,mdss-dsi-temperature-compensation-command",
+#endif /* OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION */
 #ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
 	"qcom,mdss-dsi-hbm-on-command",
 	"qcom,mdss-dsi-hbm-off-command",
 	"qcom,mdss-dsi-aor-on-command",
 	"qcom,mdss-dsi-aor-off-command",
+	"qcom,mdss-dsi-lp1-hpwm-command",
 	"qcom,mdss-dsi-nolp-hpwm-command",
 	"qcom,mdss-dsi-aod-high-mode-command",
 	"qcom,mdss-dsi-aod-low-mode-command",
@@ -2282,8 +2311,6 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-hbm-enter-switch-command",
 	"qcom,mdss-dsi-hbm-exit-switch-command",
 	"qcom,mdss-dsi-skipframe-dbv-command",
-	"qcom,mdss-dsi-temperature-compensation-command",
-	"qcom,mdss-dsi-read-compensation-reg1-command",
 	"qcom,mdss-dsi-reset-scanline-command",
 	"qcom,mdss-dsi-recovery-scanline-command",
 	"qcom,mdss-dsi-switch-avdd-command",
@@ -2293,6 +2320,7 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-on-high-fre-command",
 	"qcom,mdss-dsi-timing-switch-high-fre-command",
 	"qcom,mdss-dsi-timing-switch-120-command",
+	"qcom,mdss-dsi-timing-switch-120-high-fre-command",
 	"qcom,mdss-dsi-lpwm-pulse-command",
 	"qcom,mdss-dsi-hpwm-pulse-command",
 #endif /* OPLUS_FEATURE_DISPLAY */
@@ -2361,11 +2389,16 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-post-mode-switch-on-command-state",
 	"qcom,mdss-dsi-qsync-on-commands-state",
 	"qcom,mdss-dsi-qsync-off-commands-state",
+#ifdef OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION
+	"qcom,mdss-dsi-read-temp-compensation-reg-command-state",
+	"qcom,mdss-dsi-temperature-compensation-command-state",
+#endif /* OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION */
 #ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
 	"qcom,mdss-dsi-hbm-on-command-state",
 	"qcom,mdss-dsi-hbm-off-command-state",
 	"qcom,mdss-dsi-aor-on-command-state",
 	"qcom,mdss-dsi-aor-off-command-state",
+	"qcom,mdss-dsi-lp1-hpwm-command-state",
 	"qcom,mdss-dsi-nolp-hpwm-command-state",
 	"qcom,mdss-dsi-aod-high-mode-command-state",
 	"qcom,mdss-dsi-aod-low-mode-command-state",
@@ -2400,8 +2433,6 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-hbm-enter-switch-command-state",
 	"qcom,mdss-dsi-hbm-exit-switch-command-state",
 	"qcom,mdss-dsi-skipframe-dbv-command-state",
-	"qcom,mdss-dsi-temperature-compensation-command-state",
-	"qcom,mdss-dsi-read-compensation-reg1-command-state",
 	"qcom,mdss-dsi-reset-scanline-command-state",
 	"qcom,mdss-dsi-recovery-scanline-command-state",
 	"qcom,mdss-dsi-switch-avdd-command-state",
@@ -2411,6 +2442,7 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-on-high-fre-command-state",
 	"qcom,mdss-dsi-timing-switch-high-fre-command-state",
 	"qcom,mdss-dsi-timing-switch-120-command-state",
+	"qcom,mdss-dsi-timing-switch-120-high-fre-command-state",
 	"qcom,mdss-dsi-lpwm-pulse-command-state",
 	"qcom,mdss-dsi-hpwm-pulse-command-state",
 #endif /* OPLUS_FEATURE_DISPLAY */
@@ -2429,10 +2461,10 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-adfr-pre-switch-command-state",
 	"qcom,mdss-dsi-dly-on-command-state",
 	"qcom,mdss-dsi-dly-off-command-state",
-	"qcom,mdss-dsi-cabc-off-command",
-	"qcom,mdss-dsi-cabc-ui-command",
-	"qcom,mdss-dsi-cabc-still-image-command",
-	"qcom,mdss-dsi-cabc-video-command",
+	"qcom,mdss-dsi-cabc-off-command-state",
+	"qcom,mdss-dsi-cabc-ui-command-state",
+	"qcom,mdss-dsi-cabc-still-image-command-state",
+	"qcom,mdss-dsi-cabc-video-command-state",
 	"qcom,mdss-dsi-esd-switch-page-command-state",
 	"qcom,mdss-dsi-crc-check-reg1-command-state",
 	"qcom,mdss-dsi-crc-check-reg2-command-state",
@@ -2858,6 +2890,18 @@ static int dsi_panel_parse_vsync_config(
 		priv_info->vsync_width = priv_info->vsync_period >> 1;
 	}
 
+	rc = utils->read_u32(utils->data, "oplus,apollo-panel-async-bl-delay",
+				  &priv_info->async_bl_delay);
+	if (rc) {
+		DSI_DEBUG("panel async backlight delay to bottom of frame was disabled rc=%d\n", rc);
+		priv_info->async_bl_delay = 0;
+	} else {
+		if(priv_info->async_bl_delay >= priv_info->vsync_period) {
+			DSI_DEBUG("async backlight delay value was out of vsync period\n");
+			priv_info->async_bl_delay = priv_info->vsync_width;
+		}
+	}
+
 	DSI_INFO("vsync width = %d, vsync period = %d\n", priv_info->vsync_width, priv_info->vsync_period);
 
 	return 0;
@@ -2881,6 +2925,12 @@ static int dsi_panel_parse_power_cfg(struct dsi_panel *panel)
 		supply_name = "qcom,panel-supply-entries";
 	else
 		supply_name = "qcom,panel-sec-supply-entries";
+#ifdef OPLUS_FEATURE_DISPLAY
+	if (!strcmp(panel->oplus_priv.vendor_name, "BOE_NT37705") && get_PCB_Version() > T0) {
+		DSI_ERR("[%s] panel after t0, power on config qcom, panel-supply-entries-two!\n", panel->oplus_priv.vendor_name);
+		supply_name = "qcom,panel-supply-entries-two";
+	}
+#endif
 
 	rc = dsi_pwr_of_get_vreg_data(&panel->utils,
 			&panel->power_info, supply_name);
@@ -3025,11 +3075,15 @@ static int dsi_panel_parse_gpios(struct dsi_panel *panel)
 	}
 
 #ifdef OPLUS_FEATURE_DISPLAY
-	panel->reset_config.panel_vout_gpio = utils->get_named_gpio(utils->data,
+	if (!strcmp(panel->name, "boe nt37705 dsc cmd mode panel") && get_PCB_Version() < T1) {
+		DSI_ERR("[%s] panel is on t0,power on config qcom,panel-supply-entries!\n", panel->name);
+	} else {
+		panel->reset_config.panel_vout_gpio = utils->get_named_gpio(utils->data,
 								"qcom,platform-panel-vout-gpio", 0);
 
-	if (!gpio_is_valid(panel->reset_config.panel_vout_gpio)) {
-		DSI_ERR("[%s] failed get panel_vout_gpio, rc=%d\n", panel->name, rc);
+		if (!gpio_is_valid(panel->reset_config.panel_vout_gpio)) {
+			DSI_ERR("[%s] failed get panel_vout_gpio, rc=%d\n", panel->name, rc);
+		}
 	}
 	panel->reset_config.panel_vddr_aod_en_gpio = utils->get_named_gpio(utils->data,
 								"qcom,platform-panel-vddr-aod-en-gpio", 0);
@@ -5227,6 +5281,12 @@ int dsi_panel_prepare(struct dsi_panel *panel)
 		}
 	}
 
+#ifdef OPLUS_FEATURE_DISPLAY
+	if (str_equal(panel->oplus_priv.vendor_name, "BOE_NT37705") || panel->oplus_priv.power_seq_adj) {
+		dsi_panel_reset(panel);
+	}
+#endif /* OPLUS_FEATURE_DISPLAY */
+
 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_PRE_ON);
 	if (rc) {
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_PRE_ON cmds, rc=%d\n",
@@ -5526,7 +5586,7 @@ int dsi_panel_switch(struct dsi_panel *panel)
 		iris_pre_switch(panel, &panel->cur_mode->timing);
 	if (iris_is_chip_supported() && iris_is_pt_mode(panel)) {
 #ifdef OPLUS_FEATURE_DISPLAY
-		if (oplus_pwm_turbo_is_enabled(panel) && panel->cur_mode->timing.refresh_rate != 90)
+		if (oplus_panel_pwm_turbo_is_enabled(panel) && panel->cur_mode->timing.refresh_rate != 90)
 			DSI_CMD_SET_TYPE_ID = DSI_CMD_SET_TIMING_SWITCH_HIGH_FRE;
 		else
 			DSI_CMD_SET_TYPE_ID = DSI_CMD_SET_TIMING_SWITCH;
@@ -5539,7 +5599,7 @@ int dsi_panel_switch(struct dsi_panel *panel)
 #endif
     {
 #ifdef OPLUS_FEATURE_DISPLAY
-	if (oplus_pwm_turbo_is_enabled(panel) && panel->cur_mode->timing.refresh_rate != 90)
+	if (oplus_panel_pwm_turbo_is_enabled(panel) && panel->cur_mode->timing.refresh_rate != 90)
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_TIMING_SWITCH_HIGH_FRE);
 	else
 #endif
@@ -5633,11 +5693,13 @@ int dsi_panel_enable(struct dsi_panel *panel)
 
 
 #ifdef OPLUS_FEATURE_DISPLAY
-	if (oplus_pwm_turbo_is_enabled(panel) && panel->cur_mode->timing.refresh_rate != 90){
+	if (oplus_panel_pwm_turbo_is_enabled(panel) && panel->cur_mode->timing.refresh_rate != 90) {
 		panel->oplus_priv.pwm_power_on = true;
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_ON_HIGH_FRE);
-	}
-	else
+	} else if (oplus_is_support_pwm_switch(panel)) {
+		panel->oplus_priv.pwm_power_on = true;
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_ON);
+	} else
 #endif
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_ON);
 

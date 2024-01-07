@@ -17,6 +17,7 @@ enum {
 
 
 #define IP_OPT_MAX				25
+#define IRIS_LCE_LEVEL_MAX			5
 
 void iris_set_skip_dma(bool skip);
 

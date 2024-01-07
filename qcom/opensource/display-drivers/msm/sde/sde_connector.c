@@ -24,6 +24,11 @@
 #include "sde_rm.h"
 #include "sde_vm.h"
 #include <drm/drm_probe_helper.h>
+
+#ifdef OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION
+#include "../oplus/oplus_display_temp_compensation.h"
+#endif /* OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION */
+
 #ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
 #include "../oplus/oplus_onscreenfingerprint.h"
 #endif /* OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT */
@@ -176,7 +181,7 @@ struct dc_apollo_pcc_sync dc_apollo;
 EXPORT_SYMBOL(dc_apollo);
 extern int dc_apollo_enable;
 extern int oplus_backlight_wait_vsync(struct drm_encoder *drm_enc);
-extern int dc_apollo_sync_hbmon(struct dsi_display *display);
+extern bool dc_apollo_sync_hbmon(struct dsi_display *display);
 #endif /* OPLUS_FEATURE_DISPLAY */
 
 static int sde_backlight_device_update_status(struct backlight_device *bd)
@@ -863,6 +868,15 @@ static int _sde_connector_update_power_locked(struct sde_connector *c_conn)
 	if (mode != c_conn->last_panel_power_mode && c_conn->ops.set_power) {
 		display = c_conn->display;
 		set_power = c_conn->ops.set_power;
+
+#ifdef OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION
+		if (oplus_temp_compensation_is_supported()) {
+			if (mode == SDE_MODE_DPMS_ON) {
+				SDE_DEBUG("update ntc temp immediately when power on\n");
+				oplus_temp_compensation_get_ntc_temp();
+			}
+		}
+#endif /* OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION */
 
 		mutex_unlock(&c_conn->lock);
 		rc = set_power(connector, mode, display);
@@ -2890,7 +2904,9 @@ static int sde_connector_fill_modes(struct drm_connector *connector,
 			max_width, max_height);
 
 #ifdef OPLUS_FEATURE_DISPLAY
-	drm_mode_sort_for_adfr(&connector->modes);
+	if (connector->connector_type == DRM_MODE_CONNECTOR_DSI) {
+		drm_mode_sort_for_adfr(&connector->modes);
+	}
 #endif /* OPLUS_FEATURE_DISPLAY */
 
 	if (sde_conn->ops.set_allowed_mode_switch)
@@ -3893,11 +3909,11 @@ static int _sde_connector_update_panel_level(struct sde_connector *c_conn)
 	c_conn->unset_bl_level = 0;
 
 	bd = c_conn->bl_device;
-	if (!bd)
+	if (bd) {
+		bd->props.brightness = bl_config->bl_level;
+		SDE_DEBUG("bl_level: %u\n", bl_config->bl_level);
+	} else
 		SDE_ERROR("Failed to get raw backlight\n");
-	bd->props.brightness = bl_config->bl_level;
-	SDE_DEBUG("bl_level: %u\n", bl_config->bl_level);
-
 	return rc;
 }
 

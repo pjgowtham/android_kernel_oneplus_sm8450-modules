@@ -227,6 +227,7 @@ static u32 _iris_ocp_read_value(u32 mode)
 	struct dsi_cmd_desc pi_read_cmd[1];
 	u32 response_value;
 
+	memset(&pi_read_cmd, 0x00, sizeof(pi_read_cmd));
 	remap_to_qcom_style(pi_read_cmd, pi_read_cmd_pxlw, 1);
 
 	iris_set_msg_flags(pi_read_cmd, READ_FLAG);
@@ -478,6 +479,7 @@ int iris_dsi_send_cmds(struct dsi_panel *panel, struct dsi_cmd_desc *cmds,
 			IRIS_LOGE("%s(), failed to set cmds: %d, return: %d",
 					__func__,
 					cmds->msg.type, rc);
+			cmds->msg.channel = vc_id_bak;
 			dump_stack();
 			goto error;
 		}
@@ -648,6 +650,7 @@ static void _iris_add_tx_cmds(
 			CMD_PKT_SIZE, NULL, 0, NULL}, 0, 0};
 	struct dsi_cmd_desc desc_init_val;
 
+	memset(&desc_init_val, 0x00, sizeof(desc_init_val));
 	remap_to_qcom_style(&desc_init_val, &desc_init_val_pxlw, 1);
 
 	memcpy(ptx_cmd, &desc_init_val, sizeof(struct dsi_cmd_desc));

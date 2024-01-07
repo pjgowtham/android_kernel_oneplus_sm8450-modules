@@ -7,6 +7,7 @@
 ** Date : 2022/08/01
 ** Author : Display
 ******************************************************************/
+#include <linux/ktime.h>
 #include <drm/drm_mipi_dsi.h>
 #include "dsi_parser.h"
 #include "dsi_display.h"
@@ -15,9 +16,12 @@
 #include "oplus_bl.h"
 #include "oplus_adfr.h"
 #include "oplus_display_panel_feature.h"
-#include "oplus_display_temperature.h"
 #include "oplus_display_panel_common.h"
 #include "sde_trace.h"
+
+#ifdef OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION
+#include "oplus_display_temp_compensation.h"
+#endif /* OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION */
 
 #ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
 #include "oplus_onscreenfingerprint.h"
@@ -30,6 +34,8 @@
 extern int lcd_closebl_flag;
 extern u32 oplus_last_backlight;
 static int oplus_display_update_dbv_evt(struct dsi_panel *panel, u32 level);
+
+static struct backlight_log oplus_bl_log[DISPLAY_MAX];
 
 int oplus_panel_get_serial_number_info(struct dsi_panel *panel)
 {
@@ -102,7 +108,10 @@ int oplus_panel_get_serial_number_info(struct dsi_panel *panel)
 
 int oplus_panel_features_config(struct dsi_panel *panel)
 {
+	int rc = 0;
+	u32 val = 0;
 	struct dsi_parser_utils *utils = NULL;
+
 	if (!panel) {
 		DSI_ERR("Oplus Features config No panel device\n");
 		return -ENODEV;
@@ -132,6 +141,34 @@ int oplus_panel_features_config(struct dsi_panel *panel)
 			"oplus,pwm-turbo-support");
 	DSI_INFO("oplus,pwm-turbo-support: %s",
 			panel->oplus_priv.pwm_turbo_support ? "true" : "false");
+
+	panel->oplus_priv.pwm_turbo_ignore_set_dbv_frame = utils->read_bool(utils->data,
+			"oplus,pwm-turbo-ignore-set-dbv-frame");
+	if (!panel->oplus_priv.pwm_turbo_support) {
+			panel->oplus_priv.pwm_turbo_ignore_set_dbv_frame = false;
+	}
+	DSI_INFO("oplus,pwm-turbo-ignore-set-dbv-frame: %s",
+			panel->oplus_priv.pwm_turbo_ignore_set_dbv_frame ? "true" : "false");
+
+	rc = utils->read_u32(utils->data, "oplus,pwm-turbo-gamma-bl-threshold", &val);
+	if (rc) {
+		panel->bl_config.pwm_turbo_gamma_bl_threshold = 1603;
+		DSI_INFO("oplus,pwm-turbo-gamma-bl-threshold undefined, default to %d\n", panel->bl_config.pwm_turbo_gamma_bl_threshold);
+	} else {
+		panel->bl_config.pwm_turbo_gamma_bl_threshold = val;
+		DSI_INFO("oplus,pwm-turbo-gamma-bl-threshold=%d\n", panel->bl_config.pwm_turbo_gamma_bl_threshold);
+	}
+
+	panel->oplus_priv.pwm_switch_support = utils->read_bool(utils->data,
+			"oplus,pwm-switch-support");
+	LCD_INFO("oplus,pwm-switch-support: %s\n",
+			panel->oplus_priv.pwm_switch_support ? "true" : "false");
+
+	panel->oplus_priv.power_seq_adj = utils->read_bool(utils->data,
+			"oplus,power-seq-adj");
+	LCD_INFO("oplus,power-seq-adj: %s\n",
+			panel->oplus_priv.power_seq_adj ? "true" : "false");
+
 
 	oplus_panel_get_serial_number_info(panel);
 
@@ -213,7 +250,6 @@ void oplus_panel_update_backlight(struct dsi_panel *panel,
 	struct dsi_panel_cmd_set *cmd_sets;
 	u64 inverted_dbv_bl_lvl = 0;
 #ifdef OPLUS_FEATURE_DISPLAY
-	bool pwm_turbo = oplus_pwm_turbo_is_enabled(panel);
 	struct dsi_mode_info timing;
 	unsigned int refresh_rate;
 #endif
@@ -241,17 +277,23 @@ void oplus_panel_update_backlight(struct dsi_panel *panel,
 	SDE_ATRACE_BEGIN("oplus_panel_update_backlight");
 	oplus_display_pwm_pulse_switch(panel, bl_lvl);
 
-	if ((bl_lvl > 1) && !((!pwm_turbo) && (refresh_rate == 60))) {
-		rc = oplus_display_temp_compensation_set(panel, false);
-		if (rc) {
-			pr_err("[DISP][ERR][%s:%d]failed to set temp compensation, rc=%d\n", __func__, __LINE__, rc);
-		}
+#ifdef OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION
+	if (oplus_temp_compensation_is_supported()) {
+		oplus_temp_compensation_cmd_set(panel, OPLUS_TEMP_COMPENSATION_BACKLIGHT_SETTING);
 	}
+#endif /* OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION */
+
+	oplus_temp_compensation_wait_for_vsync_set = false;
 
 	/*backlight value mapping */
 	oplus_panel_backlight_level_mapping(panel, &bl_lvl);
 	/*backlight value mapping */
 	oplus_panel_global_hbm_mapping(panel, &bl_lvl);
+
+	if (!panel->oplus_priv.need_sync && panel->cur_mode->priv_info->async_bl_delay) {
+		oplus_apollo_async_bl_delay(panel);
+		panel->oplus_priv.need_sync = false;
+	}
 
 	/*will inverted display brightness value */
 	if (panel->bl_config.bl_inverted_dbv)
@@ -312,12 +354,15 @@ void oplus_panel_update_backlight(struct dsi_panel *panel,
 	}
 	}
 
+#ifdef OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION
+	if (oplus_temp_compensation_is_supported()) {
+		oplus_temp_compensation_first_half_frame_cmd_set(panel);
+	}
+#endif /* OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION */
+
 	SDE_ATRACE_INT("current_bl_lvl", bl_lvl);
 	LCD_DEBUG_BACKLIGHT("<%s> Final backlight lvl:%d\n", panel->oplus_priv.vendor_name, bl_lvl);
 	oplus_last_backlight = bl_lvl;
-	if ((bl_lvl > 1) && (!pwm_turbo) && (refresh_rate == 60)) {
-		oplus_display_queue_compensation_set_work();
-	}
 	SDE_ATRACE_END("oplus_panel_update_backlight");
 }
 
@@ -547,4 +592,44 @@ static int oplus_display_update_dbv_evt(struct dsi_panel *panel, u32 level)
 		DSI_ERR("Failed to set DSI_CMD_SKIPFRAME_DBV \n");
 
 	return 0;
+}
+
+void oplus_printf_backlight_log(struct dsi_display *display, u32 bl_lvl) {
+	struct timespec64 now;
+	struct tm broken_time;
+	static time64_t time_last = 0;
+	struct backlight_log *bl_log;
+	int i = 0;
+	int len = 0;
+	char backlight_log_buf[1024];
+
+	ktime_get_real_ts64(&now);
+	time64_to_tm(now.tv_sec, 0, &broken_time);
+	if (now.tv_sec - time_last >= 60) {
+		pr_info("<%s> dsi_display_set_backlight time:%02d:%02d:%02d.%03ld,bl_lvl:%d\n",
+			display->panel->oplus_priv.vendor_name, broken_time.tm_hour, broken_time.tm_min,
+			broken_time.tm_sec, now.tv_nsec / 1000000, bl_lvl);
+		time_last = now.tv_sec;
+	}
+
+	if (!strcmp(display->display_type, "secondary")) {
+		bl_log = &oplus_bl_log[DISPLAY_SECONDARY];
+	} else {
+		bl_log = &oplus_bl_log[DISPLAY_PRIMARY];
+	}
+
+	bl_log->backlight[bl_log->bl_count] = bl_lvl;
+	bl_log->past_times[bl_log->bl_count] = now;
+	bl_log->bl_count++;
+	if (bl_log->bl_count >= BACKLIGHT_CACHE_MAX) {
+		bl_log->bl_count = 0;
+		memset(backlight_log_buf, 0, sizeof(backlight_log_buf));
+		for (i = 0; i < BACKLIGHT_CACHE_MAX; i++) {
+			time64_to_tm(bl_log->past_times[i].tv_sec, 0, &broken_time);
+			len += snprintf(backlight_log_buf + len, sizeof(backlight_log_buf) - len,
+				"%02d:%02d:%02d.%03ld:%d,", broken_time.tm_hour, broken_time.tm_min,
+				broken_time.tm_sec, bl_log->past_times[i].tv_nsec / 1000000, bl_log->backlight[i]);
+		}
+		pr_info("<%s> len:%d dsi_display_set_backlight %s\n", display->panel->oplus_priv.vendor_name, len, backlight_log_buf);
+	}
 }

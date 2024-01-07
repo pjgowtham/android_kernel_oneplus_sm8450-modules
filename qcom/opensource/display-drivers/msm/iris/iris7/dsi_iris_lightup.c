@@ -1749,7 +1749,7 @@ static void _iris_add_cmd_seq(struct iris_ctrl_opt *ctrl_opt,
 static int32_t _iris_alloc_cmd_seq(
 		struct iris_ctrl_seq  *pctrl_seq, int32_t seq_cnt)
 {
-	pctrl_seq->ctrl_opt = vmalloc(seq_cnt * sizeof(struct iris_ctrl_seq));
+	pctrl_seq->ctrl_opt = vmalloc(seq_cnt * sizeof(struct iris_ctrl_opt));
 	if (pctrl_seq->ctrl_opt == NULL) {
 		IRIS_LOGE("can not malloc space for pctrl opt");
 		return -ENOMEM;
@@ -3078,6 +3078,11 @@ static void _iris_send_lightup_pkt(void)
 	struct iris_cfg *pcfg = iris_get_cfg();
 	struct iris_ctrl_seq *pseq = _iris_get_ctrl_seq(pcfg);
 
+	if (!pseq) {
+		IRIS_LOGE("%s(), invalid pseq", __func__);
+		return;
+	}
+
 	SDE_ATRACE_BEGIN("_iris_send_lightup_pkt");
 	iris_send_assembled_pkt(pseq->ctrl_opt, pseq->cnt);
 	SDE_ATRACE_END("_iris_send_lightup_pkt");
@@ -3152,6 +3157,11 @@ void iris_free_ipopt_buf(uint32_t ip_type)
 	int ip_cnt = IRIS_IP_CNT;
 	struct dsi_cmd_desc *pdesc_addr = NULL;
 	struct iris_ip_index *pip_index = iris_get_ip_idx(ip_type);
+
+	if (pip_index == NULL) {
+		IRIS_LOGE("%s(), pip_index is null!",__func__);
+		return;
+	}
 
 	if (ip_type == IRIS_LUT_PIP_IDX)
 		ip_cnt = LUT_IP_END - LUT_IP_START;
@@ -3264,15 +3274,19 @@ void iris_alloc_update_ipopt_space(void)
 	for (i = IRIS_DTSI_PIP_IDX_START; i < iris_get_cmd_list_cnt(); i++) {
 		pip_index = iris_get_ip_idx(i);
 		dtsi_opt_cnt = 0;
-		for (j = 0; j < IRIS_IP_CNT; j++)
-			dtsi_opt_cnt += pip_index[j].opt_cnt;
+		if (pip_index) {
+			for (j = 0; j < IRIS_IP_CNT; j++)
+				dtsi_opt_cnt += pip_index[j].opt_cnt;
+			}
 	}
 	if (dtsi_opt_cnt > sum)
 		sum = dtsi_opt_cnt;
 
 	pip_index = iris_get_ip_idx(IRIS_LUT_PIP_IDX);
-	for (j = 0; j < LUT_IP_END - LUT_IP_START; j++)
-		sum += pip_index[j].opt_cnt;
+	if (pip_index) {
+		for (j = 0; j < LUT_IP_END - LUT_IP_START; j++)
+			sum += pip_index[j].opt_cnt;
+	}
 
 	pcfg->ip_opt_cnt = sum;
 	IRIS_LOGI("%s(), i_p opt count: %u", __func__, pcfg->ip_opt_cnt);
@@ -3340,6 +3354,7 @@ void _iris_read_power_mode(struct dsi_panel *panel)
 	};
 	struct iris_cfg *pcfg = iris_get_cfg();
 
+	memset(&cmds, 0x00, sizeof(cmds));
 	remap_to_qcom_style(&cmds, &cmds_pxlw, 1);
 
 	iris_set_msg_flags(&cmds, READ_FLAG);
@@ -3810,6 +3825,10 @@ static bool _iris_check_cont_splash_ipopt(uint8_t ip, uint8_t opt_id)
 	struct iris_cfg *pcfg = iris_get_cfg();
 	struct iris_ctrl_seq *pseq_cs = _iris_get_ctrl_seq_cs(pcfg);
 
+	if (!pseq_cs) {
+		IRIS_LOGE("%s() invalid pseq_cs", __func__);
+		return false;
+	}
 	for (i = 0; i < pseq_cs->cnt; i++) {
 		cs_ip = pseq_cs->ctrl_opt[i].ip;
 		cs_opt_id = pseq_cs->ctrl_opt[i].opt_id;
@@ -3832,6 +3851,11 @@ static int _iris_select_cont_splash_ipopt(
 	struct iris_cfg *pcfg = iris_get_cfg();
 	struct iris_ctrl_seq *pseq = _iris_get_ctrl_seq(pcfg);
 	struct iris_ctrl_opt *pctrl_opt = NULL;
+
+	if (!pseq) {
+		IRIS_LOGE("%s(), invalid pseq", __func__);
+		return -EINVAL;
+	}
 
 	for (i = 0; i < pseq->cnt; i++) {
 		pctrl_opt = pseq->ctrl_opt + i;
@@ -3870,6 +3894,11 @@ static void _iris_send_cont_splash_pkt(uint32_t type)
 
 	if (type == IRIS_CONT_SPLASH_LK) {
 		pseq_cs = _iris_get_ctrl_seq_cs(pcfg);
+		if (!pseq_cs) {
+			IRIS_LOGE("%s() invalid pseq_cs", __func__);
+			vfree(opt_arr);
+			return;
+		}
 		iris_send_assembled_pkt(pseq_cs->ctrl_opt, pseq_cs->cnt);
 	} else if (type == IRIS_CONT_SPLASH_KERNEL) {
 		iris_lp_enable_pre();
@@ -4031,6 +4060,11 @@ static int _iris_update_pq_seq(struct iris_update_ipopt *popt, int ipopt_cnt)
 	int32_t opt_id = 0;
 	struct iris_cfg *pcfg = iris_get_cfg();
 	struct iris_ctrl_seq *pseq = _iris_get_ctrl_seq(pcfg);
+
+	if (!pseq) {
+		IRIS_LOGE("%s(), invalid pseq", __func__);
+		return -EINVAL;
+	}
 
 	for (i = 0; i < ipopt_cnt; i++) {
 		/*need to update sequence*/
@@ -4531,6 +4565,7 @@ static ssize_t _iris_dump_cmd_payload(struct file *file,
 	int32_t pos;
 	char buf[64];
 	uint32_t *payload = NULL;
+	uint32_t len;
 
 	if (count >= sizeof(buf))
 		return -EINVAL;
@@ -4572,6 +4607,9 @@ static ssize_t _iris_dump_cmd_payload(struct file *file,
 
 	payload = iris_get_ipopt_payload_data(ip, opt_id, 2);
 	if (payload == NULL)
+		return -EFAULT;
+	len = iris_get_ipopt_payload_len(ip, opt_id, 2);
+	if (((uint32_t)pos) >= len)
 		return -EFAULT;
 
 	IRIS_LOGW("%s(), for i_p: 0x%02X opt: 0x%02X, payload[%d] is: 0x%08X",

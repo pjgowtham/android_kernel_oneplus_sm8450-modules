@@ -160,6 +160,7 @@ msm_drm-$(CONFIG_DRM_MSM_DP_USBPD_LEGACY) += dp/dp_usbpd.o
 msm_drm-$(CONFIG_DRM_OPLUS) += ../oplus/oplus_dsi_support.o \
 	../oplus/oplus_display_private_api.o \
 	../oplus/oplus_dc_diming.o \
+	../oplus/oplus_display_temp_compensation.o \
 	../oplus/oplus_onscreenfingerprint.o \
 	../oplus/oplus_ffl.o \
 	../oplus/oplus_display_panel.o \
@@ -171,8 +172,6 @@ msm_drm-$(CONFIG_DRM_OPLUS) += ../oplus/oplus_dsi_support.o \
 	../oplus/oplus_display_panel_feature.o
 
 msm_drm-$(CONFIG_DRM_OPLUS) += ../oplus/oplus_adfr.o
-
-msm_drm-$(CONFIG_DRM_OPLUS) += ../oplus/oplus_display_temperature.o
 
 msm_drm-$(CONFIG_DRM_OPLUS_NOTIFY) += ../oplus/oplus_notify.o
 

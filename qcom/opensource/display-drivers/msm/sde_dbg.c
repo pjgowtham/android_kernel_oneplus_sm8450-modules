@@ -1128,8 +1128,8 @@ void oplus_sde_evtlog_dump_all(void)
 	u32 dump_mode_temp;
 
 	pr_err("oplus_sde_evtlog_dump_all entry\n");
-	if (!dbg_base)
-		return;
+	SDE_EVT32(0x11, 0x22, 0x33);
+	SDE_EVT32(0x11, 0x22, 0x33);
 
 	mutex_lock(&dbg_base->mutex);
 

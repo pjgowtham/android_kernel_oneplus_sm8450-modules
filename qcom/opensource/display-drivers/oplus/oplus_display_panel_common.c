@@ -14,7 +14,6 @@
 #include <linux/soc/qcom/panel_event_notifier.h>
 #include "../msm/iris/dsi_iris_loop_back.h"
 #include "oplus_display_private_api.h"
-#include "oplus_display_temperature.h"
 #include "sde_trace.h"
 #ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
 #include "oplus_onscreenfingerprint.h"
@@ -26,6 +25,7 @@
 #define DSI_PANEL_OPLUS_DUMMY_VENDOR_NAME  "PanelVendorDummy"
 #define DSI_PANEL_OPLUS_DUMMY_MANUFACTURE_NAME  "dummy1024"
 
+bool oplus_temp_compensation_wait_for_vsync_set = false;
 int oplus_debug_max_brightness = 0;
 int oplus_dither_enable = 0;
 int oplus_dre_status = 0;
@@ -262,9 +262,16 @@ int oplus_display_panel_get_vendor(void *buf)
 	if (!display || !display->panel ||
 			!display->panel->oplus_priv.vendor_name ||
 			!display->panel->oplus_priv.manufacture_name) {
-		pr_err("failed to config lcd proc device");
+		LCD_ERR("failed to config lcd proc device\n");
 		return -EINVAL;
 	}
+
+#if defined(CONFIG_PXLW_IRIS)
+	if (iris_is_chip_supported() && (!strcmp(display->panel->type, "secondary"))) {
+		LCD_INFO("iris secondary panel no need config\n");
+		return -EINVAL;
+	}
+#endif
 
 	vendor = (char *)display->panel->oplus_priv.vendor_name;
 	manu_name = (char *)display->panel->oplus_priv.manufacture_name;
@@ -273,6 +280,80 @@ int oplus_display_panel_get_vendor(void *buf)
 			strlen(vendor) >= 31 ? 31 : (strlen(vendor) + 1));
 	memcpy(p_info->manufacture, manu_name,
 			strlen(manu_name) >= 31 ? 31 : (strlen(manu_name) + 1));
+
+	return 0;
+}
+
+int oplus_display_panel_get_panel_name(void *buf)
+{
+	struct panel_name *p_name = buf;
+	struct dsi_display *display = NULL;
+	char *name = NULL;
+	int panel_id = p_name->name[0];
+
+	display = get_main_display();
+	if (1 == panel_id)
+		display = get_sec_display();
+
+	if (!display || !display->panel ||
+			!display->panel->name) {
+		LCD_ERR("failed to config lcd panel name\n");
+		return -EINVAL;
+	}
+
+#if defined(CONFIG_PXLW_IRIS)
+	if (iris_is_chip_supported() && (!strcmp(display->panel->type, "secondary"))) {
+		LCD_INFO("iris secondary panel no need config\n");
+		return -EINVAL;
+	}
+#endif
+
+	name = (char *)display->panel->name;
+
+	memcpy(p_name->name, name,
+			strlen(name) >= (PANEL_NAME_LENS - 1) ? (PANEL_NAME_LENS - 1) : (strlen(name) + 1));
+
+	return 0;
+}
+
+int oplus_display_panel_get_panel_bpp(void *buf)
+{
+	uint32_t *panel_bpp = buf;
+	int bpp = 0;
+	int rc = 0;
+	int panel_id = (*panel_bpp >> BPP_SHIFT);
+	struct dsi_display *display = get_main_display();
+	struct dsi_parser_utils *utils = NULL;
+
+	if (panel_id == 1)
+		display = get_sec_display();
+
+	if (!display || !display->panel) {
+		LCD_ERR("display or panel is null\n");
+		return -EINVAL;
+	}
+
+#if defined(CONFIG_PXLW_IRIS)
+	if (iris_is_chip_supported() && (!strcmp(display->panel->type, "secondary"))) {
+		LCD_INFO("iris secondary panel no need config\n");
+		return -EINVAL;
+	}
+#endif
+
+	utils = &display->panel->utils;
+	if (!utils) {
+		LCD_ERR("utils is null\n");
+		return -EINVAL;
+	}
+
+	rc = utils->read_u32(utils->data, "qcom,mdss-dsi-bpp", &bpp);
+
+	if (rc) {
+		LCD_INFO("failed to read qcom,mdss-dsi-bpp, rc=%d\n", rc);
+		return -EINVAL;
+	}
+
+	*panel_bpp = bpp / RGB_COLOR_WEIGHT;
 
 	return 0;
 }
@@ -496,16 +577,16 @@ int oplus_display_panel_get_serial_number(void *buf)
 	 */
 	if (1 == panel_id) {
 		if (serial_number1 != 0) {
-			ret = scnprintf(panel_rnum->serial_number, PAGE_SIZE, "Get panel serial number: %llx\n",
-							serial_number1);
-			pr_info("%s read serial_number1 0x%x\n", __func__, serial_number1);
+			ret = scnprintf(panel_rnum->serial_number, sizeof(panel_rnum->serial_number),
+					"Get panel serial number: %llx", serial_number1);
+			pr_info("%s read serial_number1 0x%llx\n", __func__, serial_number1);
 			return ret;
 		}
 	} else {
 		if (serial_number0 != 0) {
-			ret = scnprintf(panel_rnum->serial_number, PAGE_SIZE, "Get panel serial number: %llx\n",
-							serial_number0);
-			pr_info("%s read serial_number0 0x%x\n", __func__, serial_number0);
+			ret = scnprintf(panel_rnum->serial_number, sizeof(panel_rnum->serial_number),
+					"Get panel serial number: %llx", serial_number0);
+			pr_info("%s read serial_number0 0x%llx\n", __func__, serial_number0);
 			return ret;
 		}
 	}
@@ -515,7 +596,16 @@ int oplus_display_panel_get_serial_number(void *buf)
 	 * retry when found panel_serial_info is abnormal.
 	 */
 	for (i = 0; i < 5; i++) {
-		if (!strcmp(display->panel->name, "tianma nt37705 dsc cmd mode panel")) {
+		if (display->panel->power_mode != SDE_MODE_DPMS_ON) {
+			printk(KERN_ERR"%s display panel in off status\n", __func__);
+			return ret;
+		}
+		if (!display->panel->panel_initialized) {
+			printk(KERN_ERR"%s	panel initialized = false\n", __func__);
+			return ret;
+		}
+		if ((!strcmp(display->panel->name, "tianma nt37705 dsc cmd mode panel"))
+			|| (!strcmp(display->panel->name, "senna22623 ab575 tm nt37705 dsc cmd mode panel"))) {
 			printk(KERN_INFO"%s skip set_page\n", __func__);
 		} else if (!strcmp(display->panel->name, "boe rm692e5 dsc cmd mode panel")) {
 			ret = dsi_panel_tx_cmd_set(display->panel, DSI_CMD_PANEL_DATE_SWITCH);
@@ -561,7 +651,8 @@ int oplus_display_panel_get_serial_number(void *buf)
 		}
 
 		/* read multiple regs */
-		if (!strcmp(display->panel->name, "tianma nt37705 dsc cmd mode panel")) {
+		if ((!strcmp(display->panel->name, "tianma nt37705 dsc cmd mode panel"))
+			|| (!strcmp(display->panel->name, "senna22623 ab575 tm nt37705 dsc cmd mode panel"))) {
 			printk(KERN_INFO"%s skip read_multiple_regs\n", __func__);
 		} else if (display->panel->oplus_ser.is_multi_reg) {
 			len = sizeof(display->panel->oplus_ser.serial_number_multi_regs) - 1;
@@ -581,7 +672,8 @@ int oplus_display_panel_get_serial_number(void *buf)
 				read, display->panel->oplus_ser.serial_number_conut);
 		}
 
-		if (!strcmp(display->panel->name, "tianma nt37705 dsc cmd mode panel")) {
+		if ((!strcmp(display->panel->name, "tianma nt37705 dsc cmd mode panel"))
+			|| (!strcmp(display->panel->name, "senna22623 ab575 tm nt37705 dsc cmd mode panel"))) {
 			printk(KERN_INFO"%s set_page and read_reg\n", __func__);
 			mutex_lock(&display->display_lock);
 			mutex_lock(&display->panel->panel_lock);
@@ -663,8 +755,8 @@ int oplus_display_panel_get_serial_number(void *buf)
 			mutex_unlock(&display->display_lock);
 		}
 
-		ret = scnprintf(panel_rnum->serial_number, PAGE_SIZE, "Get panel serial number: %llx\n",
-				serial_number);
+		ret = scnprintf(panel_rnum->serial_number, sizeof(panel_rnum->serial_number),
+				"Get panel serial number: %llx", serial_number);
 		/*Save serial_number value.*/
 		if (1 == panel_id) {
 			serial_number1 = serial_number;
@@ -686,9 +778,11 @@ int oplus_display_set_qcom_loglevel(void *data)
 	}
 
 	if (k_loginfo->enable) {
+		oplus_dsi_log_type |= OPLUS_DEBUG_LOG_CMD;
 		oplus_dsi_log_type |= OPLUS_DEBUG_LOG_BACKLIGHT;
 		oplus_dsi_log_type |= OPLUS_DEBUG_LOG_COMMON;
 	} else {
+		oplus_dsi_log_type &= ~OPLUS_DEBUG_LOG_CMD;
 		oplus_dsi_log_type &= ~OPLUS_DEBUG_LOG_BACKLIGHT;
 		oplus_dsi_log_type &= ~OPLUS_DEBUG_LOG_COMMON;
 	}
@@ -782,6 +876,44 @@ int oplus_display_get_softiris_color_status(void *data)
 	iris_color_status->color_oplus_calibrate_status = (uint32_t)color_oplus_calibrate_status;
 
 	return 0;
+}
+
+int oplus_display_panel_get_panel_type(void *data)
+{
+	int ret = 0;
+	uint32_t *temp_save = data;
+	uint32_t panel_id = (*temp_save >> 12);
+	uint32_t panel_type = 0;
+
+	struct dsi_panel *panel = NULL;
+	struct dsi_parser_utils *utils = NULL;
+	struct dsi_display *display = get_main_display();
+	if (1 == panel_id) {
+		display = get_sec_display();
+	}
+
+	if (!display) {
+		LCD_ERR("display is null\n");
+		return -EINVAL;
+	}
+	panel = display->panel;
+	if (!panel) {
+		LCD_ERR("panel is null\n");
+		return -EINVAL;
+	}
+
+	utils = &panel->utils;
+	if (!utils) {
+		LCD_ERR("utils is null\n");
+		return -EINVAL;
+	}
+
+	ret = utils->read_u32(utils->data, "oplus,mdss-dsi-panel-type", &panel_type);
+	LCD_INFO("oplus,mdss-dsi-panel-type: %d\n", panel_type);
+
+	*temp_save = panel_type;
+
+	return ret;
 }
 
 int oplus_display_panel_get_id2(void)
@@ -1329,10 +1461,10 @@ int oplus_display_set_cabc_status(void *buf)
 				}
 			}
 		oplus_cabc_status = *cabc_status;
-		pr_err("debug for %s, buf = [%s], oplus_cabc_status = %d\n",
-				__func__, buf, oplus_cabc_status);
+		pr_err("debug for %s, buf = [%u], oplus_cabc_status = %d\n",
+				__func__, *cabc_status, oplus_cabc_status);
 	} else {
-		pr_err("debug for %s, buf = [%s], but display panel status is not on!\n",
+		pr_err("debug for %s, buf = [%u], but display panel status is not on!\n",
 				__func__, *cabc_status);
 	}
 	return rc;
@@ -1402,10 +1534,10 @@ int oplus_display_set_dre_status(void *buf)
 			/*	disp_aal_set_dre_en(1);  MTK AAL api */
 		}
 		oplus_dre_status = *dre_status;
-		pr_err("debug for %s, buf = [%s], oplus_dre_status = %d\n",
-				__func__, buf, oplus_dre_status);
+		pr_err("debug for %s, buf = [%u], oplus_dre_status = %d\n",
+				__func__, *dre_status, oplus_dre_status);
 	} else {
-		pr_err("debug for %s, buf = [%s], but display panel status is not on!\n",
+		pr_err("debug for %s, buf = [%u], but display panel status is not on!\n",
 				__func__, *dre_status);
 	}
 	return rc;
@@ -1423,8 +1555,8 @@ int oplus_display_set_dither_status(void *buf)
 {
 	uint32_t *dither_enable = buf;
 	oplus_dither_enable = *dither_enable;
-	pr_err("debug for %s, buf = [%s], oplus_dither_enable = %d\n",
-			__func__, buf, oplus_dither_enable);
+	pr_err("debug for %s, buf = [%u], oplus_dither_enable = %d\n",
+			__func__, *dither_enable, oplus_dither_enable);
 
 	return 0;
 }
@@ -1935,6 +2067,13 @@ int oplus_set_dbv_frame_next(struct dsi_panel *panel, bool enable)
 	}
 
 	if (enable == true) {
+		if (bl_lvl <= 0x643 && bl_lvl > 0)
+			panel->oplus_priv.oplus_pwm_switch_state = PWM_SWITCH_HIGH_STATE;
+		else if (bl_lvl > 0x643)
+			panel->oplus_priv.oplus_pwm_switch_state = PWM_SWITCH_LOW_STATE;
+		else {
+			DSI_ERR("illegal backlight %d\n", bl_lvl);
+		}
 		cmd_sets = &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_HIGH_FRE_120]);
 		if(cmd_sets) {
 			cmds = &(cmd_sets->cmds[cmd_sets->count - 5]);
@@ -1965,13 +2104,79 @@ int oplus_set_dbv_frame_next(struct dsi_panel *panel, bool enable)
 
 	if (enable == true) {
 		rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_HIGH_FRE_120);
-		rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_TIMING_SWITCH_HIGH_FRE);
 	} else {
 		rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_LOW_FRE_120);
-		rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_TIMING_SWITCH);
 	}
 
 	SDE_ATRACE_END("oplus_set_dbv_frame_next");
+
+	return rc;
+}
+
+int oplus_set_pulse_switch(struct dsi_panel *panel, bool enable)
+{
+	int rc = 0;
+	u32 bl_lvl = 0;
+	struct dsi_cmd_desc *cmds;
+	struct mipi_dsi_msg msg;
+	char *tx_buf = NULL;
+	struct dsi_panel_cmd_set *cmd_sets;
+	SDE_ATRACE_BEGIN("oplus_set_pulse_switch");
+
+	if (!panel || !panel->cur_mode || !panel->cur_mode->priv_info) {
+		DSI_ERR("Oplus Features config No panel device\n");
+		return -ENODEV;
+	}
+
+	bl_lvl = panel->bl_config.bl_level;
+	if (enable == true)
+		cmd_sets = &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_HIGH_FRE_120]);
+	else
+		cmd_sets = &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_LOW_FRE_120]);
+	if(cmd_sets) {
+		cmds = &(cmd_sets->cmds[cmd_sets->count - 1]);
+		msg = cmds->msg;
+		tx_buf = (char*)msg.tx_buf;
+
+		tx_buf[msg.tx_len-1] = (bl_lvl & 0xFF);
+		tx_buf[msg.tx_len-2] = (bl_lvl >> 8);
+	} else {
+		printk(KERN_ERR "%s:DSI_CMD_SET_LPWM_PULSE is not defined\n", __func__);
+		return -EINVAL;
+	}
+
+	if (enable == true) {
+		if (bl_lvl <= 0x643 && bl_lvl > 0)
+			panel->oplus_priv.oplus_pwm_switch_state = PWM_SWITCH_HIGH_STATE;
+		else if (bl_lvl > 0x643)
+			panel->oplus_priv.oplus_pwm_switch_state = PWM_SWITCH_LOW_STATE;
+		else {
+			DSI_ERR("illegal backlight %d\n", bl_lvl);
+		}
+		cmd_sets = &(panel->cur_mode->priv_info->cmd_sets[DSI_CMD_HIGH_FRE_120]);
+		if(cmd_sets) {
+			cmds = &(cmd_sets->cmds[cmd_sets->count - 5]);
+			msg = cmds->msg;
+			tx_buf = (char*)msg.tx_buf;
+
+			if (bl_lvl <= 0x643 && bl_lvl > 0)
+				tx_buf[msg.tx_len-1] = 0x4B;
+			else if (bl_lvl > 0x643)
+				tx_buf[msg.tx_len-1] = 0x42;
+			else {
+				tx_buf[msg.tx_len-1] = 0x42;
+				DSI_ERR("backlight is %d set DSI_CMD_SET_HPWM_PULSE plus B2 to 42\n", bl_lvl);
+			}
+		}
+	}
+
+	if (enable == true) {
+		rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_HIGH_FRE_120);
+	} else {
+		rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_LOW_FRE_120);
+	}
+
+	SDE_ATRACE_END("oplus_set_pulse_switch");
 
 	return rc;
 }
@@ -2039,6 +2244,7 @@ int oplus_display_pwm_pulse_switch(void *dsi_panel, unsigned int bl_level)
 	struct sde_encoder_virt *sde_enc = NULL;
 	struct dsi_cmd_desc *cmds = NULL;
 	unsigned char *tx_buf = NULL;
+	unsigned int bl_threshold = 0;
 
 	pr_debug("[DISP][DEBUG][%s:%d]start\n", __func__, __LINE__);
 
@@ -2047,7 +2253,20 @@ int oplus_display_pwm_pulse_switch(void *dsi_panel, unsigned int bl_level)
 		return -EINVAL;
 	}
 
-	if ((strcmp(panel->oplus_priv.vendor_name, "NT37705")) || (bl_level == 0) || (bl_level == 1)) {
+	bl_threshold = panel->bl_config.pwm_turbo_gamma_bl_threshold;
+
+	if ((bl_level == 0) || (bl_level == 1)) {
+		return 0;
+	}
+
+	if (str_equal(panel->oplus_priv.vendor_name, "NT37705")
+			|| str_equal(panel->oplus_priv.vendor_name, "BOE_NT37705")
+			|| oplus_is_support_pwm_switch(panel)) {
+		/* will go on */
+	} else {
+		/* early return */
+		pr_debug("[DISP][DEBUG][%s:%d]it is not NT37705 BOE_NT37705 vendorname"
+				"or not support pwm pulse switch\n", __func__, __LINE__);
 		return 0;
 	}
 
@@ -2074,8 +2293,12 @@ int oplus_display_pwm_pulse_switch(void *dsi_panel, unsigned int bl_level)
 
 	SDE_ATRACE_BEGIN("oplus_display_pwm_pulse_switch");
 
-	if (oplus_pwm_turbo_is_enabled(panel) && (refresh_rate != 90)) {
-		if (((bl_level <= 0x643) && (last_bl_level > 0x643)) || (panel->oplus_priv.pwm_power_on && (bl_level <= 0x643) && (bl_level > 0))) {
+	if ((oplus_panel_pwm_turbo_is_enabled(panel) && (refresh_rate != 90))
+			|| oplus_is_support_pwm_switch(panel)) {
+		if (((bl_level <= bl_threshold) && (last_bl_level > bl_threshold))
+				|| (panel->oplus_priv.pwm_power_on && (bl_level <= bl_threshold)
+				&& (bl_level > 0))) {
+			panel->oplus_priv.oplus_pwm_switch_state = PWM_SWITCH_HIGH_STATE;
 			cmds = mode->priv_info->cmd_sets[DSI_CMD_SET_HPWM_PULSE].cmds;
 			count = mode->priv_info->cmd_sets[DSI_CMD_SET_HPWM_PULSE].count;
 			if (count) {
@@ -2085,7 +2308,7 @@ int oplus_display_pwm_pulse_switch(void *dsi_panel, unsigned int bl_level)
 					tx_buf[2] = (bl_level & 0xFF);
 				}
 			}
-			pr_info("[%s] set pulse and temp compensation\n", __func__);
+			pr_info("[%s] set hpwm_pulse and temp compensation\n", __func__);
 			if (!panel->oplus_priv.pwm_power_on) {
 				oplus_sde_early_wakeup();
 				oplus_wait_for_vsync(panel);
@@ -2093,11 +2316,19 @@ int oplus_display_pwm_pulse_switch(void *dsi_panel, unsigned int bl_level)
 			}
 
 			rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_HPWM_PULSE);
-			if (!panel->oplus_priv.pwm_power_on)
-				oplus_wait_for_vsync(panel);
+			if (!panel->oplus_priv.pwm_power_on) {
+				if (str_equal(panel->oplus_priv.vendor_name, "BOE_NT37705")
+						|| oplus_is_support_pwm_switch(panel)) {
+					oplus_temp_compensation_wait_for_vsync_set = true;
+				} else {
+					oplus_wait_for_vsync(panel);
+				}
+			}
 
 			panel->oplus_priv.pwm_power_on = false;
-		} else if (((bl_level > 0x643) && (last_bl_level <= 0x643)) || (panel->oplus_priv.pwm_power_on && bl_level > 0x643)) {
+		} else if (((bl_level > bl_threshold) && (last_bl_level <= bl_threshold))
+				|| (panel->oplus_priv.pwm_power_on && bl_level > bl_threshold)) {
+			panel->oplus_priv.oplus_pwm_switch_state = PWM_SWITCH_LOW_STATE;
 			cmds = mode->priv_info->cmd_sets[DSI_CMD_SET_LPWM_PULSE].cmds;
 			count = mode->priv_info->cmd_sets[DSI_CMD_SET_LPWM_PULSE].count;
 			if (count) {
@@ -2108,7 +2339,7 @@ int oplus_display_pwm_pulse_switch(void *dsi_panel, unsigned int bl_level)
 				}
 			}
 
-			pr_info("[%s] set pulse and temp compensation\n", __func__);
+			pr_info("[%s] set lhpwm_pulse and temp compensation\n", __func__);
 			if (!panel->oplus_priv.pwm_power_on) {
 				oplus_sde_early_wakeup();
 				oplus_wait_for_vsync(panel);
@@ -2116,8 +2347,14 @@ int oplus_display_pwm_pulse_switch(void *dsi_panel, unsigned int bl_level)
 			}
 
 			rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_LPWM_PULSE);
-			if (!panel->oplus_priv.pwm_power_on)
-				oplus_wait_for_vsync(panel);
+			if (!panel->oplus_priv.pwm_power_on) {
+				if (str_equal(panel->oplus_priv.vendor_name, "BOE_NT37705")
+						||oplus_is_support_pwm_switch(panel)) {
+					oplus_temp_compensation_wait_for_vsync_set = true;
+				} else {
+					oplus_wait_for_vsync(panel);
+				}
+			}
 
 			panel->oplus_priv.pwm_power_on = false;
 		}
@@ -2159,12 +2396,58 @@ int oplus_wait_for_vsync(struct dsi_panel *panel)
 }
 EXPORT_SYMBOL(oplus_wait_for_vsync);
 
-inline bool oplus_pwm_turbo_is_enabled(struct dsi_panel *panel)
+inline bool oplus_panel_pwm_turbo_is_enabled(struct dsi_panel *panel)
 {
+	if (!panel) {
+		DSI_ERR("Invalid panel\n");
+		return false;
+	}
 	return (bool)(panel->oplus_priv.pwm_turbo_support &&
 			panel->oplus_priv.pwm_turbo_enabled);
 }
 
+inline bool oplus_panel_pwm_turbo_switch_state(struct dsi_panel *panel)
+{
+	if (!panel) {
+		DSI_ERR("Invalid panel\n");
+		return false;
+	}
+
+	return (bool)(panel->oplus_priv.pwm_turbo_support &&
+			panel->oplus_priv.oplus_pwm_switch_state);
+}
+
+inline bool oplus_is_support_pwm_switch(struct dsi_panel *panel)
+{
+	return (bool)(panel->oplus_priv.pwm_switch_support);
+}
+
+/*
+int oplus_panel_send_pwm_turbo_dcs_unlock(struct dsi_panel *panel, bool enabled)
+60Hz开启高频PWM：	60HZ低频--120HZ低频--avdd/gamma/elvss/pulse--120HZ高频--60HZ高频
+	qcom,mdss-dsi-timing-switch-120-command			(60Hz切120Hz低频)
+	qcom,mdss-dsi-switch-avdd-command
+	qcom,mdss-dsi-switch-high-fre-120-command
+	qcom,mdss-dsi-timing-switch-120-high-fre-command	(60Hz切120Hz高频)
+	qcom,mdss-dsi-timing-switch-high-fre-command
+
+120Hz开启高频PWM:	120HZ低频--avdd/gamma/elvss/pulse--120HZ高频
+	qcom,mdss-dsi-switch-avdd-command
+	qcom,mdss-dsi-switch-high-fre-120-command
+	qcom,mdss-dsi-timing-switch-high-fre-command
+
+60Hz关闭高频PWM：	60HZ高频--120HZ高频--avdd/gamma/elvss/pulse--120HZ低频--60HZ低频
+	qcom,mdss-dsi-timing-switch-120-high-fre-command	(60Hz切120Hz高频)
+	qcom,mdss-dsi-switch-avdd-command
+	qcom,mdss-dsi-switch-low-fre-120-command
+	qcom,mdss-dsi-timing-switch-120-command			(60Hz切120Hz低频)
+	qcom,mdss-dsi-timing-switch-command
+
+120Hz关闭高频PWM：	120HZ高频--avdd/gamma/elvss/pulse--120HZ低频
+	qcom,mdss-dsi-switch-avdd-command
+	qcom,mdss-dsi-switch-low-fre-120-command
+	qcom,mdss-dsi-timing-switch-command
+*/
 int oplus_panel_send_pwm_turbo_dcs_unlock(struct dsi_panel *panel, bool enabled)
 {
 	int rc = 0;
@@ -2174,21 +2457,39 @@ int oplus_panel_send_pwm_turbo_dcs_unlock(struct dsi_panel *panel, bool enabled)
 		rc = -EFAULT;
 		return rc;
 	}
-
 	if (panel->cur_mode->timing.refresh_rate != 90)
 		rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_RESET_SCANLINE);
-
-	if (panel->cur_mode->timing.refresh_rate == 60)
-		rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_TIMING_SWITCH_120);
-
-	if (panel->cur_mode->timing.refresh_rate != 90) {
-		rc |= oplus_set_dbv_frame(panel, enabled);
-		rc |= oplus_set_dbv_frame_next(panel, enabled);
-		/* rc |= oplus_set_frequency_pwm_pulse(panel, panel->bl_config.bl_level); */
+	if (enabled) {
+		if (panel->cur_mode->timing.refresh_rate == 60)
+			rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_TIMING_SWITCH_120);
+		if (panel->cur_mode->timing.refresh_rate != 90) {
+			if (!panel->oplus_priv.pwm_turbo_ignore_set_dbv_frame) {
+				rc |= oplus_set_dbv_frame(panel, enabled);
+				rc |= oplus_set_dbv_frame_next(panel, enabled);
+			} else {
+				rc |= oplus_set_pulse_switch(panel, enabled);
+			}
+		}
+		if (panel->cur_mode->timing.refresh_rate == 60)
+			rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_TIMING_SWITCH_120_HIGH_FRE);
+		if (panel->cur_mode->timing.refresh_rate != 90)
+			rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_TIMING_SWITCH_HIGH_FRE);
+	} else {
+		if (panel->cur_mode->timing.refresh_rate == 60)
+			rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_TIMING_SWITCH_120_HIGH_FRE);
+		if (panel->cur_mode->timing.refresh_rate != 90) {
+			if (!panel->oplus_priv.pwm_turbo_ignore_set_dbv_frame) {
+				rc |= oplus_set_dbv_frame(panel, enabled);
+				rc |= oplus_set_dbv_frame_next(panel, enabled);
+			} else {
+				rc |= oplus_set_pulse_switch(panel, enabled);
+			}
+		}
+		if (panel->cur_mode->timing.refresh_rate == 60)
+			rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_TIMING_SWITCH_120);
+		if (panel->cur_mode->timing.refresh_rate != 90)
+			rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_TIMING_SWITCH);
 	}
-	if (panel->cur_mode->timing.refresh_rate == 60)
-		rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_TIMING_SWITCH);
-
 	if (panel->cur_mode->timing.refresh_rate != 90)
 		rc |= dsi_panel_tx_cmd_set(panel, DSI_CMD_RECOVERY_SCANLINE);
 
@@ -2242,6 +2543,12 @@ int oplus_display_panel_set_pwm_turbo(void *data)
 	if (!panel->oplus_priv.pwm_turbo_support) {
 		DSI_WARN("[%s] Falied to set pwm turbo status, because it is nonsupport\n",
 				__func__);
+		rc = -EFAULT;
+		return rc;
+	}
+
+	if (*pwm_enable == panel->oplus_priv.pwm_turbo_enabled) {
+		DSI_WARN("Skip setting duplicate pwm turbo status: %d\n", *pwm_enable);
 		rc = -EFAULT;
 		return rc;
 	}
@@ -2334,7 +2641,7 @@ int oplus_panel_tx_cmd_update(struct dsi_panel *panel, enum dsi_cmd_set_type *ty
 	if (!panel || !panel->cur_mode)
 		return -EINVAL;
 
-	if (oplus_pwm_turbo_is_enabled(panel) && panel->cur_mode->timing.refresh_rate != 90) {
+	if (oplus_panel_pwm_turbo_is_enabled(panel) && panel->cur_mode->timing.refresh_rate != 90) {
 		switch(*type) {
 		case DSI_CMD_SET_ON:
 		case DSI_CMD_SET_ON_HIGH_FRE:
@@ -2347,6 +2654,10 @@ int oplus_panel_tx_cmd_update(struct dsi_panel *panel, enum dsi_cmd_set_type *ty
 		case DSI_CMD_SET_NOLP:
 		case DSI_CMD_SET_NOLP_HPWM:
 			*type = DSI_CMD_SET_NOLP_HPWM;
+			break;
+		case DSI_CMD_SET_LP1:
+		case DSI_CMD_SET_LP1_HPWM:
+			*type = DSI_CMD_SET_LP1_HPWM;
 			break;
 		default:
 			break;
@@ -2365,6 +2676,10 @@ int oplus_panel_tx_cmd_update(struct dsi_panel *panel, enum dsi_cmd_set_type *ty
 		case DSI_CMD_SET_NOLP:
 		case DSI_CMD_SET_NOLP_HPWM:
 			*type = DSI_CMD_SET_NOLP;
+			break;
+		case DSI_CMD_SET_LP1:
+		case DSI_CMD_SET_LP1_HPWM:
+			*type = DSI_CMD_SET_LP1;
 			break;
 		default:
 			break;
@@ -2572,7 +2887,7 @@ int oplus_display_panel_set_demua()
 	bl_lvl = panel->bl_config.bl_level;
 #ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
 	if (oplus_ofp_is_supported()) {
-		if (oplus_ofp_backlight_filter_for_demura(panel, bl_lvl)) {
+		if (oplus_ofp_backlight_filter(panel, bl_lvl)) {
 			return rc;
 		}
 	}
@@ -2640,6 +2955,92 @@ int oplus_display_panel_set_demua()
 
 	mutex_unlock(&panel->panel_lock);
 	mutex_unlock(&display->display_lock);
+
+	return rc;
+}
+
+void oplus_apollo_async_bl_delay(struct dsi_panel *panel)
+{
+	s64 us_per_frame;
+	u32 async_bl_delay;
+	ktime_t last_te_timestamp;
+	int delay;
+	char tag_name[64];
+	u32 debounce_time = 3000;
+	u32 frame_end;
+
+	us_per_frame = panel->cur_mode->priv_info->vsync_period;
+	async_bl_delay = panel->cur_mode->priv_info->async_bl_delay;
+	last_te_timestamp = panel->te_timestamp;
+
+	delay = async_bl_delay - (ktime_to_us(ktime_sub(ktime_get(), last_te_timestamp)) % us_per_frame);
+	snprintf(tag_name, sizeof(tag_name), "async_bl_delay: delay %d us", delay);
+
+	if (delay > 0) {
+		SDE_ATRACE_BEGIN(tag_name);
+		SDE_EVT32(us_per_frame, last_te_timestamp, delay);
+		usleep_range(delay, delay + 100);
+		SDE_ATRACE_END(tag_name);
+	}
+
+	frame_end = us_per_frame - (ktime_to_us(ktime_sub(ktime_get(), last_te_timestamp)) % us_per_frame);
+
+	if (frame_end < debounce_time) {
+		delay = frame_end + async_bl_delay;
+		snprintf(tag_name, sizeof(tag_name), "async_bl_delay: delay %d us to next frame", delay);
+		SDE_ATRACE_BEGIN(tag_name);
+		usleep_range(delay, delay + 100);
+		SDE_ATRACE_END(tag_name);
+	}
+
+	return;
+}
+
+int oplus_display_send_dcs_lock(struct dsi_display *display,
+		enum dsi_cmd_set_type type)
+{
+	int rc = 0;
+
+	if (!display || !display->panel) {
+		LCD_ERR("invalid display panel\n");
+		return -ENODEV;
+	}
+
+	if (display->panel->power_mode == SDE_MODE_DPMS_OFF) {
+		LCD_ERR("display panel is in off status\n");
+		return -EINVAL;
+	}
+
+	if (type < DSI_CMD_SET_MAX) {
+		mutex_lock(&display->display_lock);
+		/* enable the clk vote for CMD mode panels */
+		if (display->config.panel_mode == DSI_OP_CMD_MODE) {
+			rc = dsi_display_clk_ctrl(display->dsi_clk_handle,
+				DSI_CORE_CLK, DSI_CLK_ON);
+			if (rc) {
+				LCD_ERR("failed to enable DSI clocks, rc=%d\n", rc);
+				mutex_unlock(&display->display_lock);
+				return -EFAULT;
+			}
+		}
+
+		mutex_lock(&display->panel->panel_lock);
+		rc = dsi_panel_tx_cmd_set(display->panel, type);
+		mutex_unlock(&display->panel->panel_lock);
+
+		/* disable the clk vote for CMD mode panels */
+		if (display->config.panel_mode == DSI_OP_CMD_MODE) {
+			rc = dsi_display_clk_ctrl(display->dsi_clk_handle,
+				DSI_CORE_CLK, DSI_CLK_OFF);
+			if (rc) {
+				LCD_ERR("failed to disable DSI clocks, rc=%d\n", rc);
+			}
+		}
+		mutex_unlock(&display->display_lock);
+	} else {
+		LCD_ERR("dcs[%d] is out of range", type);
+		return -EINVAL;
+	}
 
 	return rc;
 }

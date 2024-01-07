@@ -95,7 +95,12 @@ static int mdss_mipi_dsi_command(void __user *values)
 		}
 
 		cmd_cnt = *((u8 *)desc.msg.tx_buf);
+		if (cmd_cnt > 256) {
+			ret = -EINVAL;
+			goto err;
+		}
 		pdesc_multi = vmalloc(sizeof(struct dsi_cmd_desc) * cmd_cnt);
+		memset(pdesc_multi, 0x00, sizeof(struct dsi_cmd_desc) * cmd_cnt);
 		pcmd_indx = (char *)desc.msg.tx_buf + cmd_cnt + 1;
 		for (indx = 0; indx < cmd_cnt; indx++) {
 			pdesc = pdesc_multi + indx;
@@ -242,6 +247,8 @@ static bool iris_special_config(u32 type)
 	case IRIS_FW_UPDATE:
 	case IRIS_DEBUG_SET:
 		return true;
+	default:
+		break;
 	}
 
 	return false;
@@ -297,9 +304,12 @@ static int _iris_configure(u32 display, u32 type, u32 value)
 			dpp_precsc_enable = 0;
 
 		if (pqlt_cur_setting->pq_setting.cmcolortempmode) {
-			iris_dpp_precsc_enable(dpp_precsc_enable, false);
-			if (gamut_update)
+			if (gamut_update) {
+				iris_dpp_precsc_enable(dpp_precsc_enable, false);
 				iris_cm_color_gamut_set(pqlt_cur_setting->pq_setting.cmcolorgamut, true);
+			} else {
+				iris_dpp_precsc_enable(dpp_precsc_enable, true);
+			}
 		}
 		iris_dpp_precsc_set(dpp_precsc_enable);
 		break;
@@ -384,7 +394,7 @@ static int _iris_configure(u32 display, u32 type, u32 value)
 		}
 		if(value == ANALOG_BYPASS_MODE) {
 			if (pcfg->pt_sr_enable) {
-				iris_pt_sr_set(0, 0, 0);
+				iris_pt_sr_set(0, 1, 1);
 			}
 			if (pcfg->dtg_ctrl_pt != 0)
 				pcfg->dtg_ctrl_pt = 0;
@@ -518,8 +528,10 @@ static int _iris_configure(u32 display, u32 type, u32 value)
 		iris_set_metadata(false);
 		break;
 	case IRIS_SDR2HDR_LCE:
-		pqlt_cur_setting->sdr2hdr_lce = value;
-		iris_sdr2hdr_set_lce(value);
+		if (value < IRIS_LCE_LEVEL_MAX) {
+			pqlt_cur_setting->sdr2hdr_lce = value;
+			iris_sdr2hdr_set_lce(value);
+		}
 		break;
 	case IRIS_SDR2HDR_DE:
 		pqlt_cur_setting->sdr2hdr_de = value;
@@ -672,6 +684,8 @@ int iris_configure(u32 display, u32 type, u32 value)
 	case IRIS_SET_METADATA:
 		/* don't lock panel_lock */
 		return _iris_configure(display, type, value);
+	default:
+		break;
 	}
 
 	if (IRIS_IF_LOGI())
@@ -709,6 +723,7 @@ int iris_configure_t(uint32_t display, u32 type, void __user *argp)
 void onConfigureMvdMeta(u32 count, u32 *values)
 {
 	struct extmv_frc_meta meta;
+	memset(&meta, 0x00, sizeof(meta));
 
 	if (count < 17 || values == NULL)
 		return;
@@ -755,7 +770,7 @@ void onConfigureMvdMeta(u32 count, u32 *values)
 			values[20], values[21],
 			values[22], values[23], values[24], values[25]);
 	}
-	irisSetExtMvFrc(meta);
+	irisSetExtMvFrc(&meta);
 }
 
 static int _iris_configure_ex(u32 display, u32 type, u32 count, u32 *values)
@@ -778,6 +793,7 @@ static int _iris_configure_ex(u32 display, u32 type, u32 count, u32 *values)
 	#define DUMP_REG_BUF_SIZE 100
 	char dump_buf[DUMP_REG_BUF_SIZE];
 	int len = 0;
+	const u32 MAX_READ_CNT = 100;
 
 	if (!_iris_is_valid_type(display, type))
 		return -EPERM;
@@ -882,7 +898,7 @@ static int _iris_configure_ex(u32 display, u32 type, u32 count, u32 *values)
 			IRIS_LOGE("wrong prameter count in reg dump: %d", count);
 			break;
 		}
-		dump_read_cnt = values[0];
+		dump_read_cnt = values[0] > MAX_READ_CNT ? MAX_READ_CNT : values[0];
 		dump_reg_addr = &values[1];
 		dump_reg_cnt = count - 1;
 		for (i = 0; i < dump_read_cnt; i++) {
@@ -891,11 +907,13 @@ static int _iris_configure_ex(u32 display, u32 type, u32 count, u32 *values)
 
 			memset(dump_buf,  0, sizeof(dump_buf));
 			len = 0;
-			for (j = 0; j < dump_reg_cnt; j++)
-				len += snprintf(dump_buf+len, DUMP_REG_BUF_SIZE,
+			for (j = 0; j < dump_reg_cnt; j++) {
+				len = snprintf(dump_buf, DUMP_REG_BUF_SIZE,
 					", addr = 0x%08x, value = 0x%08x",
 					dump_reg_addr[j], dump_reg_val[j]);
-			IRIS_LOGI("reg dump, count: %3d%s", i, dump_buf);
+				IRIS_LOGI("reg dump %s", dump_buf);
+			}
+			IRIS_LOGI("reg dump, count: %3d", i);
 		}
 		break;
 	case IRIS_CM_COLOR_TEMP_MODE:
@@ -1096,6 +1114,11 @@ static int _iris_configure_ex(u32 display, u32 type, u32 count, u32 *values)
 		IRIS_LOGI("PT-SR enable: %d, size: %d * %d", values[0], values[1], values[2]);
 		break;
 	case IRIS_FRC_PQ_LEVEL:
+		if (count < 5) {
+			IRIS_LOGW("cannot set frc pq with wrong parameter count: %d", count);
+			goto error;
+		}
+
 		if (values[0] == 1) {
 			pcfg->frc_pq_guided_level = values[1];
 			pcfg->frc_pq_dejaggy_level = values[2];
@@ -1112,9 +1135,9 @@ static int _iris_configure_ex(u32 display, u32 type, u32 count, u32 *values)
 		break;
 	case IRIS_DEMURA_LUT_SET:
 		iris_demura_lut = iris_get_demura_info();
-		iris_demura = *(struct msmfb_iris_demura_info *)(values);
 
 		if (values != NULL) {
+			iris_demura = *(struct msmfb_iris_demura_info *)(values);
 			ret = copy_from_user(iris_demura_lut->lut_swpayload,
 				iris_demura.lut_swpayload, sizeof(uint32_t)*1683);
 			if (ret) {
@@ -1167,6 +1190,8 @@ int iris_configure_ex(u32 display, u32 type, u32 count, u32 *values)
 	case IRIS_WAIT_VSYNC:
 		/* don't lock panel_lock */
 		return _iris_configure_ex(display, type, count, values);
+	default:
+		break;
 	}
 
 	mutex_lock(&pcfg->panel->panel_lock);
@@ -1273,7 +1298,7 @@ int iris_configure_get(u32 display, u32 type, u32 count, u32 *values)
 		// mutex_unlock(&pcfg->panel->panel_lock);
 		break;
 	case IRIS_DBG_TARGET_REGADDR_VALUE_GET:
-		IRIS_LOGI("%s:%d, pcfg->abyp_ctrl.abypass_mode = %d",
+		IRIS_LOGV("%s:%d, pcfg->abyp_ctrl.abypass_mode = %d",
 				__func__, __LINE__,
 				pcfg->abyp_ctrl.abypass_mode);
 		if ((pcfg->abyp_ctrl.abypass_mode == ANALOG_BYPASS_MODE) && (adb_type == 0))
@@ -1456,9 +1481,15 @@ int iris_configure_get(u32 display, u32 type, u32 count, u32 *values)
 		return -EFAULT;
 	}
 
+	if (type == IRIS_OSD_AUTOREFRESH || type == IRIS_OSD_OVERFLOW_ST || type == IRIS_DBG_TARGET_REGADDR_VALUE_GET) {
+		IRIS_LOGV("%s(), type: 0x%04x(%d), value: %d",
+				__func__,
+				type, type, *values);
+	} else {
 	IRIS_LOGI("%s(), type: 0x%04x(%d), value: %d",
 			__func__,
 			type, type, *values);
+	}
 	return 0;
 }
 
@@ -1624,7 +1655,7 @@ inline int iris_get_trace_en(void)
 
 void iris_debug_info_get(u32 *value, u32 count)
 {
-	int len = 0;
+	u32 len = 0;
 	char *buf = (char *)value;
 
 	count *= 4;

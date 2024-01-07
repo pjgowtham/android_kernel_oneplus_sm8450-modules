@@ -2628,6 +2628,10 @@ static int _sde_cp_crtc_cache_property(struct drm_crtc *crtc,
 {
 	struct sde_crtc *sde_crtc = NULL;
 	int ret = 0, i = 0, dspp_cnt, lm_cnt;
+	unsigned long features = 0;
+	struct sde_hw_dspp *hw_dspp = NULL;
+	bool cache = true;
+	u32 sub_blk = 0;
 
 	sde_crtc = to_sde_crtc(crtc);
 	if (!sde_crtc) {
@@ -2679,8 +2683,19 @@ static int _sde_cp_crtc_cache_property(struct drm_crtc *crtc,
 	/* remove the property from dirty list */
 	list_del_init(&prop_node->cp_dirty_list);
 
-	ret = _sde_cp_crtc_cache_property_helper(crtc, cstate, property,
-			prop_node, val);
+	if (prop_node->is_dspp_feature && dspp_cnt) {
+		hw_dspp = sde_crtc->mixers[0].hw_dspp;
+		features = hw_dspp->cap->features;
+		sub_blk = dspp_feature_to_sub_blk_tbl[prop_node->feature];
+		if (!test_bit(sub_blk, &features))
+			cache = false;
+		}
+	if (cache)
+		ret = _sde_cp_crtc_cache_property_helper(crtc, cstate, property,
+		prop_node, val);
+	else
+		goto exit;
+
 
 	if (!ret) {
 		/* remove the property from active list */

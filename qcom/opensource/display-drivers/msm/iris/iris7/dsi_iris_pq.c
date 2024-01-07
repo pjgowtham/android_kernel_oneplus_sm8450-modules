@@ -76,7 +76,7 @@ static struct msmfb_iris_demura_info iris_demura_lut;
 
 static struct msmfb_iris_demura_xy iris_demura_xy;
 
-static u32 iris_lce_level[][5] = {
+static u32 iris_lce_level[][IRIS_LCE_LEVEL_MAX] = {
 	{40, 80, 120, 160, 200},		//LCE_GAMMAGAIN_DARK
 	{512, 512, 512, 512, 512},		//LCE_GAMMAUPPER_DARK
 	{30, 60, 90, 120, 150},			//LCE_GAMMAGAIN_BRIGHT
@@ -609,9 +609,6 @@ bool iris_crst_coef_check(const u8 *fw_data, size_t fw_size)
 	IRIS_LOGI("kfree iris_crstk_coef_buf");
 
 	if (iris_crstk_coef_buf == NULL) {
-		if (len == 0)
-			len = (CRSTK_COEF_SIZE + CCT_VALUE_SIZE) * CRSTK_COEF_GROUP;
-
 		iris_crstk_coef_buf = kzalloc(len, GFP_KERNEL);
 	}
 	if (!iris_crstk_coef_buf) {
@@ -705,15 +702,11 @@ void iris_cm_ratio_set(void)
 
 	//csc coef has 54 values + 27 precsc values + cct has 3 values.
 	if ((pqlt_cur_setting->pq_setting.cmcolorgamut >= 7 && pqlt_cur_setting->pq_setting.cmcolorgamut <= 9) ||
-		(pqlt_cur_setting->pq_setting.cmcolorgamut >= 12 && pqlt_cur_setting->pq_setting.cmcolorgamut <= 15))
+		(pqlt_cur_setting->pq_setting.cmcolorgamut >= 12))
 		coefBuffIndex = 2;
 	else if (pqlt_cur_setting->pq_setting.cmcolorgamut >= 10 &&  pqlt_cur_setting->pq_setting.cmcolorgamut <= 11)
 		coefBuffIndex -= 3; //10-->7. 11-->8;
 
-	if (coefBuffIndex < 0) {
-		IRIS_LOGE("invalid coefBuffIndex %d", coefBuffIndex);
-		return;
-	}
 	if (!iris_crstk_coef_buf) {
 		IRIS_LOGE("iris_crstk_coef_buf is NULL");
 		return;
@@ -3095,13 +3088,14 @@ static void iris_brightness_para_set(uint32_t *values)
 	struct iris_update_regval regval;
 	uint32_t dimmingGain = 0;
 	uint32_t  *payload = NULL;
-	uint32_t dimmingEnable = values[4];
+	uint32_t dimmingEnable = 0;
 
 	if (values == NULL) {
 		IRIS_LOGE("brightness value is empty");
 		return;
 	}
 
+	dimmingEnable = values[4];
 	IRIS_LOGD("dimming set: enable %d, values: 0x%x\n", dimmingEnable, values[1]);
 	regval.ip = IRIS_IP_DPP;
 	regval.opt_id = 0x60;    //DIM_CTRL/FD
@@ -3347,7 +3341,7 @@ static int32_t _iris_alloc_pq_init_space(struct iris_cfg *pcfg,
 	struct iris_pq_init_val *pinit_val = &pcfg->pq_init_val;
 
 	if (pdata == NULL || item_cnt == 0) {
-		IRIS_LOGE("%s(), invalid input, data: %p, size: %d", pdata, item_cnt);
+		IRIS_LOGE("%s(), invalid input, data: %p, size: %d", __func__, pdata, item_cnt);
 		return -EINVAL;
 	}
 

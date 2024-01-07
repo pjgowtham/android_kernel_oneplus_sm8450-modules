@@ -12,8 +12,8 @@ int iris_configure(u32 display, u32 type, u32 value);
 int iris_configure_ex(u32 display, u32 type, u32 count, u32 *values);
 int iris_configure_get(u32 display, u32 type, u32 count, u32 *values);
 int iris_dbgfs_adb_type_init(struct dsi_display *display);
-int iris_debug_display_info_get(char *kbuf, int size);
-int iris_debug_display_mode_get(char *kbuf, int size, bool debug);
+u32 iris_debug_display_info_get(char *kbuf, u32 size);
+u32 iris_debug_display_mode_get(char *kbuf, u32 size, bool debug);
 void iris_debug_info_get(u32 *value, u32 count);
 void iris_debug_info_set(u32 type, u32 value);
 #endif // _DSI_IRIS_IOCTL_H_

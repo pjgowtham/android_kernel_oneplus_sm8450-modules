@@ -1550,8 +1550,8 @@ void iris_dump_status(void)
 				IRIS_LOGE("I2C read failed ! [%02d] %08x : %08x", i, _regs_dump[i], value);
 				break;
 			}
-		} else
-			value = iris_ocp_read(_regs_dump[i], DSI_CMD_SET_STATE_HS);
+		} /* else
+			value = iris_ocp_read(_regs_dump[i], DSI_CMD_SET_STATE_HS); */
 		IRIS_LOGI("[%02d] %08x : %08x", i, _regs_dump[i], value);
 	}
 }
@@ -1849,7 +1849,7 @@ static int _iris_mipi_queue(int value)
 
 	mipi_queue[0] = value;
 
-	IRIS_LOGI("%s, value: 0x%02x 0x%02x", __func__, mipi_queue[0], mipi_queue[2]);
+	IRIS_LOGI("%s, value: 0x%02x 0x%02x", __func__, mipi_queue[0], mipi_queue[1]);
 
 	rc = iris_dsi_send_cmds(pcfg->panel, cmdset.cmds, cmdset.count,
 							cmdset.state, pcfg->vc_ctrl.to_iris_vc_id);
@@ -1989,7 +1989,7 @@ static ssize_t _iris_esd_write(uint32_t val)
 	if (!mutex_trylock(&pcfg->panel->panel_lock))
 		return -EFAULT;
 
-	if (val >= 0 && val <= 128) {
+	if (val <= 128) {
 		pcfg->lp_ctrl.esd_ctrl = val;
 	} else if (val == 144) {
 		pcfg->lp_ctrl.esd_ctrl |= 0x10;

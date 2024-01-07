@@ -212,11 +212,11 @@ void iris_display_mode_name_update(void)
 	}
 }
 
-int iris_debug_display_mode_get(char *kbuf, int size, bool debug)
+u32 iris_debug_display_mode_get(char *kbuf, u32 size, bool debug)
 {
 	struct iris_cfg *pcfg = iris_get_cfg();
 	struct iris_switch_dump *dump = &pcfg->switch_dump;
-	int len = 0;
+	u32 len = 0;
 
 	iris_display_mode_name_update();
 
@@ -267,7 +267,7 @@ int iris_debug_display_mode_get(char *kbuf, int size, bool debug)
 			"%-20s:\t%d\n", "AP mipi1 refresh", pcfg->iris_osd_autorefresh_enabled);
 
 	len += snprintf(kbuf + len, size - len,
-			"%-20s:\t%d\n", "AP video wo osd", pcfg->video_update_wo_osd);
+			"%-20s:\t%d\n", "AP video wo osd", atomic_read(&pcfg->video_update_wo_osd));
 
 	len += snprintf(kbuf + len, size - len,
 			"%-20s:\t%d\n", "Iris mipi1 power", pcfg->iris_mipi1_power_st);
@@ -282,7 +282,7 @@ int iris_debug_display_mode_get(char *kbuf, int size, bool debug)
 			"%-20s:\t%d\n", "Iris osd overflow", pcfg->iris_osd_overflow_st);
 
 	len += snprintf(kbuf + len, size - len,
-			"%-20s:\t%d\n", "Iris osd irq count", pcfg->osd_irq_cnt);
+			"%-20s:\t%d\n", "Iris osd irq count", atomic_read(&pcfg->osd_irq_cnt));
 
 	len += snprintf(kbuf + len, size - len,
 			"%-20s:\t%d\n", "Iris frc vfr state", pcfg->iris_frc_vfr_st);
@@ -342,7 +342,7 @@ static ssize_t iris_dbg_display_mode_show(struct file *file, char __user *ubuf,
 		size_t count, loff_t *ppos)
 {
 	char *kbuf = NULL;
-	int size = count < PAGE_SIZE ? PAGE_SIZE : count;
+	u32 size = count < PAGE_SIZE ? PAGE_SIZE : count;
 
 	if (*ppos)
 		return 0;
@@ -354,8 +354,7 @@ static ssize_t iris_dbg_display_mode_show(struct file *file, char __user *ubuf,
 	}
 
 	size = iris_debug_display_mode_get(kbuf, size, false);
-	if (size >= count)
-		size = count - 1;
+	size = min_t(size_t, count, size);
 
 	if (copy_to_user(ubuf, kbuf, size)) {
 		vfree(kbuf);
@@ -395,11 +394,11 @@ static const struct file_operations iris_dbg_dislay_mode_fops = {
 	.read = iris_dbg_display_mode_show,
 };
 
-int iris_debug_display_info_get(char *kbuf, int size)
+u32 iris_debug_display_info_get(char *kbuf, u32 size)
 {
 	struct iris_cfg *pcfg = iris_get_cfg();
 	struct dsi_panel *panel;
-	int len = 0;
+	u32 len = 0;
 
 	panel = pcfg->panel;
 	if (panel) {
@@ -419,7 +418,7 @@ int iris_debug_display_info_get(char *kbuf, int size)
 					panel->cur_mode->priv_info->dsi_transfer_time_us);
 
 			len += snprintf(kbuf + len, size - len,
-					"%-20s:\t%d\n", "panel clock", panel->cur_mode->priv_info->clk_rate_hz);
+					"%-20s:\t%llu\n", "panel clock", panel->cur_mode->priv_info->clk_rate_hz);
 
 			len += snprintf(kbuf + len, size - len,
 					"%-20s:\t%d\n", "panel dsc", panel->cur_mode->priv_info->dsc_enabled);
@@ -453,7 +452,7 @@ int iris_debug_display_info_get(char *kbuf, int size)
 					panel->cur_mode->priv_info->dsi_transfer_time_us);
 
 			len += snprintf(kbuf + len, size - len,
-					"%-20s:\t%d\n", "panel clock", panel->cur_mode->priv_info->clk_rate_hz);
+					"%-20s:\t%llu\n", "panel clock", panel->cur_mode->priv_info->clk_rate_hz);
 
 			len += snprintf(kbuf + len, size - len,
 					"%-20s:\t%d\n", "panel dsc", panel->cur_mode->priv_info->dsc_enabled);
@@ -476,7 +475,7 @@ static ssize_t iris_dbg_display_info_show(struct file *file, char __user *ubuf,
 		size_t count, loff_t *ppos)
 {
 	char *kbuf = NULL;
-	int size = count < PAGE_SIZE ? PAGE_SIZE : count;
+	u32 size = count < PAGE_SIZE ? PAGE_SIZE : count;
 
 	if (*ppos)
 		return 0;
@@ -488,8 +487,7 @@ static ssize_t iris_dbg_display_info_show(struct file *file, char __user *ubuf,
 	}
 
 	size = iris_debug_display_info_get(kbuf, size);
-	if (size >= count)
-		size = count - 1;
+	size = min_t(size_t, count, size);
 
 	if (copy_to_user(ubuf, kbuf, size)) {
 		vfree(kbuf);

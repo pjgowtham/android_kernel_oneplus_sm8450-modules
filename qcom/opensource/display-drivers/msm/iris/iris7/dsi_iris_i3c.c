@@ -215,6 +215,7 @@ int iris_i2c_read(uint32_t addr, uint32_t *pval, uint32_t reg_num)
 	uint16_t byte_count = 0;
 	struct i2c_msg msgs[2];
 	struct i3c_protocol_t ocp_rd_op;
+	uint32_t tbuf[2] = {0};
 
 	if ((reg_num == 0) || (reg_num > (I2C_MSG_MAX_LEN)/4)) {
 		IRIS_LOGE("%s: reg_num equal to 0 or too long\n", __func__);
@@ -226,10 +227,11 @@ int iris_i2c_read(uint32_t addr, uint32_t *pval, uint32_t reg_num)
 	memset(&ocp_rd_op, 0x00, sizeof(ocp_rd_op));
 	memset(tx_payload, 0x00, 8);
 
+	tbuf[0] = addr;
 	ocp_rd_op.header.type = I3C_OCP_READ_OP;
 	ocp_rd_op.header.slot = 0x000;
 	ocp_rd_op.header.byte_len = byte_count;
-	ocp_rd_op.tx_buf = &addr;
+	ocp_rd_op.tx_buf = tbuf;
 
 	__iris_i2c_buf_reset();
 	rx_payload = __iris_i2c_alloc_buf(byte_count);

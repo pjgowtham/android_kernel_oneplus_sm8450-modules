@@ -98,7 +98,7 @@ struct kernel_loglevel {
 
 /*oplus ioctl case start*/
 #define PANEL_COMMOND_BASE 0x00
-#define PANEL_COMMOND_MAX  0x68
+#define PANEL_COMMOND_MAX  0x6A
 
 #define PANEL_IOCTL_SET_POWER					PANEL_IOWR(0x01, struct panel_vol_set)
 #define PANEL_IOCTL_GET_POWER					PANEL_IOWR(0x02, struct panel_vol_get)
@@ -151,6 +151,8 @@ struct kernel_loglevel {
 #define PANEL_IOCTL_SET_ULTRA_LOW_POWER_AOD	PANEL_IOW(0x33, unsigned int)
 #define PANEL_IOCTL_GET_ULTRA_LOW_POWER_AOD	PANEL_IOWR(0x34, unsigned int)
 #define PANEL_IOCTL_GET_LCD_MAX_BRIGHTNESS    PANEL_IOWR(0x38, unsigned int)
+#define PANEL_IOCTL_GET_PANEL_BPP                PANEL_IOWR(0x3B, unsigned int)
+#define PANEL_IOCTL_GET_PANEL_NAME               PANEL_IOWR(0x3C, struct panel_name)
 #define PANEL_IOCTL_SET_APOLLO_BACKLIGHT			PANEL_IOW(0x51, struct apollo_backlight_map_value)
 #define PANEL_IOCTL_GET_SOFTIRIS_COLOR				PANEL_IOWR(0x53, struct softiris_color)
 #define PANEL_IOCTL_SET_DITHER_STATUS				PANEL_IOWR(0x54, unsigned int)
@@ -170,6 +172,7 @@ struct kernel_loglevel {
 #define PANEL_IOCTL_GET_FP_TYPE				PANEL_IOWR(0x65, unsigned int)
 #define PANEL_IOCTL_SET_PWM_TURBO			PANEL_IOW(0x66, unsigned int)
 #define PANEL_IOCTL_GET_PWM_TURBO			PANEL_IOWR(0x67, unsigned int)
+#define PANEL_IOCTL_GET_PANEL_TYPE              PANEL_IOWR(0x69, unsigned int)
 /*oplus ioctl case end*/
 
 int oplus_display_panel_init(void);

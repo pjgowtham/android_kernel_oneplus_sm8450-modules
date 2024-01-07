@@ -79,6 +79,11 @@ typedef struct oplus_display_notifier_event {
 	void *data;
 } OPLUS_DISPLAY_NOTIFIER_EVENT;
 
+static inline int str_equal(const char *a, const char *b)
+{
+	return !strcmp(a, b);
+}
+
 int oplus_display_register_client(struct notifier_block *nb);
 
 int oplus_display_unregister_client(struct notifier_block *nb);
