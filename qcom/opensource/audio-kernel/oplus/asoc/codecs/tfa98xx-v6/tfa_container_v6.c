@@ -1672,7 +1672,8 @@ enum Tfa98xx_Error tfaContWriteProfile_v6(struct tfa_device *tfa, int prof_idx, 
 
 			/* Wait until we are in PLL powerdown */
 			do {
-				err = tfa98xx_dsp_system_stable_v6(tfa, &ready);
+				/*remove unused return value err, fix coverity issue 21349*/
+				tfa98xx_dsp_system_stable_v6(tfa, &ready);
 				if (!ready)
 					break;
 				else

@@ -2134,8 +2134,13 @@ int wcd_mbhc_start(struct wcd_mbhc *mbhc, struct wcd_mbhc_config *mbhc_cfg)
 			pr_info("%s fsa4480_reg_notifier fail,rc = %d", __func__, rc);
 			rc = 0;
 		}
-		mbhc->need_cross_conn = fsa4480_check_cross_conn(mbhc->fsa_np);
-		pr_info("%s: after switch check, need_cross_conn(%d)\n", __func__, mbhc->need_cross_conn);
+
+		/* if dts not enable, check switch config */
+		if (!mbhc->need_cross_conn) {
+			/* Add for dynamic check cross */
+			mbhc->need_cross_conn = fsa4480_check_cross_conn(mbhc->fsa_np);
+			pr_info("%s: after switch check, need_cross_conn(%d)\n", __func__, mbhc->need_cross_conn);
+		}
 		#endif /* OPLUS_ARCH_EXTENDS */
 
 		#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)

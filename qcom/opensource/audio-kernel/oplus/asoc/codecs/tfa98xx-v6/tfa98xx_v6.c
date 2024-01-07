@@ -797,7 +797,8 @@ static enum tfa_error tfa98xx_tfa_start(struct tfa98xx *tfa98xx, int next_profil
 	if (ftm_mode == BOOT_MODE_FACTORY) {
 		tfa98xx_dsp_system_stable_v6(tfa98xx->tfa, &ready);
 		if (!ready) {
-			strcpy(ftm_clk, "clk_fail");
+			/* Use strncpy instead of strcpy, fix coverity issue*/
+			strncpy(ftm_clk, "clk_fail", sizeof(ftm_clk));
 		}
 	}
 	#endif /* OPLUS_ARCH_EXTENDS */
@@ -1361,10 +1362,10 @@ static ssize_t tfa98xx_fres_read(struct file *file,
 	uint16_t fres = 0;
 	struct tfa98xx *tfa98xx = NULL;
 
-	str = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	str = kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!str) {
 		ret = -ENOMEM;
-		pr_err("[0x%x] memory allocation failed\n", tfa98xx->i2c->addr);
+		pr_err("memory allocation failed\n");
 		goto fres_err;
 	}
 
@@ -1522,7 +1523,7 @@ static ssize_t tfa98xx_dbgfs_range_read(struct file *file,
 		goto range_err;
 	}
 
-	ret = snprintf(str, PAGE_SIZE, " Min:%d mOhms, Max:%d mOhms\n",
+	ret = snprintf(str, PAGE_SIZE, " Min:%u mOhms, Max:%u mOhms\n",
 		tfa98xx->tfa->min_mohms, tfa98xx->tfa->max_mohms);
 	pr_info("%s addr 0x%x, str=%s\n", __func__, tfa98xx->i2c->addr, str);
 
@@ -1879,7 +1880,7 @@ static ssize_t tfa98xx_dbgfs_rpc_read(struct file *file,
 	int ret = 0;
 	uint8_t *buffer;
 
-	buffer = kmalloc(count, GFP_KERNEL);
+	buffer = kzalloc(count, GFP_KERNEL);
 	if (buffer == NULL) {
 		pr_err("[0x%x] can not allocate memory\n", tfa98xx->i2c->addr);
 		return -ENOMEM;
@@ -2302,7 +2303,8 @@ static int get_profile_from_list(char *buf, int id)
 
 	list_for_each_entry(bprof, &profile_list, list) {
 		if (bprof->item_id == id) {
-			strcpy(buf, bprof->basename);
+			/* Use strncpy instead of strcpy, fix coverity issue*/
+			strncpy(buf, bprof->basename, MAX_CONTROL_NAME);
 			return 0;
 		}
 	}
@@ -2641,7 +2643,8 @@ static int tfa98xx_info_profile(struct snd_kcontrol *kcontrol,
 	if (err != 0)
 		return -EINVAL;
 
-	strcpy(uinfo->value.enumerated.name, profile_name);
+	/* Use strncpy instead of strcpy, fix coverity issue*/
+	strncpy(uinfo->value.enumerated.name, profile_name, sizeof(uinfo->value.enumerated.name));
 
 	return 0;
 }
@@ -2915,6 +2918,73 @@ static int tfa98xx_get_stereo_ctl(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+/*Add for default impedance*/
+static int tfa98xx_info_default_impedance_ctl(struct snd_kcontrol *kcontrol,
+                                struct snd_ctl_elem_info *uinfo)
+{
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+	mutex_lock(&tfa98xx_mutex);
+	uinfo->count = tfa98xx_device_count;
+	mutex_unlock(&tfa98xx_mutex);
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = 0xffff; /* 16 bit value */
+
+	return 0;
+}
+
+static int tfa98xx_set_default_impedance_ctl(struct snd_kcontrol *kcontrol,
+                               struct snd_ctl_elem_value *ucontrol)
+{
+	struct tfa98xx *tfa98xx;
+
+	mutex_lock(&tfa98xx_mutex);
+	list_for_each_entry(tfa98xx, &tfa98xx_device_list, list) {
+		struct tfa_device *tfa = tfa98xx->tfa;
+		int i = 0;
+
+		if (!tfa) {
+			dev_info(tfa98xx->dev, "%s: tfa not init!\n", __func__);
+			break;
+		}
+
+		i = tfa->dev_idx;
+		if (i < 0 || i >= tfa98xx_device_count) {
+			dev_info(tfa98xx->dev, "invail dev_idx %d, device count %d\n", i, tfa98xx_device_count);
+			break;
+		}
+		//tfa->default_mohms = (u32)ucontrol->value.integer.value[i];
+	}
+	mutex_unlock(&tfa98xx_mutex);
+
+	return 1;
+}
+
+static int tfa98xx_get_default_impedance_ctl(struct snd_kcontrol *kcontrol,
+                               struct snd_ctl_elem_value *ucontrol)
+{
+	struct tfa98xx *tfa98xx;
+
+	mutex_lock(&tfa98xx_mutex);
+	list_for_each_entry(tfa98xx, &tfa98xx_device_list, list) {
+		struct tfa_device *tfa = tfa98xx->tfa;
+		int i = 0;
+
+		if (!tfa) {
+			dev_info(tfa98xx->dev, "%s: tfa not init!\n", __func__);
+			break;
+		}
+
+		i = tfa->dev_idx;
+		if (i < 0 || i >= tfa98xx_device_count) {
+			dev_info(tfa98xx->dev, "invail dev_idx %d, device count %d\n", i, tfa98xx_device_count);
+			break;
+		}
+		ucontrol->value.integer.value[i] = tfa->default_mohms;
+	}
+	mutex_unlock(&tfa98xx_mutex);
+
+	return 0;
+}
 #endif /* OPLUS_ARCH_EXTENDS */
 
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
@@ -2976,15 +3046,15 @@ const unsigned char fb_regs[] = {0x00, 0x01, 0x02, 0x04, 0x05, 0x11, 0x14, 0x15,
 
 static int tfa98xx_check_status_reg(void )
 {
-	struct tfa98xx *tfa98xx;
-	uint32_t reg_val;
-	uint16_t reg10, reg13, reg_tmp;
+	struct tfa98xx *tfa98xx = NULL;
+	uint32_t reg_val = 0;
+	uint16_t reg10 = 0, reg13 = 0, reg_tmp = 0;
 	int flag = 0;
 	char fd_buf[MM_KEVENT_MAX_PAYLOAD_SIZE] = {0};
 	char info[MM_KEVENT_MAX_PAYLOAD_SIZE] = {0};
 	int offset = 0;
 	enum Tfa98xx_Error err;
-	int i, num = 0;
+	int i = 0, num = 0;
 
 	if (!g_chk_err) {
 		return 0;
@@ -3179,6 +3249,8 @@ static int tfa98xx_create_controls(struct tfa98xx *tfa98xx)
 	if (tfa98xx->is_use_freq) {
 		nr_controls += 1;
 	}
+	/* Add for default impedance */
+	nr_controls += 1;
 #endif
 
 	/* allocate the tfa98xx_controls base on the nr of profiles */
@@ -3218,6 +3290,8 @@ static int tfa98xx_create_controls(struct tfa98xx *tfa98xx)
 		INIT_LIST_HEAD(&bprofile->list);
 
 		/* copy profile name into basename until the . */
+		if (!tfa_cont_profile_name(tfa98xx, prof))
+			continue;
 		get_profile_basename(bprofile->basename, tfa_cont_profile_name(tfa98xx, prof));
 		bprofile->len = strlen(bprofile->basename);
 
@@ -3227,7 +3301,7 @@ static int tfa98xx_create_controls(struct tfa98xx *tfa98xx)
 		 * also, if it is a calibration profile, do not add it to the list
 		 */
 		if ((is_profile_in_list(bprofile->basename, bprofile->len) == 0) &&
-			 is_calibration_profile(tfa_cont_profile_name(tfa98xx, prof)) == 0) {
+			is_calibration_profile(tfa_cont_profile_name(tfa98xx, prof)) == 0) {
 			/* the profile is not present, add it to the list */
 			list_add(&bprofile->list, &profile_list);
 			bprofile->item_id = id++;
@@ -3308,6 +3382,13 @@ static int tfa98xx_create_controls(struct tfa98xx *tfa98xx)
 	#endif /*OPLUS_ARCH_EXTENDS*/
 
 	#ifdef OPLUS_ARCH_EXTENDS
+	/* Add for default impedance */
+	tfa98xx_controls[mix_index].name = "TFA Default Impedance";
+	tfa98xx_controls[mix_index].iface = SNDRV_CTL_ELEM_IFACE_MIXER;
+	tfa98xx_controls[mix_index].info = tfa98xx_info_default_impedance_ctl;
+	tfa98xx_controls[mix_index].get = tfa98xx_get_default_impedance_ctl;
+	tfa98xx_controls[mix_index].put = tfa98xx_set_default_impedance_ctl;
+	mix_index++;
 	if (mix_index > nr_controls) {
 		pr_err("%s: error: mix_index(%d) > nr_controls(%d), memory out of bounds\n",
 					__func__, mix_index, nr_controls);
@@ -3902,7 +3983,8 @@ static void tfa98xx_container_loaded(const struct firmware *cont, void *context)
 		tfa_err = tfa_load_cnt_v6(container, container_size);
 		if (tfa_err != tfa_error_ok) {
 			#ifdef OPLUS_ARCH_EXTENDS
-			strcpy(ftm_load_file, "load_file_fail");
+			/* Use strncpy instead of strcpy, fix coverity issue*/
+			strncpy(ftm_load_file, "load_file_fail", sizeof(ftm_load_file));
 			#endif /* OPLUS_ARCH_EXTENDS */
 			mutex_unlock(&tfa98xx_mutex);
 			kfree(container);
@@ -4201,7 +4283,8 @@ static void tfa98xx_dsp_init(struct tfa98xx *tfa98xx)
 		tfa98xx->init_count = 0;
 		#ifdef OPLUS_ARCH_EXTENDS
 		if (ftm_mode == BOOT_MODE_FACTORY) {
-			strcpy(ftm_path, "open_path_fail");
+			/* Use strncpy instead of strcpy, fix coverity issue*/
+			strncpy(ftm_path, "open_path_fail", sizeof(ftm_path));
 		}
 		#endif /* OPLUS_ARCH_EXTENDS */
 	}
@@ -4590,7 +4673,7 @@ enum Tfa98xx_Error tfa98xx_adsp_send_calib_values(void)
 {
 	struct tfa98xx *tfa98xx;
 	int ret = 0;
-	int value = 0, nr, dsp_cal_value = 0, nr_fres;
+	int value = 0, nr = 0, dsp_cal_value = 0, nr_fres = 0;
 	int fres_mtp = 0;
 	int fres = 0;
 	int dsp_fres_value = 0;
@@ -5424,8 +5507,14 @@ static int tfa98xx_i2c_probe(struct i2c_client *i2c,
 		tfa98xx->tfa->max_mohms = SMART_PA_RANGE_DEFAULT_MAX;
 	}
 
-	dev_err(&i2c->dev, "min_mohms=%d, max_mohms=%d\n",
-			tfa98xx->tfa->min_mohms, tfa98xx->tfa->max_mohms);
+	ret = of_property_read_u32(i2c->dev.of_node, "tfa_default_mohm", &tfa98xx->tfa->default_mohms);
+	if (ret) {
+		dev_info(&i2c->dev, "Failed to parse default impedance node\n");
+		tfa98xx->tfa->default_mohms = 0;
+	}
+
+	dev_info(&i2c->dev, "min_mohms=%u, max_mohms=%u, default_mohms=%u\n",
+			tfa98xx->tfa->min_mohms, tfa98xx->tfa->max_mohms, tfa98xx->tfa->default_mohms);
 
 	/* 0-left/top, 1-right/bottom, 0xff-default, not initialized */
 	ret = of_property_read_u32(i2c->dev.of_node, "tfa_channel", &tfa98xx->tfa->channel);
@@ -5434,7 +5523,7 @@ static int tfa98xx_i2c_probe(struct i2c_client *i2c,
 		tfa98xx->tfa->channel = 0xff;
 	}
 
-	dev_err(&i2c->dev, "channel=%d   (0-left/top, 1-right/bottom, 0xff-default, not initialized)\n",
+	dev_info(&i2c->dev, "channel=%d   (0-left/top, 1-right/bottom, 0xff-default, not initialized)\n",
 			tfa98xx->tfa->channel);
 	#endif /* OPLUS_ARCH_EXTENDS */
 
@@ -5670,9 +5759,24 @@ static int __init tfa98xx_i2c_init(void)
 	if (!tfa98xx_cache) {
 		pr_err("tfa98xx can't create memory pool\n");
 		ret = -ENOMEM;
+		#ifdef OPLUS_ARCH_EXTENDS
+		/* Add for return if create memory fail */
+		return ret;
+		#endif /* OPLUS_ARCH_EXTENDS */
 	}
 
 	ret = i2c_add_driver(&tfa98xx_i2c_driver);
+	#ifdef OPLUS_ARCH_EXTENDS
+	/* Add for destroy kmem_cache if fail */
+	if (ret) {
+		pr_err("tfa98xx i2c add fail, ret=%d\n", ret);
+		if (tfa98xx_cache) {
+			kmem_cache_destroy(tfa98xx_cache);
+		}
+	} else {
+		pr_info("tfa98xx i2c add success, ret=%d\n", ret);
+	}
+	#endif /* OPLUS_ARCH_EXTEND */
 
 	return ret;
 }
