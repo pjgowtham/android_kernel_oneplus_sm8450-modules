@@ -66,6 +66,8 @@ struct cam_sensor_settings {
 	struct cam_sensor_i2c_reg_setting_array ov32c_setting;
 	struct cam_sensor_i2c_reg_setting_array ov08d10_setting;
 	struct cam_sensor_i2c_reg_setting_array imx709_setting;
+	struct cam_sensor_i2c_reg_setting_array imx709_daoxiang_setting;
+	struct cam_sensor_i2c_reg_setting_array imx709_tele_setting;
 	struct cam_sensor_i2c_reg_setting_array imx709_aon_irq_setting;
 	struct cam_sensor_i2c_reg_setting_array imx709_aon_irq_he_clr_setting;
 	struct cam_sensor_i2c_reg_setting_array s5kjn1sq03_setting;
@@ -78,7 +80,10 @@ struct cam_sensor_settings {
 	struct cam_sensor_i2c_reg_setting_array ov32c_setting2;
 	struct cam_sensor_i2c_reg_setting_array imx890_setting;
 	struct cam_sensor_i2c_reg_setting_array ov64b_setting;
+	struct cam_sensor_i2c_reg_setting_array Sec_ov64b_setting;
+	struct cam_sensor_i2c_reg_setting_array imx890_monroe_setting;
 	struct cam_sensor_i2c_reg_setting_array ov64b_senna_setting;
+	struct cam_sensor_i2c_reg_setting_array ov64b_monroe_setting;
 };
 
 int cam_ftm_power_down(struct cam_sensor_ctrl_t *s_ctrl);

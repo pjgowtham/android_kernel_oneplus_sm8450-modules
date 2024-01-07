@@ -7,6 +7,7 @@
 #include "cam_packet_util.h"
 
 #include "oplus_cam_actuator_core.h"
+#include "oplus_cam_actuator_dev.h"
 
 #define ACTUATOR_REGISTER_SIZE 100
 #define DW9718P_DAC_ADDR 0x03
@@ -55,6 +56,58 @@ uint32_t DW9718P_PARKLENS_DOWN[ACTUATOR_REGISTER_SIZE][2] = {
 	{0x03, 0x0030},
 	{0x03, 0x0020},
 	{0x03, 0x0010},
+	{0xff, 0xff},
+};
+
+#define DW9827C_DAC_ADDR 0x84
+
+uint32_t DW9827C_PARKLENS_UP[ACTUATOR_REGISTER_SIZE][2] = {
+    {0xff, 0xff},
+    {0x00, 0x0A},
+    {0x00, 0x19},
+    {0x00, 0x21},
+    {0x00, 0x29},
+    {0x00, 0x31},
+    {0x00, 0x39},
+    {0xff, 0xff},
+};
+
+uint32_t DW9827C_PARKLENS_DOWN[ACTUATOR_REGISTER_SIZE][2] = {
+	{0x00, 0x4B},
+	{0x00, 0x2D},
+	{0x00, 0x19},
+	{0x00, 0x14},
+	{0x00, 0x10},
+	{0x00, 0x0A},
+	{0x00, 0x06},
+	{0x00, 0x04},
+	{0x00, 0x02},
+	{0xff, 0xff},
+};
+
+#define SEM1217S_DAC_ADDR 0x0206
+
+uint32_t SEM1217S_PARKLENS_UP[ACTUATOR_REGISTER_SIZE][2] = {
+    {0xff, 0xff},
+    {0x0204, 0x0200},
+    {0x0204, 0x0600},
+    {0x0204, 0x0A00},
+    {0x0204, 0x1000},
+    {0x0204, 0x1400},
+    {0x0204, 0x1900},
+    {0xff, 0xff},
+};
+
+uint32_t SEM1217S_PARKLENS_DOWN[ACTUATOR_REGISTER_SIZE][2] = {
+	{0x0204, 0x3FFF},
+	{0x0204, 0x2D00},
+	{0x0204, 0x1900},
+	{0x0204, 0x1400},
+	{0x0204, 0x1000},
+	{0x0204, 0x0A00},
+	{0x0204, 0x0600},
+	{0x0204, 0x0400},
+	{0x0204, 0x0200},
 	{0xff, 0xff},
 };
 
@@ -115,7 +168,7 @@ int actuator_power_down_thread(void *arg)
 								CAMERA_SENSOR_I2C_TYPE_BYTE);
 					if(rc < 0) {
 						CAM_ERR(CAM_ACTUATOR,"read failed ret : %d", rc);
-						return rc;
+						goto err_handle;
 					}
 					CAM_INFO(CAM_ACTUATOR,"read DW9718P_BUSY_ADDR data : %d busy_count ：%d", is_actuator_busy ,busy_count);
 					if(is_actuator_busy == 0) {
@@ -134,7 +187,7 @@ int actuator_power_down_thread(void *arg)
 				if(rc < 0)
 				{
 					CAM_ERR(CAM_ACTUATOR,"write failed ret : %d", rc);
-					return rc;
+					goto err_handle;
 				}
 				msleep(2);
 			}
@@ -151,12 +204,58 @@ int actuator_power_down_thread(void *arg)
 			}
 			mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
 		}
+	}else if(strstr(a_ctrl->aon_af_name, "dw9827c")){
+
+		CAM_INFO(CAM_ACTUATOR,"actuator_power_down_thread start ");
+		read_val = oplus_cam_actuator_read_vaule(a_ctrl, DW9827C_DAC_ADDR);
+		for (i = 0; i < ACTUATOR_REGISTER_SIZE; i++) {
+			if ((DW9827C_PARKLENS_DOWN[i][0] != 0xff) && (DW9827C_PARKLENS_DOWN[i][1] != 0xff)) {
+				if((read_val >> 8) >= DW9827C_PARKLENS_DOWN[i][1]) {
+					break;
+				}
+			} else {
+				break;
+			}
+		}
+
+		for (; i < ACTUATOR_REGISTER_SIZE; i++)
+		{
+			if ( (DW9827C_PARKLENS_DOWN[i][0] != 0xff) && (DW9827C_PARKLENS_DOWN[i][1] != 0xff) )
+			{
+				rc = cam_actuator_ramwrite(a_ctrl,
+					(uint32_t)DW9827C_PARKLENS_DOWN[i][0],
+					(uint32_t)DW9827C_PARKLENS_DOWN[i][1],
+					1,
+					CAMERA_SENSOR_I2C_TYPE_BYTE,
+					CAMERA_SENSOR_I2C_TYPE_BYTE);
+				if(rc < 0)
+				{
+					CAM_ERR(CAM_ACTUATOR,"write failed ret : %d", rc);
+					goto err_handle;
+				}
+				msleep(1);
+			}
+			else
+			{
+				CAM_INFO(CAM_ACTUATOR,"set parklens success ");
+				break;
+			}
+
+			mutex_lock(&(a_ctrl->actuator_parklens_mutex));
+			if (a_ctrl->actuator_power_down_thread_exit) {
+				mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
+				CAM_ERR(CAM_ACTUATOR,"actuator_power_down_thread break actuator_power_down_thread_exit: %d", a_ctrl->actuator_power_down_thread_exit);
+				break;
+			}
+			mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
+		}
 	}
 	else
 	{
 		CAM_INFO(CAM_ACTUATOR,"not support this actuator ");
 	}
 
+err_handle:
 	mutex_lock(&(a_ctrl->actuator_parklens_mutex));
 	if ((!a_ctrl->actuator_power_down_thread_exit) && (a_ctrl->cam_atc_power_state == CAM_ACTUATOR_POWER_ON)) {
 		rc = cam_actuator_power_down(a_ctrl);
@@ -177,6 +276,116 @@ int actuator_power_down_thread(void *arg)
 	a_ctrl->actuator_power_down_thread_exit = true;
 	CAM_INFO(CAM_ACTUATOR, "actuator_power_down_thread exit");
 	mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
+	return rc;
+}
+
+int actuator_power_down_second_thread(void *arg)
+{
+	int rc = 0;
+	int i;
+	uint32_t read_val = 0;
+	uint32_t write_val = 0;
+	struct cam_actuator_ctrl_t *a_ctrl = (struct cam_actuator_ctrl_t *)arg;
+	struct cam_actuator_soc_private *soc_private;
+	struct cam_sensor_power_ctrl_t *power_info;
+
+	msleep(5);
+	if (!a_ctrl) {
+		CAM_ERR(CAM_ACTUATOR, "failed: a_ctrl %pK", a_ctrl);
+		return -EINVAL;
+	}
+
+	soc_private = (struct cam_actuator_soc_private *)a_ctrl->soc_info.soc_private;
+	if (!soc_private) {
+		CAM_ERR(CAM_ACTUATOR, "failed:soc_private %pK", soc_private);
+		return -EINVAL;
+	}
+	else{
+		power_info  = &soc_private->power_info;
+		if (!power_info){
+			CAM_ERR(CAM_ACTUATOR, "failed: power_info %pK", a_ctrl, power_info);
+			return -EINVAL;
+		}
+	}
+
+	/*tele af powerdown*/
+	camera_io_dev_read(&(a_ctrl->io_master_info), SEM1217S_DAC_ADDR, &read_val,
+					CAMERA_SENSOR_I2C_TYPE_WORD, CAMERA_SENSOR_I2C_TYPE_WORD);
+	read_val = (((read_val & 0x00FF) << 8) | ((read_val & 0xFF00) >> 8));
+	CAM_INFO(CAM_ACTUATOR,"read success addr = 0x%x data=0x%x", SEM1217S_DAC_ADDR, read_val);
+	for (i = 0; i < ACTUATOR_REGISTER_SIZE; i++) {
+		if ((SEM1217S_PARKLENS_DOWN[i][0] != 0xff) && (SEM1217S_PARKLENS_DOWN[i][1] != 0xff)) {
+			if(read_val >= SEM1217S_PARKLENS_DOWN[i][1])
+		    {
+				break;
+			}
+		} else {
+			break;
+		}
+	}
+
+	for (; i < ACTUATOR_REGISTER_SIZE; i++)
+	{
+		if ( (SEM1217S_PARKLENS_DOWN[i][0] != 0xff) && (SEM1217S_PARKLENS_DOWN[i][1] != 0xff) )
+		{
+			write_val = (SEM1217S_PARKLENS_DOWN[i][1] & 0xFF); /* Set AF Target : Low Byte */
+			rc = cam_actuator_ramwrite(a_ctrl,
+				(uint32_t)SEM1217S_PARKLENS_DOWN[i][0],
+				write_val,
+				1,
+				CAMERA_SENSOR_I2C_TYPE_WORD,
+				CAMERA_SENSOR_I2C_TYPE_BYTE);
+
+			write_val = ( (SEM1217S_PARKLENS_DOWN[i][1] >> 8) & 0xFF ); /* Set AF Position : High Byte */
+			rc = cam_actuator_ramwrite(a_ctrl,
+				((uint32_t)SEM1217S_PARKLENS_DOWN[i][0] + 1),
+				write_val,
+				1,
+				CAMERA_SENSOR_I2C_TYPE_WORD,
+				CAMERA_SENSOR_I2C_TYPE_BYTE);
+			if(rc < 0)
+			{
+				CAM_ERR(CAM_ACTUATOR,"write failed ret : %d", rc);
+				goto err_handle;
+			}
+			msleep(15);
+		}
+		else
+		{
+			CAM_INFO(CAM_ACTUATOR,"set parklens success ");
+			break;
+		}
+
+		mutex_lock(&(a_ctrl->actuator_parklens_second_mutex));
+		if (a_ctrl->actuator_power_down_second_thread_exit) {
+			mutex_unlock(&(a_ctrl->actuator_parklens_second_mutex));
+			CAM_ERR(CAM_ACTUATOR,"sem1217s actuator_power_down_second_thread_exit break actuator_power_down_thread_exit: %d", a_ctrl->actuator_power_down_second_thread_exit);
+			break;
+		}
+		mutex_unlock(&(a_ctrl->actuator_parklens_second_mutex));
+	}
+
+err_handle:
+	mutex_lock(&(a_ctrl->actuator_parklens_second_mutex));
+	if ((!a_ctrl->actuator_power_down_second_thread_exit) && (a_ctrl->cam_atc_power_second_state == CAM_ACTUATOR_POWER_ON)) {
+		rc = cam_actuator_power_down(a_ctrl);
+        if (rc < 0) {
+			CAM_ERR(CAM_ACTUATOR, "Actuator Power down failed");
+        } else {
+			kfree(power_info->power_setting);
+			kfree(power_info->power_down_setting);
+			power_info->power_setting = NULL;
+			power_info->power_down_setting = NULL;
+			power_info->power_setting_size = 0;
+			power_info->power_down_setting_size = 0;
+			a_ctrl->cam_atc_power_second_state = CAM_ACTUATOR_POWER_OFF;
+        }
+	} else {
+		CAM_ERR(CAM_ACTUATOR, "No need to do power down, actuator_power_down_thread_exit %d, actuator_power_state %d",a_ctrl->actuator_power_down_second_thread_exit, a_ctrl->cam_atc_power_second_state);
+	}
+	a_ctrl->actuator_power_down_second_thread_exit = true;
+	CAM_INFO(CAM_ACTUATOR, "actuator_power_down_second_thread_exit exit");
+	mutex_unlock(&(a_ctrl->actuator_parklens_second_mutex));
 	return rc;
 }
 
@@ -266,7 +475,47 @@ int actuator_power_up_parklens_thread(void *arg)
 			}
 			mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
 		}
-	} else {
+	} else if(strstr(a_ctrl->aon_af_name, "dw9827c")) {
+		CAM_INFO(CAM_ACTUATOR,"actuator_power_up_parklens_thread start ");
+		read_val = oplus_cam_actuator_read_vaule(a_ctrl, DW9827C_DAC_ADDR);
+
+		for (i = 0; i < ACTUATOR_REGISTER_SIZE; i++) {
+			if ((DW9827C_PARKLENS_UP[i][0] != 0xff) && (DW9827C_PARKLENS_UP[i][1] != 0xff)) {
+				if((read_val >> 8) <= DW9827C_PARKLENS_UP[i][1]) {
+					break;
+				}
+			} else {
+				break;
+			}
+		}
+
+		for (; i < ACTUATOR_REGISTER_SIZE; i++) {
+			if ((DW9827C_PARKLENS_UP[i][0] != 0xff) && (DW9827C_PARKLENS_UP[i][1] != 0xff)) {
+				rc = cam_actuator_ramwrite(a_ctrl,
+					(uint32_t)DW9827C_PARKLENS_UP[i][0],
+					(uint32_t)DW9827C_PARKLENS_UP[i][1],
+					1,
+					CAMERA_SENSOR_I2C_TYPE_BYTE,
+					CAMERA_SENSOR_I2C_TYPE_BYTE);
+				if(rc < 0) {
+					CAM_ERR(CAM_ACTUATOR,"write failed ret : %d", rc);
+					return rc;
+				}
+				msleep(2);
+			} else {
+				CAM_ERR(CAM_ACTUATOR,"set parklens setting success ");
+				break;
+			}
+			mutex_lock(&(a_ctrl->actuator_parklens_mutex));
+			if (a_ctrl->actuator_parklens_thread_exit) {
+				mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
+				CAM_ERR(CAM_ACTUATOR,"actuator_power_down_thread break actuator_parklens_thread_exit: %d", a_ctrl->actuator_parklens_thread_exit);
+				break;
+			}
+			mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
+		}
+	}
+        else {
 		CAM_ERR(CAM_ACTUATOR,"not support this actuator ");
 	}
 
@@ -275,6 +524,93 @@ int actuator_power_up_parklens_thread(void *arg)
 	mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
 
 	CAM_INFO(CAM_ACTUATOR, "cam_actuator_parklens_thread exit");
+
+	return rc;
+}
+
+int actuator_power_up_parklens_second_thread(void *arg)
+{
+	int rc = 0;
+	int i;
+	uint32_t read_val = 0;
+	uint32_t write_val = 0;
+	struct cam_actuator_ctrl_t *a_ctrl = (struct cam_actuator_ctrl_t *)arg;
+	struct cam_actuator_soc_private *soc_private;
+	struct cam_sensor_power_ctrl_t *power_info;
+
+	msleep(5);
+	if (!a_ctrl) {
+		CAM_ERR(CAM_ACTUATOR, "failed: a_ctrl %pK", a_ctrl);
+		return -EINVAL;
+	}
+
+	soc_private = (struct cam_actuator_soc_private *)a_ctrl->soc_info.soc_private;
+	if (!soc_private) {
+		CAM_ERR(CAM_ACTUATOR, "failed:soc_private %pK", soc_private);
+		return -EINVAL;
+	} else {
+		power_info  = &soc_private->power_info;
+		if (!power_info) {
+			CAM_ERR(CAM_ACTUATOR, "failed: power_info %pK", a_ctrl, power_info);
+			return -EINVAL;
+		}
+	}
+
+	CAM_INFO(CAM_ACTUATOR,"actuator_power_up_parklens_second_thread start ");
+	camera_io_dev_read(&(a_ctrl->io_master_info), SEM1217S_DAC_ADDR, &read_val,
+					CAMERA_SENSOR_I2C_TYPE_WORD, CAMERA_SENSOR_I2C_TYPE_WORD);
+	read_val = (((read_val & 0x00FF) << 8) | ((read_val & 0xFF00) >> 8));
+	CAM_INFO(CAM_ACTUATOR,"read success addr = 0x%x data=0x%x", SEM1217S_DAC_ADDR, read_val);
+	for (i = 0; i < ACTUATOR_REGISTER_SIZE; i++) {
+		if ((SEM1217S_PARKLENS_UP[i][0] != 0xff) && (SEM1217S_PARKLENS_UP[i][1] != 0xff)) {
+			if(read_val <= SEM1217S_PARKLENS_UP[i][1]) {
+				break;
+			}
+		} else {
+			break;
+		}
+	}
+
+	for (; i < ACTUATOR_REGISTER_SIZE; i++) {
+		if ((SEM1217S_PARKLENS_UP[i][0] != 0xff) && (SEM1217S_PARKLENS_UP[i][1] != 0xff)) {
+			write_val = (SEM1217S_PARKLENS_UP[i][1] & 0xFF); /* Set AF Target : Low Byte */
+			rc = cam_actuator_ramwrite(a_ctrl,
+				(uint32_t)SEM1217S_PARKLENS_UP[i][0],
+				write_val,
+				1,
+				CAMERA_SENSOR_I2C_TYPE_WORD,
+				CAMERA_SENSOR_I2C_TYPE_BYTE);
+
+			write_val = ( (SEM1217S_PARKLENS_UP[i][1] >> 8) & 0xFF ); /* Set AF Position : High Byte */
+			rc = cam_actuator_ramwrite(a_ctrl,
+				((uint32_t)SEM1217S_PARKLENS_UP[i][0] + 1),
+				write_val,
+				1,
+				CAMERA_SENSOR_I2C_TYPE_WORD,
+				CAMERA_SENSOR_I2C_TYPE_BYTE);
+			if(rc < 0) {
+				CAM_ERR(CAM_ACTUATOR,"write failed ret : %d", rc);
+				return rc;
+			}
+			msleep(3);
+		} else {
+			CAM_ERR(CAM_ACTUATOR,"set parklens setting success ");
+			break;
+		}
+		mutex_lock(&(a_ctrl->actuator_parklens_second_mutex));
+		if (a_ctrl->actuator_parklens_second_thread_exit) {
+			mutex_unlock(&(a_ctrl->actuator_parklens_second_mutex));
+			CAM_ERR(CAM_ACTUATOR,"actuator_power_down_thread break actuator_parklens_thread_exit: %d", a_ctrl->actuator_parklens_second_thread_exit);
+			break;
+		}
+		mutex_unlock(&(a_ctrl->actuator_parklens_second_mutex));
+	}
+
+	mutex_lock(&(a_ctrl->actuator_parklens_second_mutex));
+	a_ctrl->actuator_parklens_second_thread_exit = true;
+	mutex_unlock(&(a_ctrl->actuator_parklens_second_mutex));
+
+	CAM_INFO(CAM_ACTUATOR, "cam_actuator_parklens_second_thread exit");
 
 	return rc;
 }
@@ -314,32 +650,67 @@ uint32_t oplus_cam_actuator_read_vaule(struct cam_actuator_ctrl_t *a_ctrl, uint3
 
 void oplus_cam_actuator_power_down(struct cam_actuator_ctrl_t *a_ctrl)
 {
-	mutex_lock(&(a_ctrl->actuator_parklens_mutex));
-	if (a_ctrl->cam_atc_power_state == CAM_ACTUATOR_POWER_ON && a_ctrl->actuator_power_down_thread_exit == true) {
-		a_ctrl->actuator_power_down_thread_exit = false;
-		a_ctrl->actuator_parklens_thread_exit = true;
-		kthread_run(actuator_power_down_thread, a_ctrl, "actuator_power_down_thread");
-		CAM_INFO(CAM_ACTUATOR, "actuator_power_down_thread created");
-	} else {
-		CAM_ERR(CAM_ACTUATOR, "no need to create actuator_power_down_thread, actuator_power_state %d, actuator_power_down_thread_exit %d",
-			a_ctrl->cam_atc_power_state, a_ctrl->actuator_power_down_thread_exit);
+	if(!strstr(a_ctrl->aon_af_name, "sem1217s"))
+	{
+		mutex_lock(&(a_ctrl->actuator_parklens_mutex));
+		if (a_ctrl->cam_atc_power_state == CAM_ACTUATOR_POWER_ON && a_ctrl->actuator_power_down_thread_exit == true) {
+			a_ctrl->actuator_power_down_thread_exit = false;
+			a_ctrl->actuator_parklens_thread_exit = true;
+			kthread_run(actuator_power_down_thread, a_ctrl, "actuator_power_down_thread");
+			CAM_INFO(CAM_ACTUATOR, "actuator_power_down_thread created");
+		} else {
+			CAM_ERR(CAM_ACTUATOR, "no need to create actuator_power_down_thread, actuator_power_state %d, actuator_power_down_thread_exit %d",
+				a_ctrl->cam_atc_power_state, a_ctrl->actuator_power_down_thread_exit);
+		}
+		mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
+	}else{
+		mutex_lock(&(a_ctrl->actuator_parklens_second_mutex));
+		if (a_ctrl->cam_atc_power_second_state == CAM_ACTUATOR_POWER_ON && a_ctrl->actuator_power_down_second_thread_exit == true) {
+			a_ctrl->actuator_power_down_second_thread_exit = false;
+			a_ctrl->actuator_parklens_second_thread_exit = true;
+			kthread_run(actuator_power_down_second_thread, a_ctrl, "actuator_power_down_second_thread");
+			CAM_INFO(CAM_ACTUATOR, "actuator_power_down_second_thread created");
+		} else {
+			CAM_ERR(CAM_ACTUATOR, "no need to create actuator_power_down_second_thread, actuator_power_state %d, actuator_power_down_second_thread %d",
+				a_ctrl->cam_atc_power_second_state, a_ctrl->actuator_power_down_second_thread_exit);
+		}
+		mutex_unlock(&(a_ctrl->actuator_parklens_second_mutex));
 	}
-	mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
 }
 
 void oplus_cam_actuator_parklens(struct cam_actuator_ctrl_t *a_ctrl)
 {
-	mutex_lock(&(a_ctrl->actuator_parklens_mutex));
-	if (a_ctrl->cam_atc_power_state == CAM_ACTUATOR_POWER_ON && a_ctrl->actuator_parklens_thread_exit == true) {
-		a_ctrl->actuator_parklens_thread_exit = false;
-		a_ctrl->actuator_power_down_thread_exit = true;
-		kthread_run(actuator_power_up_parklens_thread, a_ctrl, "actuator_power_up_parklens_thread");
-		CAM_INFO(CAM_ACTUATOR, "actuator_power_up_parklens_thread created");
-	} else {
-		CAM_ERR(CAM_ACTUATOR, "no need to create actuator_power_up_parklens_thread, actuator_power_state %d, actuator_power_down_thread_exit %d,cam_act_state : %d",
-			a_ctrl->cam_atc_power_state, a_ctrl->actuator_parklens_thread_exit, a_ctrl->cam_act_state);
+	if(a_ctrl->is_only_powerdown != 1)
+	{
+		if(!strstr(a_ctrl->aon_af_name, "sem1217s"))
+		{
+			mutex_lock(&(a_ctrl->actuator_parklens_mutex));
+			if (a_ctrl->cam_atc_power_state == CAM_ACTUATOR_POWER_ON && a_ctrl->actuator_parklens_thread_exit == true) {
+				a_ctrl->actuator_parklens_thread_exit = false;
+				a_ctrl->actuator_power_down_thread_exit = true;
+				kthread_run(actuator_power_up_parklens_thread, a_ctrl, "actuator_power_up_parklens_thread");
+				CAM_INFO(CAM_ACTUATOR, "actuator_power_up_parklens_thread created");
+			} else {
+				CAM_ERR(CAM_ACTUATOR, "no need to create actuator_power_up_parklens_thread, actuator_power_state %d, actuator_power_down_thread_exit %d,cam_act_state : %d",
+					a_ctrl->cam_atc_power_state, a_ctrl->actuator_parklens_thread_exit, a_ctrl->cam_act_state);
+			}
+			mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
+		}
+		else
+		{
+			mutex_lock(&(a_ctrl->actuator_parklens_second_mutex));
+			if (a_ctrl->cam_atc_power_second_state == CAM_ACTUATOR_POWER_ON && a_ctrl->actuator_parklens_second_thread_exit == true) {
+				a_ctrl->actuator_parklens_second_thread_exit = false;
+				a_ctrl->actuator_power_down_second_thread_exit = true;
+				kthread_run(actuator_power_up_parklens_second_thread, a_ctrl, "actuator_power_up_parklens_second_thread");
+				CAM_INFO(CAM_ACTUATOR, "actuator_power_up_parklens_thread created");
+			} else {
+				CAM_ERR(CAM_ACTUATOR, "no need to create actuator_power_up_parklens_thread, cam_atc_power_second_state %d, actuator_power_down_thread_exit %d,cam_act_state : %d",
+					a_ctrl->cam_atc_power_second_state, a_ctrl->actuator_parklens_second_thread_exit, a_ctrl->cam_act_state);
+			}
+			mutex_unlock(&(a_ctrl->actuator_parklens_second_mutex));
+   		}
 	}
-	mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
 }
 
 void oplus_cam_parklens_init(struct cam_actuator_ctrl_t *a_ctrl)
@@ -348,23 +719,44 @@ void oplus_cam_parklens_init(struct cam_actuator_ctrl_t *a_ctrl)
 	a_ctrl->cam_atc_power_state = CAM_ACTUATOR_POWER_OFF;
 	a_ctrl->actuator_power_down_thread_exit = true;
 	a_ctrl->actuator_parklens_thread_exit = true;
+
+	a_ctrl->actuator_power_down_second_thread_exit = true;
+	a_ctrl->actuator_parklens_second_thread_exit = true;
+	a_ctrl->cam_atc_power_second_state = CAM_ACTUATOR_POWER_OFF;
 	mutex_init(&(a_ctrl->actuator_parklens_mutex));
+	mutex_init(&(a_ctrl->actuator_parklens_second_mutex));
 }
 
 int32_t oplus_cam_actuator_power_up(struct cam_actuator_ctrl_t *a_ctrl, int32_t rc)
 {
-	mutex_lock(&(a_ctrl->actuator_parklens_mutex));
-	a_ctrl->actuator_power_down_thread_exit = true;
-	if (a_ctrl->cam_atc_power_state == CAM_ACTUATOR_POWER_OFF) {
-		rc = cam_actuator_power_up(a_ctrl);
-		if (!rc){
-			a_ctrl->cam_atc_power_state = CAM_ACTUATOR_POWER_ON;
-			CAM_ERR(CAM_ACTUATOR, "cam_actuator_power_up successfully");
+	if(!strstr(a_ctrl->aon_af_name, "sem1217s"))
+	{
+	    mutex_lock(&(a_ctrl->actuator_parklens_mutex));
+		a_ctrl->actuator_power_down_thread_exit = true;
+		if (a_ctrl->cam_atc_power_state == CAM_ACTUATOR_POWER_OFF) {
+			rc = cam_actuator_power_up(a_ctrl);
+			if (!rc){
+				a_ctrl->cam_atc_power_state = CAM_ACTUATOR_POWER_ON;
+				CAM_ERR(CAM_ACTUATOR, "cam_actuator_power_up successfully");
+			}
+		} else {
+			CAM_ERR(CAM_ACTUATOR, "actuator already power on, no need to power on again");
 		}
-	} else {
-		CAM_ERR(CAM_ACTUATOR, "actuator already power on, no need to power on again");
+		mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
+	}else{
+		mutex_lock(&(a_ctrl->actuator_parklens_second_mutex));
+		a_ctrl->actuator_power_down_second_thread_exit = true;
+		if (a_ctrl->cam_atc_power_second_state == CAM_ACTUATOR_POWER_OFF) {
+			rc = cam_actuator_power_up(a_ctrl);
+			if (!rc){
+				a_ctrl->cam_atc_power_second_state = CAM_ACTUATOR_POWER_ON;
+				CAM_ERR(CAM_ACTUATOR, "second cam_actuator_power_up successfully");
+			}
+		} else {
+			CAM_ERR(CAM_ACTUATOR, "second actuator already power on, no need to power on again");
+		}
+		mutex_unlock(&(a_ctrl->actuator_parklens_second_mutex));
 	}
-	mutex_unlock(&(a_ctrl->actuator_parklens_mutex));
 	return rc;
 }
 
@@ -866,4 +1258,3 @@ int32_t oplus_cam_actuator_driver_cmd(struct cam_actuator_ctrl_t *a_ctrl, void *
 	}
 	return rc;
 }
-

@@ -378,6 +378,143 @@ int32_t EEPROM_Fm24c256eWrite(struct cam_eeprom_ctrl_t *e_ctrl,
 	return( 0 );
 }
 
+#define WRITE_SEM1217_EEPROM_MAX_LENGTH  128
+int32_t EEPROM_Sem1217sWrite(struct cam_eeprom_ctrl_t *e_ctrl,
+    struct cam_write_eeprom_t *cam_write_eeprom) {
+    int i = 0;
+    int j = 0;
+    uint32_t readcalibData;
+    int32_t  rc = 0;
+    uint32_t  star_addr = 0x0000;
+    int32_t  m_eeprom_size;
+    struct cam_sensor_i2c_reg_setting  i2c_reg_settings;
+    struct cam_sensor_i2c_reg_array    i2c_reg_arrays[WRITE_SEM1217_EEPROM_MAX_LENGTH];
+    struct cam_sensor_i2c_reg_array    i2c_reg_array;
+
+
+    CAM_ERR(CAM_EEPROM, "entry write eeprom");
+
+    //disable write protection
+    if (cam_write_eeprom->isWRP == 0x01) {
+          //ois off
+          i2c_reg_settings.size = 1;
+          i2c_reg_array.reg_addr = 0x0000;
+          i2c_reg_array.reg_data = 0x0;
+          i2c_reg_array.delay = 0;
+          i2c_reg_settings.reg_setting = &i2c_reg_array;
+          i2c_reg_settings.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+          i2c_reg_settings.data_type = CAMERA_SENSOR_I2C_TYPE_BYTE;
+          rc = camera_io_dev_write(&e_ctrl->io_master_info, &i2c_reg_settings);
+          if (rc) {
+              CAM_ERR(CAM_EEPROM, "write ois off failed rc %d",rc);
+              return rc;
+          }
+          //af off
+          i2c_reg_settings.size = 1;
+          i2c_reg_array.reg_addr = 0x0200;
+          i2c_reg_array.reg_data = 0x0;
+          i2c_reg_array.delay = 0;
+          i2c_reg_settings.reg_setting = &i2c_reg_array;
+          i2c_reg_settings.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+          i2c_reg_settings.data_type = CAMERA_SENSOR_I2C_TYPE_BYTE;
+          rc = camera_io_dev_write(&e_ctrl->io_master_info, &i2c_reg_settings);
+          if (rc) {
+              CAM_ERR(CAM_EEPROM, "write af off failed rc %d",rc);
+              return rc;
+          }
+          //disable write protection
+          i2c_reg_settings.size = 1;
+          i2c_reg_array.reg_addr = 0x4E04;
+          i2c_reg_array.reg_data = 0x23016745;
+          i2c_reg_array.delay = 0;
+          i2c_reg_settings.reg_setting = &i2c_reg_array;
+          i2c_reg_settings.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+          i2c_reg_settings.data_type = CAMERA_SENSOR_I2C_TYPE_DWORD;
+
+          rc = camera_io_dev_read(&e_ctrl->io_master_info,
+              i2c_reg_array.reg_addr, &readcalibData,
+              CAMERA_SENSOR_I2C_TYPE_WORD,
+              CAMERA_SENSOR_I2C_TYPE_DWORD);
+              CAM_ERR(CAM_EEPROM, "cam_write_eeprom->eepromName :%s  set reg_data:0x%x cam reg_addr:0x%x, WRPaddr: 0x%x",
+                                   cam_write_eeprom->eepromName,i2c_reg_array.reg_data,i2c_reg_array.reg_addr,readcalibData);
+          if (rc) {
+              CAM_ERR(CAM_EEPROM, "read WRPaddr failed rc %d",rc);
+              return rc;
+          }
+
+          if (readcalibData != i2c_reg_array.reg_data) {
+              rc = camera_io_dev_write(&e_ctrl->io_master_info, &i2c_reg_settings);
+              if (rc) {
+                  CAM_ERR(CAM_EEPROM, "write WRPaddr failed rc %d",rc);
+                  return rc;
+              }
+              CAM_ERR(CAM_EEPROM, "write!cam: WRPaddr: 0x%x", readcalibData);
+              msleep(30);
+          }
+    }
+        CAM_ERR(CAM_EEPROM, "write start, cam: ID: 0x%x, reg_addr: 0x%x, val: %d",
+          cam_write_eeprom->cam_id,
+          cam_write_eeprom->baseAddr,
+          cam_write_eeprom->calibData[0]);
+
+          m_eeprom_size = (cam_write_eeprom->calibDataSize / WRITE_SEM1217_EEPROM_MAX_LENGTH + 1) * WRITE_SEM1217_EEPROM_MAX_LENGTH;
+          for(i = cam_write_eeprom->calibDataSize; i < m_eeprom_size; i++) {
+               cam_write_eeprom->calibData[i] = 0xFF;
+          }
+
+          for (i = 0; i < m_eeprom_size;) {
+              i2c_reg_settings.size = 0;
+              star_addr = (cam_write_eeprom->baseAddr + i);
+              for (j = 0; j < WRITE_SEM1217_EEPROM_MAX_LENGTH && i < m_eeprom_size; j++) {
+                   i2c_reg_arrays[j].reg_addr = star_addr;
+                   i2c_reg_arrays[j].reg_data = cam_write_eeprom->calibData[i];
+                   i2c_reg_arrays[j].delay = 0;
+                   i2c_reg_settings.size++;
+                   i++;
+              }
+              i2c_reg_settings.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+              i2c_reg_settings.data_type = CAMERA_SENSOR_I2C_TYPE_BYTE;
+              i2c_reg_settings.reg_setting = i2c_reg_arrays;
+              i2c_reg_settings.delay = 10;
+              rc = camera_io_dev_write_continuous(&e_ctrl->io_master_info, &i2c_reg_settings, 1);
+              if (rc) {
+                  CAM_ERR(CAM_EEPROM, "eeprom write failed rc %d", rc);
+                  return rc;
+              }
+          }
+
+    if (cam_write_eeprom->isWRP == 0x01) {
+          i2c_reg_settings.size = 1;
+          i2c_reg_array.reg_addr = 0x4E04;
+          i2c_reg_array.reg_data = 0x00000000;
+          i2c_reg_array.delay = 0;
+          i2c_reg_settings.reg_setting = &i2c_reg_array;
+          i2c_reg_settings.addr_type = CAMERA_SENSOR_I2C_TYPE_WORD;
+          i2c_reg_settings.data_type = CAMERA_SENSOR_I2C_TYPE_DWORD;
+
+          rc = camera_io_dev_read(&e_ctrl->io_master_info,
+          i2c_reg_array.reg_addr, &readcalibData,
+              CAMERA_SENSOR_I2C_TYPE_WORD,
+              CAMERA_SENSOR_I2C_TYPE_DWORD);
+          CAM_ERR(CAM_EEPROM, "cam_write_eeprom->eepromName :%s  set reg_data:0x%x cam reg_addr:0x%x, WRPaddr: 0x%x",
+                               cam_write_eeprom->eepromName,i2c_reg_array.reg_data,i2c_reg_array.reg_addr,readcalibData);
+          if (rc) {
+               CAM_ERR(CAM_EEPROM, "read WRPaddr failed rc %d",rc);
+               return rc;
+          }
+          if(readcalibData != i2c_reg_array.reg_data) {
+              rc = camera_io_dev_write(&e_ctrl->io_master_info, &i2c_reg_settings);
+              if (rc) {
+                  CAM_ERR(CAM_EEPROM, "write WRPaddr failed rc %d",rc);
+                  return rc;
+              }
+              CAM_ERR(CAM_EEPROM, "write!cam: WRPaddr: 0x%x", readcalibData);
+          }
+    }
+    CAM_ERR(CAM_EEPROM, "exit write eeprom !!!");
+    return rc;
+}
+
 #define WRITE_EEPROM_MAX_LENGTH 64
 int32_t EEPROM_CommonWrite(struct cam_eeprom_ctrl_t *e_ctrl,
 	struct cam_write_eeprom_t *cam_write_eeprom) {
@@ -400,12 +537,16 @@ int32_t EEPROM_CommonWrite(struct cam_eeprom_ctrl_t *e_ctrl,
 	//disable write protection
 	if (cam_write_eeprom->isWRP == 0x01) {
 		i2c_reg_settings.size = 1;
-		if (strcmp(cam_write_eeprom->eepromName, "imx766_gt24p256c_main") == 0){
+		if ((strcmp(cam_write_eeprom->eepromName, "imx766_gt24p256c_main") == 0)
+            || (strcmp(cam_write_eeprom->eepromName, "imx355_gt24p128f") == 0)) {
 			i2c_reg_array.reg_addr = 0xE000;
 			i2c_reg_array.reg_data = 0xA2;
 		} else if ((strcmp(cam_write_eeprom->eepromName, "imx766_gt24p256c_tele") == 0)
-			||(strcmp(cam_write_eeprom->eepromName, "imx890_gt24p128g") == 0)
-            || (strcmp(cam_write_eeprom->eepromName, "imx709_p24l128g") == 0)) {
+            || (strcmp(cam_write_eeprom->eepromName, "imx709_p24l128g") == 0)
+			|| (strcmp(cam_write_eeprom->eepromName, "imx709_p24c128f_tele") == 0)
+			|| (strcmp(cam_write_eeprom->eepromName, "imx890_gt24p256c") == 0)
+			|| (strcmp(cam_write_eeprom->eepromName, "imx890_gt24p128c2csli") == 0)
+			||(strcmp(cam_write_eeprom->eepromName, "imx890_gt24p128g") == 0)) {
 			i2c_reg_array.reg_addr = 0xE000;
 			i2c_reg_array.reg_data = 0xA0;
 		} else if ((strcmp(cam_write_eeprom->eepromName, "imx766_p24c256c_wide") == 0)
@@ -489,12 +630,16 @@ int32_t EEPROM_CommonWrite(struct cam_eeprom_ctrl_t *e_ctrl,
 
 	if (cam_write_eeprom->isWRP == 0x01) {
 		i2c_reg_settings.size = 1;
-		if (strcmp(cam_write_eeprom->eepromName, "imx766_gt24p256c_main") == 0) {
+		if ((strcmp(cam_write_eeprom->eepromName, "imx766_gt24p256c_main") == 0)
+            || (strcmp(cam_write_eeprom->eepromName, "imx355_gt24p128f") == 0)) {
 			i2c_reg_array.reg_addr = 0xE000;
 			i2c_reg_array.reg_data = 0xA3;
 		} else if ((strcmp(cam_write_eeprom->eepromName, "imx766_gt24p256c_tele") == 0)
-			||(strcmp(cam_write_eeprom->eepromName, "imx890_gt24p128g") == 0)
-            || (strcmp(cam_write_eeprom->eepromName, "imx709_p24l128g") == 0)) {
+            || (strcmp(cam_write_eeprom->eepromName, "imx709_p24l128g") == 0)
+			|| (strcmp(cam_write_eeprom->eepromName, "imx709_p24c128f_tele") == 0)
+			|| (strcmp(cam_write_eeprom->eepromName, "imx890_gt24p256c") == 0)
+			|| (strcmp(cam_write_eeprom->eepromName, "imx890_gt24p128c2csli") == 0)
+            ||(strcmp(cam_write_eeprom->eepromName, "imx890_gt24p128g") == 0)) {
 			i2c_reg_array.reg_addr = 0xE000;
 			i2c_reg_array.reg_data = 0xA1;
 		} else if ((strcmp(cam_write_eeprom->eepromName, "imx766_p24c256c_wide") == 0)
@@ -551,6 +696,7 @@ static int32_t cam_eeprom_write_data(struct cam_eeprom_ctrl_t *e_ctrl,
 	void *arg) {
 	int32_t  rc = 0;
 	bool is_fm24pc256e = false;
+        bool is_sem1217s   = false;
 
 	struct cam_control    *cmd = (struct cam_control *)arg;
 	struct cam_write_eeprom_t cam_write_eeprom;
@@ -569,16 +715,22 @@ static int32_t cam_eeprom_write_data(struct cam_eeprom_ctrl_t *e_ctrl,
 		return -EFAULT;
 	}
 	CAM_ERR(CAM_EEPROM, "cam_write_eeprom  baseAddr 0x0%d",cam_write_eeprom.baseAddr);
+
+	cam_write_eeprom.eepromName[EEPROM_NAME_LENGTH-1] = '\0';
 	if (strcmp(cam_write_eeprom.eepromName, "imx766_fm24c256e_wide_second") == 0) {
 		is_fm24pc256e = true;
-	}
+	} else if (strcmp(cam_write_eeprom.eepromName, "ov64b_sem1217s") == 0) {
+            is_sem1217s = true;
+    }
 
 	//disable write protection
 	if (cam_write_eeprom.calibDataSize > 0
 		&& cam_write_eeprom.calibDataSize <= CALIB_DATA_LENGTH) {
         if (is_fm24pc256e) {
             rc = EEPROM_Fm24c256eWrite(e_ctrl, &cam_write_eeprom);
-        }else {
+        } else if (is_sem1217s) {
+            rc = EEPROM_Sem1217sWrite(e_ctrl, &cam_write_eeprom);
+        } else {
             rc = EEPROM_CommonWrite(e_ctrl, &cam_write_eeprom);
         }
     }

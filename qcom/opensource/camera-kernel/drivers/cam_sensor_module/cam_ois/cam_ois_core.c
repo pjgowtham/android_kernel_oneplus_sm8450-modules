@@ -17,7 +17,9 @@
 #include "cam_packet_util.h"
 #ifdef OPLUS_FEATURE_CAMERA_COMMON
 #include "fw_download_interface.h"
+#include "sem1217_fw.h"
 extern bool chip_version_old;
+static int g_exit_count = 0;
 #endif
 
 #ifdef ENABLE_OIS_DELAY_POWER_DOWN
@@ -58,9 +60,11 @@ int ois_power_down_thread(void *arg)
 			CAM_WARN(CAM_OIS, "ois type=%d has powered down", o_ctrl->ois_type);
 			break;
 		}
-		if(!IsOISReady(o_ctrl)){
-			CAM_ERR(CAM_OIS, "ois type=%d, is not ready!", o_ctrl->ois_type);
-			break;
+		if (strcmp(o_ctrl->ois_name, "ov64b_ois_sem1217s") != 0) {
+			if(!IsOISReady(o_ctrl)){
+				CAM_ERR(CAM_OIS, "ois type=%d, is not ready!", o_ctrl->ois_type);
+				break;
+			}
 		}
 #endif
 		msleep(50);// sleep 50ms every time, and sleep OIS_POWER_DOWN_DELAY/50 times.
@@ -84,9 +88,9 @@ int ois_power_down_thread(void *arg)
 			power_info->power_down_setting = NULL;
 			power_info->power_down_setting_size = 0;
 			power_info->power_setting_size = 0;
-			CAM_ERR(CAM_OIS, "ois type=%d,cam_ois_power_down successfully",o_ctrl->ois_type);
+			CAM_ERR(CAM_OIS, "ois advance type=%d,cam_ois_power_down successfully",o_ctrl->ois_type);
 		} else {
-			CAM_ERR(CAM_OIS, "ois type=%d,cam_ois_power_down failed",o_ctrl->ois_type);
+			CAM_ERR(CAM_OIS, "ois advance type=%d,cam_ois_power_down failed",o_ctrl->ois_type);
 		}
 		o_ctrl->ois_power_state = CAM_OIS_POWER_OFF;
 #ifdef OPLUS_FEATURE_CAMERA_COMMON
@@ -97,12 +101,13 @@ int ois_power_down_thread(void *arg)
 			o_ctrl->ois_download_fw_done = CAM_OIS_FW_NOT_DOWNLOAD;
 			o_ctrl->ois_fd_have_close_state = CAM_OIS_IS_CLOSE;
 			mutex_unlock(&(o_ctrl->do_ioctl_ois));
-			CAM_ERR(CAM_OIS, "ois type=%d,cam_ois_power_down,so reset state",o_ctrl->ois_type);
+			CAM_ERR(CAM_OIS, "ois advance type=%d,cam_ois_power_down,so reset state",o_ctrl->ois_type);
 		}
+		o_ctrl->isDeviceAcquired = true;
 #endif
 
 	} else {
-		CAM_ERR(CAM_OIS, "ois type=%d,No need to do power down, ois_power_down_thread_exit %d, ois_power_state %d",o_ctrl->ois_type, o_ctrl->ois_power_down_thread_exit, o_ctrl->ois_power_state);
+		CAM_ERR(CAM_OIS, "ois advance type=%d,No need to do power down, ois_power_down_thread_exit %d, ois_power_state %d",o_ctrl->ois_type, o_ctrl->ois_power_down_thread_exit, o_ctrl->ois_power_state);
 	}
 	o_ctrl->ois_power_down_thread_state = CAM_OIS_POWER_DOWN_THREAD_STOPPED;
 	mutex_unlock(&(o_ctrl->ois_power_down_mutex));
@@ -225,6 +230,9 @@ static int cam_ois_power_up(struct cam_ois_ctrl_t *o_ctrl)
 		if(strstr(o_ctrl->ois_name, "129")){
 			rc = oplus_cam_ois_construct_default_power_setting_129(power_info);
 			CAM_INFO(CAM_OIS,"Using 129 power settings");
+		}else if (strstr(o_ctrl->ois_name, "SEM1217S")) {
+			rc = oplus_cam_ois_construct_default_power_setting_1217s(power_info);
+			CAM_INFO(CAM_OIS,"Using 1217 power settings");
 		}else{
 			rc = oplus_cam_ois_construct_default_power_setting(power_info);
 		}
@@ -902,7 +910,8 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 				}
 				else
 					rc = DownloadFW(o_ctrl);
-			} else if(strstr(o_ctrl->ois_name, "imx766_bu24721_tele")) {
+			} else if(strstr(o_ctrl->ois_name, "imx766_bu24721_tele") ||
+					strstr(o_ctrl->ois_name, "ov64b_ois_sem1217s")) {
 				if(o_ctrl->cam_ois_download_fw_in_advance)
 				{
 					//OIS for imx766_bu24721gwz
@@ -1013,15 +1022,17 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		}
 
 #ifdef OPLUS_FEATURE_CAMERA_COMMON
-		if (!IsOISReady(o_ctrl)) {
-			CAM_ERR(CAM_OIS, "OIS is not ready, apply setting may fail");
-			for(count=0;count<o_ctrl->soc_info.num_rgltr;count++){
-				enable=regulator_is_enabled(regulator_get(o_ctrl->soc_info.dev,o_ctrl->soc_info.rgltr_name[count]));
-				CAM_ERR(CAM_OIS, "regulator enable=%d,name[%d]=%s",enable,count,o_ctrl->soc_info.rgltr_name[count]);
+		if (strcmp(o_ctrl->ois_name, "ov64b_ois_sem1217s") != 0) {
+			if (!IsOISReady(o_ctrl)) {
+				CAM_ERR(CAM_OIS, "OIS is not ready, apply setting may fail");
+				for(count=0;count<o_ctrl->soc_info.num_rgltr;count++){
+					enable=regulator_is_enabled(regulator_get(o_ctrl->soc_info.dev,o_ctrl->soc_info.rgltr_name[count]));
+					CAM_ERR(CAM_OIS, "regulator enable=%d,name[%d]=%s",enable,count,o_ctrl->soc_info.rgltr_name[count]);
+				}
 			}
+			o_ctrl->ois_poll_thread_control_cmd = CAM_OIS_START_POLL_THREAD;
+			OISControl(o_ctrl);
 		}
-		o_ctrl->ois_poll_thread_control_cmd = CAM_OIS_START_POLL_THREAD;
-		OISControl(o_ctrl);
 #endif
 
 		rc = cam_ois_apply_settings(o_ctrl, i2c_reg_settings);
@@ -1113,6 +1124,13 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 			}
 		}else if(o_ctrl->ois_eis_function == 4) {
 			rc = OIS_READ_HALL_DATA_TO_UMD_TELE124(o_ctrl,&i2c_read_settings);
+			if (rc < 0) {
+				CAM_ERR(CAM_OIS, "cannot read data rc: %d", rc);
+				delete_request(&i2c_read_settings);
+				return rc;
+			}
+		}else if(o_ctrl->ois_eis_function == 6) {
+			rc = OIS_READ_HALL_DATA_TO_UMD_SEM1217S(o_ctrl,&i2c_read_settings);
 			if (rc < 0) {
 				CAM_ERR(CAM_OIS, "cannot read data rc: %d", rc);
 				delete_request(&i2c_read_settings);
@@ -1345,6 +1363,7 @@ int cam_ois_driver_cmd(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		break;
 	case CAM_ACQUIRE_DEV:
 #ifdef OPLUS_FEATURE_CAMERA_COMMON
+		o_ctrl->isDeviceAcquired = true;
 		if(o_ctrl->cam_ois_download_fw_in_advance)
 		{
 			mutex_lock(&(o_ctrl->ois_power_down_mutex));
@@ -1646,6 +1665,8 @@ int cam_ois_driver_cmd(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		uint32_t gyro_offset = 0;
 		if(strstr(o_ctrl->ois_name, "bu24721")) {
 			DoBU24721GyroOffset(o_ctrl, &gyro_offset);
+		} else if (strstr(o_ctrl->ois_name, "ov64b_ois_sem1217s")) {
+			DoSEM1217SGyroOffset(o_ctrl, &gyro_offset);
 		}
 		CAM_ERR(CAM_OIS, "[GyroOffsetCaliByFirmware] gyro_offset: 0x%x !!!", gyro_offset);
 		if (copy_to_user((void __user *) cmd->handle, &gyro_offset,
@@ -1669,3 +1690,118 @@ release_mutex:
 	mutex_unlock(&(o_ctrl->ois_mutex));
 	return rc;
 }
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+int ois_init_thread(void *arg)
+{
+	int rc = -1;
+	struct cam_ois_ctrl_t *o_ctrl = (struct cam_ois_ctrl_t *)arg;
+
+	mutex_lock(&(o_ctrl->ois_mutex));
+	mutex_lock(&(o_ctrl->ois_power_down_mutex));
+	o_ctrl->ois_power_down_thread_exit = TRUE;
+	if (o_ctrl->ois_power_state == CAM_OIS_POWER_OFF){
+		rc = cam_ois_power_up(o_ctrl);
+		if(rc != 0) {
+			CAM_ERR(CAM_OIS, "ois advance power up failed, rc: %d", rc);
+			mutex_unlock(&(o_ctrl->ois_power_down_mutex));
+			goto init_exit;
+		}
+		CAM_INFO(CAM_OIS, "ois advance ois_init_thread power on success");
+	} else {
+		CAM_INFO(CAM_OIS, "ois advance type=%d,OIS already power on, no need to power on again",o_ctrl->ois_type);
+	}
+
+	o_ctrl->ois_power_state = CAM_OIS_POWER_ON;
+	mutex_unlock(&(o_ctrl->ois_power_down_mutex));
+
+	rc = sem1217_8bit_write(SEM1217S_REG_OIS_CTRL, SEM1217S_OIS_ENABLE);
+	if (rc != 0) {
+		CAM_ERR(CAM_OIS, "ois advance set ois as enable mode failed, rc: %d", rc);
+		goto init_exit;
+	}
+
+	rc = sem1217_8bit_write(SEM1217S_REG_OIS_MODE, SEM1217S_OIS_CENTERIN_ON);
+	if (rc != 0) {
+		CAM_ERR(CAM_OIS, "ois advance set ois as centering on failed, rc: %d", rc);
+	} else {
+		CAM_INFO(CAM_OIS, "ois advance init success");
+	}
+	mutex_unlock(&(o_ctrl->ois_mutex));
+
+recount:
+	while (g_exit_count < OIS_INIT_EXIT_DELAY / 20)
+	{
+	    g_exit_count++;
+		msleep(20);
+		mutex_lock(&(o_ctrl->ois_mutex));
+		if (o_ctrl->isDeviceAcquired)
+		{
+			CAM_INFO(CAM_OIS, "ois advance ois has acquire action, init exit");
+			mutex_unlock(&(o_ctrl->ois_mutex));
+			break;
+		}
+		mutex_unlock(&(o_ctrl->ois_mutex));
+	}
+
+	mutex_lock(&(o_ctrl->ois_mutex));
+	if (o_ctrl->isDeviceAcquired == FALSE)
+	{
+		if (g_exit_count == 0)
+		{
+			mutex_unlock(&(o_ctrl->ois_mutex));
+			CAM_INFO(CAM_OIS, "ois advance reenter, recount time");
+			goto recount;
+		}
+		mutex_lock(&(o_ctrl->ois_power_down_mutex));
+		rc = sem1217_8bit_write(SEM1217S_REG_OIS_CTRL, SEM1217S_OIS_OFF);
+		if (rc != 0) {
+			CAM_ERR(CAM_OIS, "ois advance set ois as enable mode failed, rc: %d", rc);
+			goto init_exit;
+		}
+		cam_ois_power_down(o_ctrl);
+		o_ctrl->ois_power_state = CAM_OIS_POWER_OFF;
+		mutex_unlock(&(o_ctrl->ois_power_down_mutex));
+		CAM_INFO(CAM_OIS, "ois advance power off successfully");
+	}
+
+init_exit:
+	o_ctrl->is_ois_thread_running = FALSE;
+	mutex_unlock(&(o_ctrl->ois_mutex));
+	return rc;
+}
+
+int cam_ois_do_init_in_advance(struct cam_ois_ctrl_t *o_ctrl)
+{
+	int rc = 0;
+
+	if(o_ctrl == NULL) {
+		CAM_ERR(CAM_OIS, "o_ctrl is NULL");
+		return -EINVAL;
+	}
+
+	mutex_lock(&(o_ctrl->ois_mutex));
+	mutex_lock(&(o_ctrl->ois_power_down_mutex));
+	g_exit_count = 0;
+	o_ctrl->isDeviceAcquired = FALSE;
+	if (o_ctrl->is_ois_thread_running == FALSE)
+	{
+		CAM_INFO(CAM_OIS, "ois advance create ois init thread");
+		o_ctrl->ois_init_thread = kthread_run(ois_init_thread, o_ctrl, o_ctrl->ois_name);
+		if (!o_ctrl->ois_init_thread)
+		{
+			CAM_ERR(CAM_OIS, "create ois init thread failed");
+			rc = -1;
+		}
+		o_ctrl->is_ois_thread_running = TRUE;
+	}
+	else
+	{
+		CAM_INFO(CAM_OIS, "ois advance init thread is running, no need to create thread again");
+	}
+	mutex_unlock(&(o_ctrl->ois_power_down_mutex));
+	mutex_unlock(&(o_ctrl->ois_mutex));
+
+	return rc;
+}
+#endif

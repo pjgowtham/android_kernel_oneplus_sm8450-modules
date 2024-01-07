@@ -11,6 +11,14 @@
 #include "camera_main.h"
 
 #ifdef OPLUS_FEATURE_CAMERA_COMMON
+#include "oplus_cam_actuator_dev.h"
+
+#define VIDIOC_CAM_ACTUATOR_LOCK 0x9003
+#define VIDIOC_CAM_ACTUATOR_UNLOCK 0x9004
+#define VIDIOC_CAM_ACTUATOR_SHAKE_DETECT_ENABLE 0x9005
+#endif
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 #include "cam_compat.h"
 #include "oplus_cam_actuator_core.h"
 static bool gProbe_done;
@@ -30,6 +38,16 @@ static int cam_actuator_subdev_close_internal(struct v4l2_subdev *sd,
 	mutex_lock(&(a_ctrl->actuator_mutex));
 	cam_actuator_shutdown(a_ctrl);
 	mutex_unlock(&(a_ctrl->actuator_mutex));
+
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		if(a_ctrl->camera_actuator_shake_detect_enable &&
+			a_ctrl->cam_act_last_state == CAM_ACTUATOR_LOCK){
+		oplus_cam_actuator_unlock(a_ctrl);
+		CAM_INFO(CAM_ACTUATOR, "oplus_cam_actuator_unlock");
+		}
+#endif
+
 
 	return 0;
 }
@@ -55,6 +73,10 @@ static long cam_actuator_subdev_ioctl(struct v4l2_subdev *sd,
 	struct cam_actuator_ctrl_t *a_ctrl =
 		v4l2_get_subdevdata(sd);
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	mutex_lock(&(a_ctrl->actuator_ioctl_mutex));
+#endif
+
 	switch (cmd) {
 	case VIDIOC_CAM_CONTROL:
 		rc = cam_actuator_driver_cmd(a_ctrl, arg);
@@ -65,16 +87,38 @@ static long cam_actuator_subdev_ioctl(struct v4l2_subdev *sd,
 	case CAM_SD_SHUTDOWN:
 		if (!cam_req_mgr_is_shutdown()) {
 			CAM_ERR(CAM_CORE, "SD shouldn't come from user space");
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+			mutex_unlock(&(a_ctrl->actuator_ioctl_mutex));
+#endif
 			return 0;
 		}
 
 		rc = cam_actuator_subdev_close_internal(sd, NULL);
 		break;
+ #ifdef OPLUS_FEATURE_CAMERA_COMMON
+	case VIDIOC_CAM_ACTUATOR_SHAKE_DETECT_ENABLE:
+		oplus_cam_actuator_sds_enable(a_ctrl);
+		break;
+	case VIDIOC_CAM_ACTUATOR_LOCK:
+		mutex_lock(&(a_ctrl->actuator_parklens_second_mutex));
+		rc = oplus_cam_actuator_lock(a_ctrl);
+		mutex_unlock(&(a_ctrl->actuator_parklens_second_mutex));
+		break;
+	case VIDIOC_CAM_ACTUATOR_UNLOCK:
+		mutex_lock(&(a_ctrl->actuator_parklens_second_mutex));
+		rc = oplus_cam_actuator_unlock(a_ctrl);
+		mutex_unlock(&(a_ctrl->actuator_parklens_second_mutex));
+		break;
+#endif
 	default:
 		CAM_ERR(CAM_ACTUATOR, "Invalid ioctl cmd: %u", cmd);
 		rc = -ENOIOCTLCMD;
 		break;
 	}
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	mutex_unlock(&(a_ctrl->actuator_ioctl_mutex));
+#endif
+
 	return rc;
 }
 
@@ -414,6 +458,10 @@ static int cam_actuator_platform_component_bind(struct device *dev,
 	a_ctrl->cam_act_state = CAM_ACTUATOR_INIT;
 	CAM_DBG(CAM_ACTUATOR, "Component bound successfully %d",
 		a_ctrl->soc_info.index);
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	a_ctrl->cam_act_last_state = CAM_ACTUATOR_INIT;
+#endif
 
 	return rc;
 

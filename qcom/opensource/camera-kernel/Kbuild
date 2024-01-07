@@ -247,8 +247,10 @@ camera-$(CONFIG_SPECTRA_OPLUS) += \
 	drivers/oplus/cam_sensor_module/cam_ois/onsemi_fw/LC898129/PhoneUpdate.o \
 	drivers/oplus/cam_sensor_module/cam_ois/onsemi_fw/LC898128/PhoneUpdate128.o \
 	drivers/oplus/cam_sensor_module/cam_ois/onsemi_fw/BU24721/bu24721_fw.o \
+	drivers/oplus/cam_sensor_module/cam_ois/onsemi_fw/SEM1217S/sem1217_fw.o \
 	drivers/oplus/cam_sensor_module/cam_actuator/oplus_cam_actuator_core.o \
-	drivers/oplus/cam_sensor_module/cam_utils/oplus_cam_kevent_fb.o
+	drivers/oplus/cam_sensor_module/cam_utils/oplus_cam_kevent_fb.o \
+	drivers/oplus/cam_sensor_module/cam_actuator/oplus_cam_actuator_dev.o
 
 camera-$(CONFIG_LEDS_QPNP_FLASH_V2) += \
 	drivers/cam_sensor_module/cam_flash/cam_flash_dev.o \

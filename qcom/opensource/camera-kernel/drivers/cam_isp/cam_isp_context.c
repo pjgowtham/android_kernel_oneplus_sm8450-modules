@@ -7528,6 +7528,7 @@ static int __cam_isp_ctx_handle_irq_in_activated(void *context,
 			ctx_isp->rdi_frame_id++;
 			//add process logic
 			if (ctx_isp->subscribe_event & CAM_TRIGGER_POINT_SOF) {
+				memset(&notify, 0, sizeof(notify));
 				notify.link_hdl = ctx->link_hdl;
 				notify.dev_hdl = ctx->dev_hdl;
 				notify.frame_id = ctx_isp->rdi_frame_id;

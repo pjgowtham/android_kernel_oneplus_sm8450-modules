@@ -16,6 +16,7 @@ typedef enum {
 	EXCEP_GPIO,
 	EXCEP_I2C,
 	EXCEP_SOF_TIMEOUT,
+        EXCEP_CRC,
 	MAX_EXCEP_TYPE
 } cam_excep_type;
 
@@ -59,4 +60,12 @@ const unsigned char *acquire_event_field(int excepId);
 		cam_olc_raise_exception(EXCEP_I2C, connext);                             \
 	} while (0)
 
+#define KEVENT_FB_CRC_FAILED(connext, msg, err)                                 \
+        do {                                                                             \
+                snprintf(                                                                \
+                        connext, sizeof(connext),                                        \
+                        "FBField@@%s$$ExceptId@@0x%x$$detailData@@ErrMsg=%s,ErrCode=%d", \
+                        acquire_event_field(EXCEP_CRC), EXCEP_CRC, msg, err);            \
+                cam_olc_raise_exception(EXCEP_CRC, connext);                             \
+        } while (0)
 #endif /*__OPLUS_CAM_KEVENT_FB__*/

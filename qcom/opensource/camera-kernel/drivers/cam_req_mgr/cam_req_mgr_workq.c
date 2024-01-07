@@ -269,14 +269,23 @@ int cam_req_mgr_workq_create(char *name, int32_t num_tasks,
 		CAM_DBG(CAM_CRM, "LOCK_DBG workq %s lock %pK",
 			name, &crm_workq->lock_bh);
 
+		mutex_init(&crm_workq->rt_lock);
 		if (strstr(crm_workq->workq_name, "CRMCORE")) {
+			mutex_lock(&crm_workq->rt_lock);
 			crm_workq->thread = kthread_run(cam_req_mgr_thread, crm_workq, "%s",
 				crm_workq->workq_name);
-			if (!crm_workq->thread) {
+			CAM_INFO(CAM_CRM, "create workqueue thread crm_workq->thread %p", crm_workq->thread);
+			mutex_unlock(&crm_workq->rt_lock);
+			if (IS_ERR(crm_workq->thread)) {
 				CAM_ERR(CAM_CRM, "create workqueue thread failed: %s", crm_workq->workq_name);
+				mutex_lock(&crm_workq->rt_lock);
+				crm_workq->thread = NULL;
+				mutex_unlock(&crm_workq->rt_lock);
 			}
 		} else {
+			mutex_lock(&crm_workq->rt_lock);
 			crm_workq->thread = NULL;
+			mutex_unlock(&crm_workq->rt_lock);
 		}
 
 		/* Task attributes initialization */
@@ -325,8 +334,11 @@ void cam_req_mgr_workq_destroy(struct cam_req_mgr_core_workq **crm_workq)
 		CAM_DBG(CAM_CRM, "destroy workque %s", workq->workq_name);
 
 		if (workq->thread) {
+			mutex_lock(&workq->rt_lock);
+			CAM_INFO(CAM_CRM, "stop workqueue thread workq->thread %p", workq->thread);
 			kthread_stop(workq->thread);
 			workq->thread = NULL;
+			mutex_unlock(&workq->rt_lock);
 		}
 
 		WORKQ_ACQUIRE_LOCK(workq, flags);
