@@ -1864,7 +1864,7 @@ int dsi_panel_parse_oplus_config(struct dsi_panel *panel)
 	}
 
 	/* Add for apollo */
-	panel->oplus_priv.is_apollo_support = utils->read_bool(utils->data, "oplus,apollo_backlight_enable");
+	panel->oplus_priv.is_apollo_support = false;
 	apollo_backlight_enable = panel->oplus_priv.is_apollo_support;
 	DSI_INFO("apollo_backlight_enable: %s", panel->oplus_priv.is_apollo_support ? "true" : "false");
 
