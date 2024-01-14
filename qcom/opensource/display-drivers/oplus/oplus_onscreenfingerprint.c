@@ -129,7 +129,6 @@ static struct oplus_ofp_params *oplus_ofp_get_params(unsigned int display_id)
 int oplus_ofp_init(void *dsi_panel)
 {
 	int rc = 0;
-	unsigned int fp_type = 0;
 	struct dsi_panel *panel = dsi_panel;
 	struct dsi_parser_utils *utils = NULL;
 	struct oplus_ofp_params *p_oplus_ofp_params = oplus_ofp_get_params(oplus_ofp_display_id);
@@ -168,14 +167,7 @@ int oplus_ofp_init(void *dsi_panel)
 
 	mutex_init(&oplus_ofp_lock);
 
-	rc = utils->read_u32(utils->data, "oplus,ofp-fp-type", &fp_type);
-	if (rc) {
-		OFP_INFO("failed to read oplus,ofp-fp-type, rc=%d\n", rc);
-		/* set default value to BIT(0) */
-		p_oplus_ofp_params->fp_type = BIT(0);
-	} else {
-		p_oplus_ofp_params->fp_type = fp_type;
-	}
+	p_oplus_ofp_params->fp_type = BIT(2);
 
 	OFP_INFO("fp_type:0x%x\n", p_oplus_ofp_params->fp_type);
 
