@@ -980,7 +980,7 @@ static void cam_clear_cphy_count(u64 delay_ms)
 	}
 }
 
-static void cam_handle_cphy_error()
+static void cam_handle_cphy_error(void)
 {
 	if (enable_cphy_crash) {
 		if (!cphy_crashed) {

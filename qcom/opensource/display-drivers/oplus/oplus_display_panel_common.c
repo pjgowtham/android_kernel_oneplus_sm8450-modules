@@ -2856,7 +2856,7 @@ int oplus_display_update_dbv(struct dsi_panel *panel)
 	return rc;
 }
 
-int oplus_display_panel_set_demua()
+int oplus_display_panel_set_demua(void)
 {
 	u32 bl_lvl = 0;
 	int rc = 0;
