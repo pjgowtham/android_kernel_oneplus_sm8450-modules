@@ -48,3 +48,7 @@ BOARD_VENDOR_KERNEL_MODULES += $(KERNEL_MODULES_OUT)/q6_notifier_dlkm.ko\
 endif
 endif
 endif
+
+#ifdef OPLUS_ARCH_EXTENDS
+-include $(TOP)/vendor/qcom/opensource/audio-kernel/oplus/oplus_audio_kernel_vendor_board.mk
+#endif /* OPLUS_ARCH_EXTENDS */

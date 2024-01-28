@@ -28,6 +28,18 @@
 #include "internal.h"
 #include "asoc/bolero-slave-internal.h"
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include "feedback/oplus_audio_kernel_fb.h"
+#ifdef dev_err
+#undef dev_err
+#define dev_err dev_err_fb_delay
+#endif
+#ifdef pr_err
+#undef pr_err
+#define pr_err pr_err_fb_delay
+#endif
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
 #define NUM_SWRS_DT_PARAMS 5
 #define WCD938X_VARIANT_ENTRY_SIZE 32
 
@@ -42,7 +54,12 @@
 #define ADC_MODE_VAL_ULP1     0x09
 #define ADC_MODE_VAL_ULP2     0x0B
 
-#define NUM_ATTEMPTS 20
+#ifdef OPLUS_ARCH_EXTENDS
+/* Solve the problem that get swr-dev fails after adsp ssr */
+#define NUM_ATTEMPTS 50
+#else /* OPLUS_ARCH_EXTENDS */
+#define NUM_ATTEMPTS 5
+#endif /* OPLUS_ARCH_EXTENDS */
 
 #define DAPM_MICBIAS1_STANDALONE "MIC BIAS1 Standalone"
 #define DAPM_MICBIAS2_STANDALONE "MIC BIAS2 Standalone"
@@ -2155,9 +2172,22 @@ static int wcd938x_get_logical_addr(struct swr_device *swr_dev)
 	int num_retry = NUM_ATTEMPTS;
 
 	do {
+		#ifdef OPLUS_ARCH_EXTENDS
+		/*add CR#3252303 to fix swr issue*/
 		/* retry after 4ms */
 		usleep_range(4000, 4010);
+		#else
+		/* retry after 1ms */
+		usleep_range(1000, 1010);
+		#endif /*OPLUS_ARCH_EXTENDS*/
 		ret = swr_get_logical_dev_num(swr_dev, swr_dev->addr, &devnum);
+		#ifdef OPLUS_ARCH_EXTENDS
+		/*add log to check retry num issue*/
+		if (ret) {
+			dev_info(&swr_dev->dev, "%s get devnum %d for dev addr %llx failed, ret = %d, num_retry = %d",
+			__func__, devnum, swr_dev->addr, ret, num_retry);
+		}
+		#endif /*OPLUS_ARCH_EXTENDS*/
 	} while (ret && --num_retry);
 
 	if (ret)
@@ -2254,6 +2284,10 @@ static int wcd938x_event_notify(struct notifier_block *block,
 						     NULL);
 		wcd938x->mbhc->wcd_mbhc.deinit_in_progress = true;
 		mbhc = &wcd938x->mbhc->wcd_mbhc;
+		#ifdef OPLUS_ARCH_EXTENDS
+		mbhc->plug_before_ssr = mbhc->current_plug;
+		pr_info("%s: mbhc->plug_before_ssr=%d\n", __func__, mbhc->plug_before_ssr);
+		#endif /* OPLUS_ARCH_EXTENDS */
 		wcd938x->usbc_hs_status = get_usbc_hs_status(component,
 						mbhc->mbhc_cfg);
 		wcd938x_mbhc_ssr_down(wcd938x->mbhc, component);
