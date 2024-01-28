@@ -1338,8 +1338,8 @@ ssize_t oplus_sde_evtlog_dump_read(struct file *file, char __user *buff,
 	mutex_lock(&sde_dbg_base.mutex);
 	sde_dbg_base.cur_evt_index = 0;
 	sde_dbg_base.evtlog->first = (u32)atomic_add_return(0, &sde_dbg_base.evtlog->curr) + 1;
-	sde_dbg_base.evtlog->last =
-		sde_dbg_base.evtlog->first + SDE_EVTLOG_ENTRY;
+	atomic_set(&sde_dbg_base.evtlog->last,
+		(sde_dbg_base.evtlog->first + SDE_EVTLOG_ENTRY));
 
 	len = sde_evtlog_dump_to_buffer(sde_dbg_base.evtlog,
 			evtlog_buf, SDE_EVTLOG_BUF_MAX,
