@@ -2978,7 +2978,7 @@ ssize_t oplus_ofp_set_aod_light_mode_attr(struct kobject *obj,
 	struct kobj_attribute *attr, const char *buf, size_t count)
 {
 	int rc = 0;
-	unsigned int aod_light_mode = 0;
+	unsigned int aod_light_mode = 1;
 	static unsigned int last_aod_light_mode = 0;
 	struct dsi_display *display = oplus_display_get_current_display();
 	struct oplus_ofp_params *p_oplus_ofp_params = oplus_ofp_get_params(oplus_ofp_display_id);
