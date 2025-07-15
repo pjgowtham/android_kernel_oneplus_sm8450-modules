@@ -10,9 +10,6 @@
 #include "cam_mem_mgr_api.h"
 #ifdef OPLUS_FEATURE_CAMERA_COMMON
 #include <linux/sched/types.h>
-struct sched_param {
-	int sched_priority;
-};
 #endif
 
 
