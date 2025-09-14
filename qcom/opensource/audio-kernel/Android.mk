@@ -350,3 +350,7 @@ include $(DLKM_DIR)/Build_external_kernelmodule.mk
 
 endif # DLKM check
 endif # supported target check
+
+#ifdef OPLUS_ARCH_EXTENDS
+-include $(LOCAL_PATH)/oplus/build.mk
+#endif /* OPLUS_ARCH_EXTENDS */
