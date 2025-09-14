@@ -217,6 +217,9 @@ void cam_cci_dump_registers(struct cci_device *cci_dev,
 	void __iomem *base = cci_dev->soc_info.reg_map[0].mem_base;
 
 	dump_en = cci_dev->dump_en;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	dump_en = 3;
+#endif
 	if (!(dump_en & CAM_CCI_NACK_DUMP_EN) &&
 		!(dump_en & CAM_CCI_TIMEOUT_DUMP_EN)) {
 		CAM_DBG(CAM_CCI,
@@ -1929,6 +1932,9 @@ int32_t cam_cci_core_cfg(struct v4l2_subdev *sd,
 	int32_t rc = 0;
 	struct cci_device *cci_dev = v4l2_get_subdevdata(sd);
 	enum cci_i2c_master_t master = MASTER_MAX;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	struct cam_cci_master_info *cci_master_info = NULL;
+#endif
 
 	if (!cci_dev) {
 		CAM_ERR(CAM_CCI, "CCI_DEV is null");
@@ -1946,8 +1952,15 @@ int32_t cam_cci_core_cfg(struct v4l2_subdev *sd,
 		return -EINVAL;
 	}
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	cci_master_info = &cci_dev->cci_master_info[master];
+	if ((cci_master_info->status < 0) && (cci_ctrl->cmd != MSM_CCI_RELEASE)) {
+		CAM_WARN(CAM_CCI, "CCI hardware is resetting CCI%d_I2C_M%d status %d",
+			cci_dev->soc_info.index, master, cci_dev->cci_master_info[master].status);
+#else
 	if (cci_dev->cci_master_info[master].status < 0) {
 		CAM_WARN(CAM_CCI, "CCI hardware is resetting");
+#endif
 		return -EAGAIN;
 	}
 	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d cmd = %d", cci_dev->soc_info.index, master, cci_ctrl->cmd);

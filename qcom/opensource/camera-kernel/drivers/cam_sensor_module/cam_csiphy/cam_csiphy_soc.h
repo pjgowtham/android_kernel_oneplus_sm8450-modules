@@ -33,6 +33,11 @@
 #define CSIPHY_VERSION_V210                       0x210
 #define CSIPHY_VERSION_V211                       0x211
 #define CSIPHY_VERSION_V213                       0x213
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#define CSIPHY_VERSION_V213_ENHANCE               0xF213
+#define CSIPHY_VERSION_V213_IMX355_DAOXIANG       0xF214
+#define CSIPHY_VERSION_V213_IMX890_DAOXIANG       0xF215
+#endif
 
 /**
  * @csiphy_dev: CSIPhy device structure

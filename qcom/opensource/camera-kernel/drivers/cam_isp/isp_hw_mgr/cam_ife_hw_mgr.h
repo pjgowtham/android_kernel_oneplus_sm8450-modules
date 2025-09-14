@@ -219,6 +219,10 @@ struct cam_ife_hw_mgr_ctx_flags {
 	bool   rdi_lcr_en;
 	bool   sys_cache_usage[CAM_LLCC_MAX];
 	bool   skip_reg_dump_buf_put;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON//lanhe todo
+	bool   use_rdi_sof;
+#endif
+
 };
 
 /**
