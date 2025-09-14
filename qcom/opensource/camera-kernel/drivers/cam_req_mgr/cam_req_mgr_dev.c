@@ -347,6 +347,8 @@ static long cam_private_ioctl(struct file *file, void *fh,
 	case CAM_REQ_MGR_CREATE_SESSION: {
 		struct cam_req_mgr_session_info ses_info;
 
+		camera_provider_pid = task_tgid_nr(current);
+
 		if (k_ioctl->size != sizeof(ses_info))
 			return -EINVAL;
 

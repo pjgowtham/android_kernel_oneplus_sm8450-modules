@@ -10,6 +10,12 @@
 #include "cam_debug_util.h"
 #include "camera_main.h"
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#include "oplus_cam_eeprom_dev.h"
+#include "cam_compat.h"
+static bool gProbe_done;
+#endif
+
 static int cam_eeprom_subdev_close_internal(struct v4l2_subdev *sd,
 	struct v4l2_subdev_fh *fh)
 {
@@ -87,6 +93,9 @@ int32_t cam_eeprom_update_i2c_info(struct cam_eeprom_ctrl_t *e_ctrl,
 		cci_client->retries = 3;
 		cci_client->id_map = 0;
 		cci_client->i2c_freq_mode = i2c_info->i2c_freq_mode;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+        cam_eeprom_update_i2c_info_oem(e_ctrl, i2c_info, chip_version_old);
+#endif
 	} else if (e_ctrl->io_master_info.master_type == I2C_MASTER) {
 		e_ctrl->io_master_info.client->addr = i2c_info->slave_addr;
 		CAM_DBG(CAM_EEPROM, "Slave addr: 0x%x", i2c_info->slave_addr);
@@ -510,7 +519,13 @@ static int cam_eeprom_component_bind(struct device *dev,
 		rc = -ENOMEM;
 		goto free_e_ctrl;
 	}
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	cam_eeprom_component_bind_oem(e_ctrl);
+	if (!e_ctrl->io_master_info_ois.cci_client) {
+		rc = -ENOMEM;
+		goto free_e_ctrl;
+	}
+#endif
 	soc_private = kzalloc(sizeof(struct cam_eeprom_soc_private),
 		GFP_KERNEL);
 	if (!soc_private) {
@@ -551,6 +566,9 @@ free_soc:
 	kfree(soc_private);
 free_cci_client:
 	kfree(e_ctrl->io_master_info.cci_client);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+        kfree(e_ctrl->io_master_info_ois.cci_client);
+#endif
 free_e_ctrl:
 	kfree(e_ctrl);
 
@@ -584,6 +602,9 @@ static void cam_eeprom_component_unbind(struct device *dev,
 	cam_unregister_subdev(&(e_ctrl->v4l2_dev_str));
 	kfree(soc_info->soc_private);
 	kfree(e_ctrl->io_master_info.cci_client);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+        kfree(e_ctrl->io_master_info_ois.cci_client);
+#endif
 	platform_set_drvdata(pdev, NULL);
 	v4l2_set_subdevdata(&e_ctrl->v4l2_dev_str.sd, NULL);
 	kfree(e_ctrl);
@@ -604,6 +625,9 @@ static int32_t cam_eeprom_platform_driver_probe(
 	if (rc)
 		CAM_ERR(CAM_EEPROM, "failed to add component rc: %d", rc);
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	gProbe_done = true;
+#endif
 	return rc;
 }
 
@@ -668,7 +692,6 @@ static struct spi_driver cam_eeprom_spi_driver = {
 int cam_eeprom_driver_init(void)
 {
 	int rc = 0;
-
 	rc = platform_driver_register(&cam_eeprom_platform_driver);
 	if (rc < 0) {
 		CAM_ERR(CAM_EEPROM, "platform_driver_register failed rc = %d",
@@ -687,7 +710,6 @@ int cam_eeprom_driver_init(void)
 		CAM_ERR(CAM_EEPROM, "i2c_add_driver failed rc = %d", rc);
 		return rc;
 	}
-
 	return rc;
 }
 

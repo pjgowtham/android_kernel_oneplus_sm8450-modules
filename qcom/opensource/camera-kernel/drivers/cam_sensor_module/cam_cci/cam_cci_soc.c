@@ -439,6 +439,9 @@ int cam_cci_soc_release(struct cci_device *cci_dev,
 				cci_dev->soc_info.index, master);
 
 		cci_dev->cci_master_info[master].is_initilized = false;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		cci_dev->cci_master_info[master].status = 0;
+#endif
 		CAM_DBG(CAM_CCI,
 			"CCI%d_I2C_M%d All submodules are released", cci_dev->soc_info.index, master);
 	}
