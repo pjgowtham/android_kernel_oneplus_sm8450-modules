@@ -15,6 +15,9 @@
 #include "sde_dbg.h"
 #include "sde_hw_util.h"
 
+#if defined(CONFIG_PXLW_IRIS) || defined(CONFIG_PXLW_SOFT_IRIS)
+#include "dsi_iris_api.h"
+#endif
 /* Reserve space of 128 words for LUT dma payload set-up */
 #define REG_DMA_HEADERS_BUFFER_SZ (sizeof(u32) * 128)
 
@@ -115,6 +118,10 @@
 
 #define LOG_FEATURE_OFF SDE_EVT32(ctx->idx, 0)
 #define LOG_FEATURE_ON SDE_EVT32(ctx->idx, 1)
+
+#if defined(CONFIG_PXLW_IRIS) || defined(CONFIG_PXLW_SOFT_IRIS)
+extern int iris_backlight_update;
+#endif
 
 enum ltm_vlut_ops_bitmask {
 	ltm_unsharp = BIT(0),
@@ -4125,6 +4132,9 @@ void reg_dmav2_setup_dspp_igcv4(struct sde_hw_dspp *ctx, void *cfg)
 		data[j++] = (u16)(lut_cfg->c0[i] << 4);
 		data[j++] = (u16)(lut_cfg->c1[i] << 4);
 	}
+#if defined(CONFIG_PXLW_IRIS) || defined(CONFIG_PXLW_SOFT_IRIS)
+	iris_backlight_update++;
+#endif
 	data[j++] = lut_cfg->c2_last ? (u16)(lut_cfg->c2_last << 4) : (u16)(4095 << 4);
 	data[j++] = lut_cfg->c0_last ? (u16)(lut_cfg->c0_last << 4) : (u16)(4095 << 4);
 	data[j++] = lut_cfg->c1_last ? (u16)(lut_cfg->c1_last << 4) : (u16)(4095 << 4);

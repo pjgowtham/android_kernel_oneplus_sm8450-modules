@@ -13,6 +13,11 @@
 #include "sde_rsc_hw.h"
 #include "sde_dbg.h"
 
+#ifdef OPLUS_FEATURE_DISPLAY
+/* Maximum number of Xlog feed back */
+#define MAX_FEED_BACK  10
+#endif
+
 static int _rsc_hw_qtimer_init(struct sde_rsc_priv *rsc)
 {
 	pr_debug("rsc hardware qtimer init\n");
@@ -329,6 +334,9 @@ static int sde_rsc_mode2_entry_v3(struct sde_rsc_priv *rsc)
 {
 	int rc = 0, i;
 	u32 reg;
+#ifdef OPLUS_FEATURE_DISPLAY
+	static int feed_back = 0;
+#endif
 
 	if (rsc->power_collapse_block)
 		return -EINVAL;
@@ -359,6 +367,12 @@ static int sde_rsc_mode2_entry_v3(struct sde_rsc_priv *rsc)
 				SDE_RSCC_SEQ_PROGRAM_COUNTER, rsc->debug_mode);
 		pr_err("mdss gdsc power down failed, instruction:0x%x, rc:%d\n",
 				reg, rc);
+#ifdef OPLUS_FEATURE_DISPLAY
+		if (feed_back <= MAX_FEED_BACK) {
+				SDE_EVT32(rc, reg, SDE_EVTLOG_ERROR);
+				feed_back++;
+		}
+#endif
 		SDE_EVT32(rc, reg, SDE_EVTLOG_ERROR);
 
 		/* avoid touching f1 qtimer for last try */
