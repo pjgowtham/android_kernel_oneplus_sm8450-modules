@@ -306,7 +306,12 @@ static ssize_t swrm_debug_peek_write(struct file *file, const char __user *ubuf,
 
 	lbuf[count] = '\0';
 	rc = get_parameters(lbuf, param, 1);
+#ifndef OPLUS_ARCH_EXTENDS
 	if ((param[0] <= SWRM_MAX_REGISTER) && (rc == 0))
+#else
+	// Add logic to handle invalid address passed to swrm_peek and swrm_poke debugfs node.
+	if ((param[0] <= SWRM_MAX_REGISTER) && (rc == 0) && (param[0] % 4 == 0))
+#endif /*OPLUS_ARCH_EXTENDS*/
 		swrm->read_data = swr_master_read(swrm, param[0]);
 	else
 		rc = -EINVAL;
@@ -343,9 +348,16 @@ static ssize_t swrm_debug_write(struct file *file,
 
 	lbuf[count] = '\0';
 	rc = get_parameters(lbuf, param, 2);
+#ifndef OPLUS_ARCH_EXTEND
 	if ((param[0] <= SWRM_MAX_REGISTER) &&
 		(param[1] <= 0xFFFFFFFF) &&
 		(rc == 0))
+#else
+	// Add logic to handle invalid address passed to swrm_peek and swrm_poke debugfs node.
+	if ((param[0] <= SWRM_MAX_REGISTER) &&
+		(param[1] <= 0xFFFFFFFF) &&
+		(rc == 0) && (param[0] % 4 == 0))
+#endif /*OPLUS_ARCH_EXTENDS*/
 		swr_master_write(swrm, param[0], param[1]);
 	else
 		rc = -EINVAL;
@@ -3947,6 +3959,10 @@ static int swrm_suspend(struct device *dev)
 		dev_dbg(swrm->dev, "%s: suspending system, state %d, wlock %d\n",
 			 __func__, swrm->pm_state,
 			swrm->wlock_holders);
+#ifndef OPLUS_ARCH_EXTENDS
+/* Apply CR#3200253 to allow runtime suspend first before system*/
+		swrm->pm_state = SWRM_PM_ASLEEP;
+#else /*OPLUS_ARCH_EXTENDS*/
 		/*
 		 * before updating the pm_state to ASLEEP, check if device is
 		 * runtime suspended or not. If it is not, then first make it
@@ -3962,6 +3978,7 @@ static int swrm_suspend(struct device *dev)
 			mutex_unlock(&swrm->pm_lock);
 			goto check_ebusy;
 		}
+#endif/*OPLUS_ARCH_EXTENDS*/
 	} else if (swrm->pm_state == SWRM_PM_AWAKE) {
 		/*
 		 * unlock to wait for pm_state == SWRM_PM_SLEEPABLE
