@@ -1042,7 +1042,7 @@ struct sde_drm_dnsc_blur_cfg {
 #define DRM_EVENT_MDNIE_ART 0X80000012
 #define DRM_EVENT_COPR 0X80000013
 #ifdef OPLUS_FEATURE_DISPLAY
-#define DRM_EVENT_TP_TOUCHDOWN 0x80000014 /* tp touch down event */
+#define DRM_EVENT_TP_TOUCHDOWN 0x80000015 /* tp touch down event */
 #endif
 
 #ifndef DRM_MODE_FLAG_VID_MODE_PANEL
