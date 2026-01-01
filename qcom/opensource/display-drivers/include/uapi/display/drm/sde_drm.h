@@ -875,4 +875,6 @@ struct drm_msm_noise_layer_cfg {
 }
 #endif
 
+#define FOD_PRESSED_LAYER_ZORDER 0x20000000u
+
 #endif /* _SDE_DRM_H_ */
