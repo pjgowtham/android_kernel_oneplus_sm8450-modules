@@ -2,7 +2,9 @@ KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
 
 M ?= $(shell pwd)
 
-KBUILD_OPTIONS+= NFC_ROOT=$(KERNEL_SRC)/$(M)
+KBUILD_OPTIONS += \
+	NFC_ROOT=$(KERNEL_SRC)/$(M) \
+	KBUILD_EXTRA_SYMBOLS+=$(M)/../../../oplus/kernel/nfc/oplus_nfc/Module.symvers
 
 all:
 	$(MAKE) -C $(KERNEL_SRC) M=$(M) modules $(KBUILD_OPTIONS)
