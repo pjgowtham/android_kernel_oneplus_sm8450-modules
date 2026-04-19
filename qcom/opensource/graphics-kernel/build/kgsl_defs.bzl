@@ -1,6 +1,6 @@
 load("//build/kernel/kleaf:kernel.bzl", "ddk_module")
 load("//build/bazel_common_rules/dist:dist.bzl", "copy_to_dist_dir")
-load("//msm-kernel:target_variants.bzl", "get_all_la_variants")
+load("//vendor/qcom/kernel:target_variants.bzl", "get_all_la_variants")
 
 msm_kgsl_includes = [
     "include/linux/msm_kgsl.h",
@@ -92,23 +92,23 @@ def external_deps(target, variant):
     # Add msm_hw_fence in the dependency and defconfig lists for targets that use it
     if target in [ "pineapple" ]:
         deplist = deplist + [
-            "//vendor/qcom/opensource/mm-drivers/hw_fence:{}_msm_hw_fence".format(tv),
-            "//vendor/qcom/opensource/mm-drivers/hw_fence:hw_fence_headers"
+            "//vendor/qcom/sm8450-modules/qcom/opensource/mm-drivers/hw_fence:{}_msm_hw_fence".format(tv),
+            "//vendor/qcom/sm8450-modules/qcom/opensource/mm-drivers/hw_fence:hw_fence_headers"
             ]
         defconfigs = defconfigs + [
-            "//vendor/qcom/opensource/mm-drivers/hw_fence:defconfig"
+            "//vendor/qcom/sm8450-modules/qcom/opensource/mm-drivers/hw_fence:defconfig"
             ]
 
     # Add synx-kernel in the dependency list for targets that use it for hardware fences
     if target in [ "sun", "niobe" ]:
         deplist = deplist + [
-            "//vendor/qcom/opensource/synx-kernel:{}_modules".format(tv),
-            "//vendor/qcom/opensource/synx-kernel:synx_headers"
+            "//vendor/qcom/sm8450-modules/qcom/opensource/synx-kernel:{}_modules".format(tv),
+            "//vendor/qcom/sm8450-modules/qcom/opensource/synx-kernel:synx_headers"
             ]
 
     if target in [ "monaco", "parrot" ]:
         deplist = deplist + [
-            "//vendor/qcom/opensource/mm-drivers/hw_fence:hw_fence_headers"
+            "//vendor/qcom/sm8450-modules/qcom/opensource/mm-drivers/hw_fence:hw_fence_headers"
             ]
 
     native.genrule(
@@ -123,7 +123,7 @@ def external_deps(target, variant):
 def define_target_variant_module(target, variant):
     tv = "{}_{}".format(target, variant)
     rule_name = "{}_msm_kgsl".format(tv)
-    kernel_build = "//msm-kernel:{}".format(tv)
+    kernel_build = "//vendor/qcom/kernel:{}".format(tv)
 
     ext_deps = external_deps(target, variant)
 
@@ -149,7 +149,7 @@ def define_target_variant_module(target, variant):
             "CONFIG_DEVFREQ_GOV_QCOM_ADRENO_TZ": { False: [ "governor_msm_adreno_tz.c" ] },
             "CONFIG_DEVFREQ_GOV_QCOM_GPUBW_MON": { False: [ "governor_gpubw_mon.c" ] }
         },
-        deps = [ "//msm-kernel:all_headers" ] + ext_deps,
+        deps = [ "//vendor/qcom/kernel:all_headers" ] + ext_deps,
         includes = ["include", "."],
         kernel_build = kernel_build,
         visibility = ["//visibility:private"]

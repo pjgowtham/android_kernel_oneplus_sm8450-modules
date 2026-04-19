@@ -44,11 +44,11 @@ def define_modules(target, variant):
                 ],
             },
         },
-        kernel_build = "//msm-kernel:{}".format(kernel_build_variant),
+        kernel_build = "//vendor/qcom/kernel:{}".format(kernel_build_variant),
         deps = [
-            "//vendor/qcom/opensource/dataipa:{}_ipam".format(kernel_build_variant),
-            "//msm-kernel:all_headers",
-            "//vendor/qcom/opensource/dataipa:include_headers",
+            "//vendor/qcom/sm8450-modules/qcom/opensource/dataipa:{}_ipam".format(kernel_build_variant),
+            "//vendor/qcom/kernel:all_headers",
+            "//vendor/qcom/sm8450-modules/qcom/opensource/dataipa:include_headers",
         ],
     )
 
@@ -76,15 +76,15 @@ def define_modules(target, variant):
         local_defines = [
             "RMNET_TRACE_INCLUDE_PATH={}/core".format(include_base),
         ],
-        kernel_build = "//msm-kernel:{}".format(kernel_build_variant),
+        kernel_build = "//vendor/qcom/kernel:{}".format(kernel_build_variant),
         deps = [
             ":rmnet_core_headers",
             ":{}_rmnet_ctl".format(kernel_build_variant),
-            "//vendor/qcom/opensource/dataipa:{}_ipam".format(kernel_build_variant),
-            "//vendor/qcom/opensource/datarmnet-ext/mem:{}_rmnet_mem".format(kernel_build_variant),
-            "//msm-kernel:all_headers",
-            "//vendor/qcom/opensource/dataipa:include_headers",
-            "//vendor/qcom/opensource/datarmnet-ext/mem:rmnet_mem_headers",
+            "//vendor/qcom/sm8450-modules/qcom/opensource/dataipa:{}_ipam".format(kernel_build_variant),
+            "//vendor/qcom/sm8450-modules/qcom/opensource/datarmnet-ext/mem:{}_rmnet_mem".format(kernel_build_variant),
+            "//vendor/qcom/kernel:all_headers",
+            "//vendor/qcom/sm8450-modules/qcom/opensource/dataipa:include_headers",
+            "//vendor/qcom/sm8450-modules/qcom/opensource/datarmnet-ext/mem:rmnet_mem_headers",
         ],
     )
 

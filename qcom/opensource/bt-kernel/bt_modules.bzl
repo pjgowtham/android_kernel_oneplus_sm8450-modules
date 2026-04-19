@@ -58,12 +58,12 @@ register_bt_modules(
     srcs = ["btpower.c"],
     config_deps = {
 		    "CONFIG_BT_HW_SECURE_DISABLE": [ ":smcinvoke_kernel_headers",
-            "//vendor/qcom/opensource/securemsm-kernel:%b_smcinvoke_dlkm",
+            "//vendor/qcom/sm8450-modules/qcom/opensource/securemsm-kernel:%b_smcinvoke_dlkm",
         ]
     },
     deps = [
-        "//vendor/qcom/opensource/wlan/platform:all-wlan-platform-headers",
-        "//vendor/qcom/opensource/wlan/platform:%b_cnss_utils",
+        "//vendor/qcom/sm8450-modules/qcom/opensource/wlan/platform:all-wlan-platform-headers",
+        "//vendor/qcom/sm8450-modules/qcom/opensource/wlan/platform:%b_cnss_utils",
     ],
 )
 
@@ -134,7 +134,7 @@ register_bt_modules(
     ],
     deps = [
         ":%b_btpower", ":%b_btfmcodec", ":btfmcodec_headers",
-        "//vendor/qcom/opensource/audio-kernel:%b_swr_dlkm",
-        "//vendor/qcom/opensource/audio-kernel:audio_headers",
+        "//vendor/qcom/sm8450-modules/qcom/opensource/audio-kernel:%b_swr_dlkm",
+        "//vendor/qcom/sm8450-modules/qcom/opensource/audio-kernel:audio_headers",
     ],
 )

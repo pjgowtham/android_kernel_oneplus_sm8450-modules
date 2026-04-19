@@ -103,10 +103,10 @@ def _define_modules_for_target_variant(target, variant):
     if target != "sa510m" and target != "sa510m.1g":
         kernel_build = select({
             "//build/qcom_build_extensions:qtisocrepo_true": "//soc-repo:{}_base_kernel".format(tv),
-            "//build/qcom_build_extensions:qtisocrepo_false": "//msm-kernel:{}".format(tv),
+            "//build/qcom_build_extensions:qtisocrepo_false": "//vendor/qcom/kernel:{}".format(tv),
         })
     else:
-        kernel_build = "//msm-kernel:{}".format(tv)
+        kernel_build = "//vendor/qcom/kernel:{}".format(tv)
 
     cnss2_enabled = 0
     plat_ipc_qmi_svc_enabled = 0
@@ -120,9 +120,9 @@ def _define_modules_for_target_variant(target, variant):
         icnss2_enabled = 1
 
     if target != "sa510m" and target != "sa510m.1g":
-        kernel_header = "//msm-kernel:all_headers"
+        kernel_header = "//vendor/qcom/kernel:all_headers"
     else:
-        kernel_header = "//msm-kernel:all_headers_arm"
+        kernel_header = "//vendor/qcom/kernel:all_headers_arm"
 
     if cnss2_enabled:
         module = "cnss2"
@@ -146,7 +146,7 @@ def _define_modules_for_target_variant(target, variant):
                       "//soc-repo:{}/drivers/soc/qcom/qmi_helpers".format(tv),
                    ],
                    "//build/qcom_build_extensions:qtisocrepo_false": [
-                      "//msm-kernel:all_headers",
+                      "//vendor/qcom/kernel:all_headers",
                    ],
             })
         else:
@@ -155,7 +155,7 @@ def _define_modules_for_target_variant(target, variant):
         if target != "autogvm" and target != "x1e80100" and target != "sdxkova" and target != "art" and target != "art16k" and target != "sa510m" and target != "sa510m.1g":
             deps += select({
                   "//build/qcom_build_extensions:qtisocrepo_true": [
-                    "//vendor/qcom/opensource/securemsm-kernel:{}_smcinvoke_dlkm".format(tv),
+                    "//vendor/qcom/sm8450-modules/qcom/opensource/securemsm-kernel:{}_smcinvoke_dlkm".format(tv),
                 ],
                     "//build/qcom_build_extensions:qtisocrepo_false": [],
             })
@@ -240,7 +240,7 @@ def _define_modules_for_target_variant(target, variant):
                 "//soc-repo:{}/drivers/soc/qcom/qcom_aoss".format(tv),
                ],
                "//build/qcom_build_extensions:qtisocrepo_false": [
-                  "//msm-kernel:all_headers",
+                  "//vendor/qcom/kernel:all_headers",
                ],
         })
         ddk_module(
@@ -279,7 +279,7 @@ def _define_modules_for_target_variant(target, variant):
     if target != "sa510m" and target != "sa510m.1g":
         deps = select({
             "//build/qcom_build_extensions:qtisocrepo_true": ["//soc-repo:all_headers"],
-            "//build/qcom_build_extensions:qtisocrepo_false": ["//msm-kernel:all_headers"],
+            "//build/qcom_build_extensions:qtisocrepo_false": ["//vendor/qcom/kernel:all_headers"],
         })
     else:
         deps = [ kernel_header ]
@@ -324,13 +324,13 @@ def _define_modules_for_target_variant(target, variant):
     if target != "sa510m" and target != "sa510m.1g":
         cnss_utils_dep_list += select({
             "//build/qcom_build_extensions:qtisocrepo_true": ["//soc-repo:all_headers"],
-            "//build/qcom_build_extensions:qtisocrepo_false": ["//msm-kernel:all_headers"],
+            "//build/qcom_build_extensions:qtisocrepo_false": ["//vendor/qcom/kernel:all_headers"],
         })
     else:
         cnss_utils_dep_list += [ kernel_header ]
 
     if target == "sun" or target == "canoe" or target == "art" or target == "chora" or target == "art16k":
-        cnss_utils_dep_list = cnss_utils_dep_list + ["//vendor/qcom/opensource/data-kernel/drivers/smem-mailbox:{}_smem_mailbox".format(tv),]
+        cnss_utils_dep_list = cnss_utils_dep_list + ["//vendor/qcom/sm8450-modules/qcom/opensource/data-kernel/drivers/smem-mailbox:{}_smem_mailbox".format(tv),]
     if target == "sdxkova":
         tgt = "target-aarch64_cortex-a53_musl"
         board = "sdx85"
@@ -359,7 +359,7 @@ def _define_modules_for_target_variant(target, variant):
                 "//soc-repo:all_headers",
                 "//soc-repo:{}/drivers/soc/qcom/qmi_helpers".format(tv),
             ],
-            "//build/qcom_build_extensions:qtisocrepo_false": ["//msm-kernel:all_headers"],
+            "//build/qcom_build_extensions:qtisocrepo_false": ["//vendor/qcom/kernel:all_headers"],
         })
     else:
         deps = [ kernel_header ]
@@ -389,7 +389,7 @@ def _define_modules_for_target_variant(target, variant):
                     "//soc-repo:{}/drivers/soc/qcom/qmi_helpers".format(tv),
                     "//soc-repo:{}/kernel/trace/qcom_ipc_logging".format(tv),
                 ],
-                "//build/qcom_build_extensions:qtisocrepo_false": ["//msm-kernel:all_headers"],
+                "//build/qcom_build_extensions:qtisocrepo_false": ["//vendor/qcom/kernel:all_headers"],
             })
         else:
             deps = [ kernel_header ]

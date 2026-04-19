@@ -1,6 +1,6 @@
 load("//build/kernel/kleaf:kernel.bzl", "ddk_module")
 load("//build/bazel_common_rules/dist:dist.bzl", "copy_to_dist_dir")
-load("//msm-kernel:target_variants.bzl", "get_all_variants")
+load("//vendor/qcom/kernel:target_variants.bzl", "get_all_variants")
 
 def _define_module(target, variant):
     tv = "{}_{}".format(target, variant)
@@ -11,10 +11,10 @@ def _define_module(target, variant):
         kconfig = "Kconfig",
         defconfig = "defconfig",
         deps = [
-            "//msm-kernel:all_headers",
-            "//vendor/qcom/opensource/mm-drivers:mm_drivers_headers",
+            "//vendor/qcom/kernel:all_headers",
+            "//vendor/qcom/sm8450-modules/qcom/opensource/mm-drivers:mm_drivers_headers",
         ],
-        kernel_build = "//msm-kernel:{}".format(tv),
+        kernel_build = "//vendor/qcom/kernel:{}".format(tv),
     )
 
     copy_to_dist_dir(

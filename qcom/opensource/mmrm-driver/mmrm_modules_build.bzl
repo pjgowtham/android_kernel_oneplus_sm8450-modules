@@ -39,7 +39,7 @@ def mmrm_driver_modules_entry(hdrs = []):
 
 def define_target_variant_modules(target, variant, registry, modules, config_options = []):
     kernel_build = "{}_{}".format(target, variant)
-    kernel_build_label = "//msm-kernel:{}".format(kernel_build)
+    kernel_build_label = "//vendor/qcom/kernel:{}".format(kernel_build)
     modules = [registry.get(module_name) for module_name in modules]
     options = _get_kernel_build_options(modules, config_options)
     build_print = lambda message : print("{}: {}".format(kernel_build, message))
@@ -57,7 +57,7 @@ def define_target_variant_modules(target, variant, registry, modules, config_opt
             name = rule_name,
             srcs = module_srcs,
             out = "{}.ko".format(module.name),
-            deps = ["//msm-kernel:all_headers"] + registry.hdrs,
+            deps = ["//vendor/qcom/kernel:all_headers"] + registry.hdrs,
             local_defines = options.keys()
         )
         all_module_rules.append(rule_name)

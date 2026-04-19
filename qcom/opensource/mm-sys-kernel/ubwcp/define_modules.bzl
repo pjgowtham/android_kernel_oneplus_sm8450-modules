@@ -15,9 +15,9 @@ def define_modules(target, variant):
             "ubwcp_trace.h",
         ],
         hdrs=["include/uapi/ubwcp_ioctl.h", "include/kernel/ubwcp.h"],
-        deps = ["//msm-kernel:all_headers"],
+        deps = ["//vendor/qcom/kernel:all_headers"],
         includes = ["include", "include/kernel"],
-        kernel_build = "//msm-kernel:{}".format(tv),
+        kernel_build = "//vendor/qcom/kernel:{}".format(tv),
         visibility = ["//visibility:public"]
     )
 
