@@ -81,10 +81,7 @@ def create_module_registry(hdrs = []):
 
 def define_target_variant_modules(target, variant, registry, modules, config_options = []):
     kernel_build = "{}_{}".format(target, variant)
-    kernel_build_label = select({
-    "//build/kernel/kleaf:microxr_kernel_build_true": "//:target_kernel_build",
-    "//build/kernel/kleaf:microxr_kernel_build_false": "//vendor/qcom/kernel:{}".format(kernel_build)
-    })
+    kernel_build_label = "//vendor/qcom/kernel:{}".format(kernel_build)
     modules = [registry.get(module_name) for module_name in modules]
     options = _get_kernel_build_options(modules, config_options)
     build_print = lambda message: print("{}: {}".format(kernel_build, message))

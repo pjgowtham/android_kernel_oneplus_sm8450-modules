@@ -43,25 +43,12 @@ def touch_module_entry(hdrs = []):
 
 def define_target_variant_modules(target, variant, registry, modules, config_options = [], vm_target = False):
     kernel_build = "{}_{}".format(target, variant)
-    kernel_build_label = select({
-        "//build/kernel/kleaf:socrepo_true": "//soc-repo:{}_base_kernel".format(kernel_build),
-        "//build/kernel/kleaf:socrepo_false": "//vendor/qcom/kernel:{}".format(kernel_build),
-    })
+    kernel_build_label = "//vendor/qcom/kernel:{}".format(kernel_build)
     modules = [registry.get(module_name) for module_name in modules]
     options = _get_kernel_build_options(modules, config_options)
     build_print = lambda message: print("{}: {}".format(kernel_build, message))
     formatter = lambda s: s.replace("%b", kernel_build).replace("%t", target)
-    deps = select({
-        "//build/kernel/kleaf:socrepo_true": [
-            "//soc-repo:all_headers",
-            "//soc-repo:{}/drivers/pinctrl/qcom/pinctrl-msm".format(kernel_build),
-            "//soc-repo:{}/drivers/virt/gunyah/gh_mem_notifier".format(kernel_build),
-            "//soc-repo:{}/drivers/virt/gunyah/gh_irq_lend".format(kernel_build),
-            "//soc-repo:{}/drivers/virt/gunyah/gh_rm_drv".format(kernel_build),
-            "//soc-repo:{}/drivers/soc/qcom/panel_event_notifier".format(kernel_build),
-        ],
-        "//build/kernel/kleaf:socrepo_false": ["//vendor/qcom/kernel:all_headers"],
-    })
+    deps = ["//vendor/qcom/kernel:all_headers"]
 
     all_module_rules = []
 

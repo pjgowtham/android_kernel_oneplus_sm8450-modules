@@ -58,23 +58,10 @@ def define_target_variant_modules(target, variant, registry, modules, config_opt
     kernel_build = "{}_{}".format(target, variant)
 
     deps = []
-    all_module_deps = select({
-        "//build/kernel/kleaf:socrepo_true": [
-            "//soc-repo:all_headers",
-            "//soc-repo:{}/drivers/firmware/qcom/qcom-scm".format(kernel_build),
-            "//soc-repo:{}/drivers/clk/qcom/clk-qcom".format(kernel_build),
-            "//soc-repo:{}/drivers/soc/qcom/mdt_loader".format(kernel_build),
-            "//soc-repo:{}/drivers/soc/qcom/llcc-qcom".format(kernel_build),
-            "//soc-repo:{}/drivers/soc/qcom/mem_buf/mem_buf_dev".format(kernel_build),
-        ],
-        "//build/kernel/kleaf:socrepo_false": [
-            "//vendor/qcom/kernel:all_headers",
-        ],
-    })
-    kernel_build_label = select({
-        "//build/kernel/kleaf:socrepo_true": "//soc-repo:{}_base_kernel".format(kernel_build),
-        "//build/kernel/kleaf:socrepo_false": "//vendor/qcom/kernel:{}".format(kernel_build),
-    })
+    all_module_deps = [
+        "//vendor/qcom/kernel:all_headers",
+    ]
+    kernel_build_label = "//vendor/qcom/kernel:{}".format(kernel_build)
 
     modules = [registry.get(module_name) for module_name in modules]
     options = _get_kernel_build_options(modules, config_options)

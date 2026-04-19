@@ -100,13 +100,7 @@ def _define_platform_config_rule(module, target, variant):
 def _define_modules_for_target_variant(target, variant):
     tv = "{}_{}".format(target, variant)
 
-    if target != "sa510m" and target != "sa510m.1g":
-        kernel_build = select({
-            "//build/qcom_build_extensions:qtisocrepo_true": "//soc-repo:{}_base_kernel".format(tv),
-            "//build/qcom_build_extensions:qtisocrepo_false": "//vendor/qcom/kernel:{}".format(tv),
-        })
-    else:
-        kernel_build = "//vendor/qcom/kernel:{}".format(tv)
+    kernel_build = "//vendor/qcom/kernel:{}".format(tv)
 
     cnss2_enabled = 0
     plat_ipc_qmi_svc_enabled = 0
@@ -140,50 +134,10 @@ def _define_modules_for_target_variant(target, variant):
                 ":{}_cnss_plat_ipc_qmi_svc".format(tv),
             ]
         if target != "sa510m" and target != "sa510m.1g":
-            deps += select({
-                   "//build/qcom_build_extensions:qtisocrepo_true": [
-                      "//soc-repo:all_headers",
-                      "//soc-repo:{}/drivers/soc/qcom/qmi_helpers".format(tv),
-                   ],
-                   "//build/qcom_build_extensions:qtisocrepo_false": [
-                      "//vendor/qcom/kernel:all_headers",
-                   ],
-            })
+            deps += ["//vendor/qcom/kernel:all_headers",]
         else:
             deps += [ kernel_header ]
 
-        if target != "autogvm" and target != "x1e80100" and target != "sdxkova" and target != "art" and target != "art16k" and target != "sa510m" and target != "sa510m.1g":
-            deps += select({
-                  "//build/qcom_build_extensions:qtisocrepo_true": [
-                    "//vendor/qcom/sm8450-modules/qcom/opensource/securemsm-kernel:{}_smcinvoke_dlkm".format(tv),
-                ],
-                    "//build/qcom_build_extensions:qtisocrepo_false": [],
-            })
-
-        if target != "x1e80100" and target != "sdxkova" and target != "sa510m" and target != "sa510m.1g":
-            deps += select({
-                  "//build/qcom_build_extensions:qtisocrepo_true": [
-                    "//soc-repo:{}/kernel/trace/qcom_ipc_logging".format(tv),
-                    "//soc-repo:{}/drivers/soc/qcom/qcom_ramdump".format(tv),
-                    "//soc-repo:{}/drivers/soc/qcom/socinfo".format(tv),
-                    "//soc-repo:{}/drivers/soc/qcom/pdr_interface".format(tv),
-                    "//soc-repo:{}/drivers/remoteproc/rproc_qcom_common".format(tv),
-                    "//soc-repo:{}/drivers/soc/qcom/memory_dump_v2".format(tv),
-                    "//soc-repo:{}/drivers/soc/qcom/smem".format(tv),
-                    "//soc-repo:{}/drivers/bus/mhi/host/mhi".format(tv),
-                    "//soc-repo:{}/drivers/pinctrl/qcom/pinctrl-msm".format(tv),
-                    "//soc-repo:{}/drivers/soc/qcom/cmd-db".format(tv),
-                    "//soc-repo:{}/drivers/soc/qcom/qcom_aoss".format(tv),
-                    "//soc-repo:{}/drivers/pci/controller/pci-msm-drv".format(tv),
-                ],
-                    "//build/qcom_build_extensions:qtisocrepo_false": [],
-            })
-            deps += select({
-                  "//build/qcom_build_extensions:qtisocrepo_true": [
-                    "//soc-repo:{}/drivers/soc/qcom/minidump".format(tv),
-                ],
-                    "//build/qcom_build_extensions:qtisocrepo_false": [],
-            })
         ddk_module(
             name = "{}_cnss2".format(tv),
             srcs = native.glob([
@@ -227,22 +181,7 @@ def _define_modules_for_target_variant(target, variant):
         module = "icnss2"
         _define_platform_config_rule(module, target, variant)
         defconfig = ":{}/{}_defconfig_generate_{}".format(module, tv, variant)
-        deps = select({
-               "//build/qcom_build_extensions:qtisocrepo_true": [
-                "//soc-repo:all_headers",
-                "//soc-repo:{}/kernel/trace/qcom_ipc_logging".format(tv),
-                "//soc-repo:{}/drivers/soc/qcom/qcom_ramdump".format(tv),
-                "//soc-repo:{}/drivers/soc/qcom/socinfo".format(tv),
-                "//soc-repo:{}/drivers/soc/qcom/pdr_interface".format(tv),
-                "//soc-repo:{}/drivers/remoteproc/rproc_qcom_common".format(tv),
-                "//soc-repo:{}/drivers/soc/qcom/qmi_helpers".format(tv),
-                "//soc-repo:{}/drivers/pinctrl/qcom/pinctrl-msm".format(tv),
-                "//soc-repo:{}/drivers/soc/qcom/qcom_aoss".format(tv),
-               ],
-               "//build/qcom_build_extensions:qtisocrepo_false": [
-                  "//vendor/qcom/kernel:all_headers",
-               ],
-        })
+        deps = ["//vendor/qcom/kernel:all_headers",]
         ddk_module(
             name = "{}_icnss2".format(tv),
             srcs = native.glob([
@@ -277,10 +216,7 @@ def _define_modules_for_target_variant(target, variant):
     _define_platform_config_rule(module, target, variant)
     defconfig = ":{}/{}_defconfig_generate_{}".format(module, tv, variant)
     if target != "sa510m" and target != "sa510m.1g":
-        deps = select({
-            "//build/qcom_build_extensions:qtisocrepo_true": ["//soc-repo:all_headers"],
-            "//build/qcom_build_extensions:qtisocrepo_false": ["//vendor/qcom/kernel:all_headers"],
-        })
+        deps = ["//vendor/qcom/kernel:all_headers"]
     else:
         deps = [ kernel_header ]
     ddk_module(
@@ -322,10 +258,7 @@ def _define_modules_for_target_variant(target, variant):
     ]
 
     if target != "sa510m" and target != "sa510m.1g":
-        cnss_utils_dep_list += select({
-            "//build/qcom_build_extensions:qtisocrepo_true": ["//soc-repo:all_headers"],
-            "//build/qcom_build_extensions:qtisocrepo_false": ["//vendor/qcom/kernel:all_headers"],
-        })
+        cnss_utils_dep_list += ["//vendor/qcom/kernel:all_headers"]
     else:
         cnss_utils_dep_list += [ kernel_header ]
 
@@ -354,13 +287,7 @@ def _define_modules_for_target_variant(target, variant):
     module = "cnss_utils"
     defconfig = ":{}/{}_defconfig_generate_{}".format(module, tv, variant)
     if target != "sa510m" and target != "sa510m.1g":
-        deps = select({
-            "//build/qcom_build_extensions:qtisocrepo_true": [
-                "//soc-repo:all_headers",
-                "//soc-repo:{}/drivers/soc/qcom/qmi_helpers".format(tv),
-            ],
-            "//build/qcom_build_extensions:qtisocrepo_false": ["//vendor/qcom/kernel:all_headers"],
-        })
+        deps = ["//vendor/qcom/kernel:all_headers"]
     else:
         deps = [ kernel_header ]
     ddk_module(
@@ -383,14 +310,7 @@ def _define_modules_for_target_variant(target, variant):
 
     if plat_ipc_qmi_svc_enabled:
         if target != "sa510m" and target != "sa510m.1g":
-            deps = select({
-                "//build/qcom_build_extensions:qtisocrepo_true": [
-                    "//soc-repo:all_headers",
-                    "//soc-repo:{}/drivers/soc/qcom/qmi_helpers".format(tv),
-                    "//soc-repo:{}/kernel/trace/qcom_ipc_logging".format(tv),
-                ],
-                "//build/qcom_build_extensions:qtisocrepo_false": ["//vendor/qcom/kernel:all_headers"],
-            })
+            deps = ["//vendor/qcom/kernel:all_headers"]
         else:
             deps = [ kernel_header ]
     ddk_module(
