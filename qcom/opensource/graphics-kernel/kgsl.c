@@ -4594,6 +4594,12 @@ kgsl_mmap_memstore(struct file *file, struct kgsl_device *device,
 	vma->vm_ops = &kgsl_memstore_vm_ops;
 	vma->vm_file = file;
 
+	/*
+	 * We use vm_pgoff to identify the memstore at mmap time. It has a different meaning to
+	 * other kernel layers so reset it to 0.
+	 */
+	vma->vm_pgoff = 0;
+
 	return 0;
 }
 

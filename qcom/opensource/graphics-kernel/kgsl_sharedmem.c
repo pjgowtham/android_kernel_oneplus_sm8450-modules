@@ -522,7 +522,7 @@ static vm_fault_t kgsl_paged_vmfault(struct kgsl_memdesc *memdesc,
 {
 	int pgoff, ret;
 	struct page *page;
-	unsigned int offset = vmf->address - vma->vm_start;
+	u64 offset = ((u64)vma->vm_pgoff << PAGE_SHIFT) + (vmf->address - vma->vm_start);
 
 	if (offset >= memdesc->size)
 		return VM_FAULT_SIGBUS;
