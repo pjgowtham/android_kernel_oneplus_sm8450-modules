@@ -6,6 +6,11 @@ package(
 
 load("//build/kernel/kleaf:kernel.bzl", "ddk_headers")
 
+filegroup(
+    name = "synx_dt_bindings",
+    srcs = glob(["dt-bindings/**"]),
+)
+
 driver_header_globs = [
     "include/uapi/synx/**/*.h",
     "include/uapi/synx/media/**/*.h",

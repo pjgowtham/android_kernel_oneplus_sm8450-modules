@@ -6,6 +6,11 @@ package(
 
 load("//build/kernel/kleaf:kernel.bzl", "ddk_headers")
 
+filegroup(
+    name = "audio_dt_bindings",
+    srcs = glob(["include/bindings/**"]),
+)
+
 ddk_headers(
     name = "audio_common_headers",
     hdrs = glob([

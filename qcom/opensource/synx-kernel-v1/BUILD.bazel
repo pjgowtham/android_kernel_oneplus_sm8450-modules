@@ -5,7 +5,10 @@ package(
       "//visibility:public"],
 )
 
-
+filegroup(
+    name = "synx_dt_bindings",
+    srcs = glob(["dt-bindings/**"]),
+)
 
 filegroup(
     name = "_synx_uapi_headers",
