@@ -80,6 +80,15 @@ ddk_headers(
     includes = [".", "smmu-proxy"],
 )
 
+ddk_headers(
+    name = "securemsm_uapi_headers",
+    hdrs = glob([
+        "include/uapi/**/*.h",
+        "smmu-proxy/include/uapi/**/*.h",
+    ]),
+    includes = ["include/uapi", "smmu-proxy/include/uapi"],
+)
+
 load(":build/pineapple.bzl", "define_pineapple")
 load(":build/blair.bzl", "define_blair")
 load(":build/sun.bzl", "define_sun")
