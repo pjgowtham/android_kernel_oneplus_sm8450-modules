@@ -1,6 +1,8 @@
 load(":define_perf.bzl", "define_perf")
 load("//build/kernel/kleaf:kernel.bzl", "ddk_module")
 
+package(default_visibility = ["//visibility:public"])
+
 define_perf("pineapple", "consolidate")
 define_perf("pineapple", "perf")
 

@@ -1,6 +1,8 @@
 load(":define_wlan.bzl", "define_wlan")
 load("//build/kernel/kleaf:kernel.bzl", "ddk_module")
 
+package(default_visibility = ["//visibility:public"])
+
 define_wlan("pineapple", "consolidate")
 define_wlan("pineapple", "perf")
 

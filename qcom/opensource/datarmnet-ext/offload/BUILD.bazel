@@ -1,6 +1,8 @@
 load(":define_offload.bzl", "define_offload")
 load("//build/kernel/kleaf:kernel.bzl", "ddk_module")
 
+package(default_visibility = ["//visibility:public"])
+
 define_offload("pineapple", "consolidate")
 define_offload("pineapple", "perf")
 

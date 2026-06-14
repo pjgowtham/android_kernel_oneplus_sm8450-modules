@@ -1,6 +1,8 @@
 load(":define_perf_tether.bzl", "define_perf_tether")
 load("//build/kernel/kleaf:kernel.bzl", "ddk_module")
 
+package(default_visibility = ["//visibility:public"])
+
 define_perf_tether("pineapple", "consolidate")
 define_perf_tether("pineapple", "perf")
 
