@@ -28,6 +28,12 @@ package(
 )
 
 ddk_headers(
+    name = "dataipa_uapi_headers",
+    hdrs = glob(["drivers/platform/msm/include/uapi/linux/*.h"]),
+    includes = ["drivers/platform/msm/include/uapi"],
+)
+
+ddk_headers(
     name = "include_headers",
     hdrs = glob([
         "drivers/platform/msm/include/linux/*.h",
