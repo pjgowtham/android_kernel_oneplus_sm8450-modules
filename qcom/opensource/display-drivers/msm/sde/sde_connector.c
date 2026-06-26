@@ -526,7 +526,7 @@ static int sde_backlight_setup(struct sde_connector *c_conn,
 	props.power = FB_BLANK_UNBLANK;
 	props.max_brightness = bl_config->brightness_max_level;
 #ifndef OPLUS_FEATURE_DISPLAY
-	props.brightness = bl_config->brightness_max_level;
+	props.brightness = bl_config->brightness_default_level;
 #else /* OPLUS_FEATURE_DISPLAY */
 	if (oplus_display_ops.backlight_setup_pre) {
 		oplus_display_ops.backlight_setup_pre(&props, display);
