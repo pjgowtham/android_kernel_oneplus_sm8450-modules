@@ -70,3 +70,6 @@ ddk_headers(
 
 load(":targets/parrot.bzl", "define_parrot")
 define_parrot()
+
+load(":targets/waipio.bzl", "define_waipio")
+define_waipio()
