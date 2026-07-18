@@ -53,3 +53,7 @@ ddk_headers(
 load(":build/parrot.bzl", "define_parrot")
 
 define_parrot()
+
+load(":build/waipio.bzl", "define_waipio")
+
+define_waipio()
