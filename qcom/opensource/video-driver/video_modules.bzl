@@ -35,6 +35,14 @@ module_entry(
         "CONFIG_MSM_VIDC_VIENNA"  : [
             "driver/platform/vienna/src/msm_vidc_vienna.c",
         ],
+        "CONFIG_MSM_VIDC_WAIPIO"  : [
+            "driver/platform/waipio/src/msm_vidc_waipio.c",
+        ],
+        "CONFIG_MSM_VIDC_IRIS2" : [
+            "driver/variant/iris2/src/msm_vidc_power_iris2.c",
+            "driver/variant/iris2/src/msm_vidc_buffer_iris2.c",
+            "driver/variant/iris2/src/msm_vidc_iris2.c",
+        ],
         "CONFIG_MSM_VIDC_AR50LT" : [
             "driver/variant/ar50lt/src/msm_vidc_power_ar50lt.c",
             "driver/variant/ar50lt/src/msm_vidc_buffer_ar50lt.c",

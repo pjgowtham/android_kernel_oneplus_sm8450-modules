@@ -58,6 +58,20 @@ def define_vienna(t,v):
         ],
     )
 
+def define_waipio(t,v):
+    define_target_variant_modules(
+        target = t,
+        variant = v,
+        registry = video_driver_modules,
+        modules = [
+            "msm_video",
+        ],
+        config_options = [
+            "CONFIG_MSM_VIDC_WAIPIO",
+            "CONFIG_MSM_VIDC_IRIS2",
+        ],
+    )
+
 def define_target_modules():
     for (t, v) in get_all_la_variants() + get_all_le_variants():
         if t == "blair":
@@ -68,3 +82,5 @@ def define_target_modules():
             define_pitti(t, v)
         elif t == "vienna":
             define_vienna(t, v)
+        elif t == "waipio":
+            define_waipio(t, v)

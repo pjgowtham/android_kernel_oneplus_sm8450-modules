@@ -46,11 +46,27 @@ ddk_headers(
 )
 
 ddk_headers(
+    name = "waipio_headers",
+    hdrs = glob([
+      "driver/platform/waipio/inc/*.h",
+    ]),
+    includes = ["driver/platform/waipio/inc"]
+)
+
+ddk_headers(
     name = "ar50lt_headers",
     hdrs = glob([
       "driver/variant/ar50lt/inc/*.h",
     ]),
     includes = ["driver/variant/ar50lt/inc"]
+)
+
+ddk_headers(
+    name = "iris2_headers",
+    hdrs = glob([
+      "driver/variant/iris2/inc/*.h",
+    ]),
+    includes = ["driver/variant/iris2/inc"]
 )
 
 ddk_headers(
@@ -65,7 +81,7 @@ ddk_headers(
 
 ddk_headers(
     name = "video_driver_headers",
-    hdrs = [":uapi_headers", "blair_headers", "monaco_headers", "vienna_headers", "ar50lt_headers", "vidc_headers"]
+    hdrs = [":uapi_headers", "blair_headers", "monaco_headers", "vienna_headers", "waipio_headers", "ar50lt_headers", "iris2_headers", "vidc_headers"]
 )
 
 load(":target.bzl", "define_target_modules")
