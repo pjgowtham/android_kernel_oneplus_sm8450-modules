@@ -593,6 +593,8 @@ ssize_t oplus_chg_wls_upgrade_fw_store(struct oplus_mms *mms, const char *buf, s
 int oplus_chg_wls_set_status_keep(struct oplus_mms *mms, enum wls_status_keep_type status_keep);
 int oplus_chg_wls_get_break_sub_crux_info(struct oplus_mms *mms, char *crux_info);
 
+void oplus_chg_wls_set_mmi_charging_enable(struct oplus_mms *mms, bool enable);
+
 ssize_t oplus_chg_wls_rx_disable_show(struct oplus_mms *mms, char *buf);
 ssize_t oplus_chg_wls_rx_disable_store(struct oplus_mms *mms, const char *buf, size_t count);
 

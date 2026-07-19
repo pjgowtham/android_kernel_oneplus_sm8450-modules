@@ -2847,7 +2847,7 @@ static int oplus_comm_get_mmi_state(struct oplus_chg_comm *chip)
 		chip->chg_suspend_votable = find_votable("CHG_SUSPEND");
 
 	if (chip->chg_disable_votable)
-		mmi_chg = ((!(get_client_vote(chip->chg_disable_votable, MMI_CHG_VOTER) && !chip->wls_online)) &&
+		mmi_chg = ((!get_client_vote(chip->chg_disable_votable, MMI_CHG_VOTER)) &&
 		    (!get_client_vote(chip->chg_disable_votable, CHG_LIMIT_CHG_VOTER)));
 	if (chip->chg_suspend_votable)
 		mmi_chg = mmi_chg && (!get_client_vote(chip->chg_suspend_votable, CHG_LIMIT_CHG_VOTER));

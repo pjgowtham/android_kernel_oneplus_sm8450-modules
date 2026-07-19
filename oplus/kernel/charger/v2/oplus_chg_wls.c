@@ -811,6 +811,7 @@ struct oplus_chg_wls {
 	bool charge_enable;
 	bool charging_disable;
 	bool batt_charge_enable;
+	bool mmi_chg_disable;
 	bool ftm_mode;
 	bool debug_mode;
 	bool factory_mode;
@@ -4343,7 +4344,7 @@ static void oplus_chg_wls_reset_variables(struct oplus_chg_wls *wls_dev) {
 	wls_status->fastchg_retry_timer = jiffies;
 	wls_status->fastchg_err_timer = jiffies;
 	wls_status->fastchg_enter_timer = jiffies;
-	wls_dev->batt_charge_enable = true;
+	wls_dev->batt_charge_enable = !wls_dev->mmi_chg_disable;
 	wls_dev->tx_vbridge = 0;
 	wls_dev->tx_ibridge = 0;
 	wls_dev->tx_ibridge_freq = 0;
@@ -5542,6 +5543,36 @@ static int oplus_chg_wls_get_max_wireless_power(struct oplus_chg_wls *wls_dev)
 	return max_wls_power;
 }
 #endif /* OPLUS_CHG_DEBUG */
+
+void oplus_chg_wls_set_mmi_charging_enable(struct oplus_mms *mms, bool enable)
+{
+	struct oplus_chg_wls *wls_dev = NULL;
+
+	if (!mms) {
+		chg_err("mms is NULL\n");
+		return;
+	}
+	wls_dev = oplus_mms_get_drvdata(mms);
+	if (!wls_dev) {
+		chg_err("wls_dev is NULL\n");
+		return;
+	}
+
+	if (wls_dev->mmi_chg_disable == !enable)
+		return;
+	wls_dev->mmi_chg_disable = !enable;
+	wls_dev->batt_charge_enable = enable;
+	chg_info("mmi set wls charging %s\n", enable ? "enable" : "disable");
+
+	/*
+	 * The rx state machine polls batt_charge_enable every few seconds,
+	 * kick it so that the new setting takes effect immediately.
+	 */
+	if (wls_dev->wls_status.rx_online) {
+		cancel_delayed_work(&wls_dev->wls_rx_sm_work);
+		queue_delayed_work(wls_dev->wls_wq, &wls_dev->wls_rx_sm_work, 0);
+	}
+}
 
 #define CLIENT_STR_LEN		32
 #define RX_DISABLE_PARAM_NUM	2
