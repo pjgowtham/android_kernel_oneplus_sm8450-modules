@@ -69,7 +69,7 @@ def define_target_variant_modules(target, variant, modules, extra_options = [], 
     modules = [securemsm_modules[module_name] for module_name in modules]
     tv = "{}_{}".format(target, variant)
 
-    target_local_defines = ["SMCINVOKE_TRACE_INCLUDE_PATH=../../../{}/smcinvoke/compat".format(native.package_name())]
+    target_local_defines = ["SMCINVOKE_TRACE_INCLUDE_PATH=../../../../../{}/smcinvoke/compat".format(native.package_name())]
 
     if arch == "arm":
         headers = ["//vendor/qcom/kernel:all_headers_arm"]

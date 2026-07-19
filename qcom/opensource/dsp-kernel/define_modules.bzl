@@ -14,7 +14,7 @@ def define_modules(target, variant):
     kernel_build_variant = "{}_{}".format(target, variant)
 
     # Path to dsp folder from msm-kernel/include/trace directory
-    trace_include_path = "../../../{}/dsp".format(native.package_name())
+    trace_include_path = "../../../../../{}/dsp".format(native.package_name())
 
     ddk_module(
         name = "{}_frpc-adsprpc".format(kernel_build_variant),

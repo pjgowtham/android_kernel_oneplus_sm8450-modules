@@ -4,7 +4,7 @@ load("//build/kernel/kleaf:kernel.bzl", "ddk_module")
 
 def define_modules(target, variant):
     kernel_build_variant = "{}_{}".format(target, variant)
-    include_base = "../../../{}".format(native.package_name())
+    include_base = "../../../../../{}".format(native.package_name())
 
     #The below will take care of the defconfig
     include_defconfig = ":{}_defconfig".format(variant)
