@@ -30,6 +30,9 @@ _target_chipset_map = {
 	],
 	"malabar":[
 		"adrastea",
+	],
+	"waipio":[
+		"qca6490",
 	]
 }
 

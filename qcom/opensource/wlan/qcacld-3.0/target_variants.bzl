@@ -8,6 +8,7 @@ targets = [
     "parrot",
     "bengal",
     "malabar",
+    "waipio",
 ]
 
 la_variants = [
