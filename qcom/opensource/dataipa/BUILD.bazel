@@ -21,6 +21,8 @@ define_modules("monaco", "consolidate")
 
 define_modules("monaco", "perf")
 
+define_modules("waipio", "perf")
+
 package(
     default_visibility = [
         "//visibility:public",

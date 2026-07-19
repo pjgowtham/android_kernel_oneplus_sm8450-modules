@@ -17,3 +17,5 @@ define_wlan("monaco", "perf")
 
 define_wlan("tuna", "consolidate")
 define_wlan("tuna", "perf")
+
+define_wlan("waipio", "perf")

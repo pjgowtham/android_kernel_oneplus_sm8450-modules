@@ -43,6 +43,11 @@ def define_modules(target, variant):
                     "core/rmnet_ctl_client.c",
                 ],
             },
+            "CONFIG_ARCH_WAIPIO": {
+                True: [
+                    "core/rmnet_ctl_client.c",
+                ],
+            },
         },
         kernel_build = "//vendor/qcom/kernel:{}".format(kernel_build_variant),
         deps = [

@@ -14,3 +14,5 @@ define_sch("parrot", "perf")
 
 define_sch("tuna", "consolidate")
 define_sch("tuna", "perf")
+
+define_sch("waipio", "perf")

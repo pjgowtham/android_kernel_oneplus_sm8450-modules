@@ -14,3 +14,5 @@ define_perf("parrot", "perf")
 
 define_perf("tuna", "consolidate")
 define_perf("tuna", "perf")
+
+define_perf("waipio", "perf")

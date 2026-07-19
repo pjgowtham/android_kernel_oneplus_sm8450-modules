@@ -21,7 +21,7 @@ config RMNET_CTL
 config RMNET_LA_PLATFORM
 	default y
 	bool "RMNET platform support"
-	depends on ARCH_PINEAPPLE || ARCH_SUN || ARCH_PARROT || ARCH_MONACO
+	depends on ARCH_PINEAPPLE || ARCH_SUN || ARCH_PARROT || ARCH_MONACO || ARCH_WAIPIO
 	help
 	  Enable the functionality gated by the RMNET_LA_PLATFORM configuration
 	  in rmnet driver.

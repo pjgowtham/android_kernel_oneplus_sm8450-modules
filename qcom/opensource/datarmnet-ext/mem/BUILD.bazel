@@ -16,6 +16,8 @@ define_mem("monaco", "perf")
 define_mem("tuna", "consolidate")
 define_mem("tuna", "perf")
 
+define_mem("waipio", "perf")
+
 package(
 	default_visibility = [
 	"//visibility:public", ],
