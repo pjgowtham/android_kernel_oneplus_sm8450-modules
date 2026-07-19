@@ -52,5 +52,5 @@ ddk_headers(
 
 load(":target.bzl", "define_modules")
 
-targets = ["pineapple", "sun"]
+targets = ["pineapple", "sun", "waipio"]
 define_modules(targets)
