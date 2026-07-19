@@ -17,6 +17,7 @@ targets = [
     "shikra",
     "sun",
     "vienna",
+    "waipio",
 ]
 
 target_16k = [
