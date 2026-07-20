@@ -3592,7 +3592,7 @@ static int cam_icp_mgr_abort_handle_wq(
 		abort_data.abort.num_req_ids = 1;
 		abort_data.abort.num_req_id[0] = task_data->request_id;
 	}
-	memcpy(abort_cmd->payload.direct, &abort_data,
+	memcpy(abort_cmd->payload.direct_flex, &abort_data,
 		sizeof(abort_data));
 
 	rc = hfi_write_cmd(abort_cmd);
@@ -3697,7 +3697,7 @@ static int cam_icp_mgr_destroy_handle(
 	destroy_cmd->fw_handles_flex[0] = ctx_data->fw_handle;
 	destroy_cmd->user_data1 = PTR_TO_U64(ctx_data);
 	destroy_cmd->user_data2 = (uint64_t)0x0;
-	memcpy(destroy_cmd->payload.direct, &ctx_data->temp_payload,
+	memcpy(destroy_cmd->payload.direct_flex, &ctx_data->temp_payload,
 		sizeof(uint64_t));
 
 	rc = hfi_write_cmd(destroy_cmd);
