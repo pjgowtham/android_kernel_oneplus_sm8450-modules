@@ -676,7 +676,7 @@ static void synx_util_destroy_handle(struct synx_handle_coredata *synx_data)
 	memset(synx_data, 0, sizeof(*synx_data));
 	clear_bit(idx, client->bitmap);
 	synx_util_put_object(synx_obj);
-	pr_debug("[sess: %u] handle %d destroyed %pK\n",
+	pr_debug("[sess: %u] handle %ld destroyed %pK\n",
 		client->id, idx, synx_obj);
 }
 
@@ -852,7 +852,7 @@ void synx_util_cb_dispatch(struct work_struct *cb_dispatch)
 	client = synx_get_client(synx_cb->session_id);
 	if (!client) {
 		pr_err("invalid session data %u in cb payload\n",
-			synx_cb->session_id);
+			synx_cb->session_id.client_id);
 		goto free;
 	}
 
