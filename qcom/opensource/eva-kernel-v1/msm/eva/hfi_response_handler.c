@@ -543,15 +543,17 @@ static void hfi_process_sys_get_prop_image_version(
 	const u32 version_string_size = 128;
 	u8 *str_image_version;
 	int req_bytes;
+	u32 *prop;
 
 	req_bytes = pkt->size - sizeof(*pkt);
+	prop = pkt->rg_property_data;
 	if (req_bytes < version_string_size ||
-			!pkt->rg_property_data[1] ||
+			!prop[1] ||
 			pkt->num_properties > 1) {
 		dprintk(CVP_ERR, "%s: bad_pkt: %d\n", __func__, req_bytes);
 		return;
 	}
-	str_image_version = (u8 *)&pkt->rg_property_data[1];
+	str_image_version = (u8 *)&prop[1];
 	/*
 	 * The version string returned by firmware includes null
 	 * characters at the start and in between. Replace the null

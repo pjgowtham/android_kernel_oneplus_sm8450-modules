@@ -2658,21 +2658,24 @@ static void __process_sys_error(struct iris_hfi_device *device)
 {
 	struct cvp_hfi_sfr_struct *vsfr = NULL;
 	u32 sfr_buf_size = 0;
+	u8 *sfr;
 
 	vsfr = (struct cvp_hfi_sfr_struct *)device->sfr.align_virtual_addr;
 	sfr_buf_size = vsfr->bufSize;
 	if (vsfr && sfr_buf_size < ALIGNED_SFR_SIZE) {
-		void *p = memchr(vsfr->rg_data, '\0', sfr_buf_size);
+		void *p;
+
+		sfr = vsfr->rg_data;
+		p = memchr(sfr, '\0', sfr_buf_size);
 		/*
 		 * SFR isn't guaranteed to be NULL terminated
 		 * since SYS_ERROR indicates that Iris is in the
 		 * process of crashing.
 		 */
 		if (p == NULL)
-			vsfr->rg_data[sfr_buf_size - 1] = '\0';
+			sfr[sfr_buf_size - 1] = '\0';
 
-		dprintk(CVP_ERR, "SFR Message from FW: %s\n",
-				vsfr->rg_data);
+		dprintk(CVP_ERR, "SFR Message from FW: %s\n", sfr);
 	}
 }
 
@@ -2729,6 +2732,7 @@ static void __flush_debug_queue(struct iris_hfi_device *device, u8 *packet)
 		if (pkt->packet_type == HFI_MSG_SYS_DEBUG) {
 			struct cvp_hfi_msg_sys_debug_packet *pkt =
 				(struct cvp_hfi_msg_sys_debug_packet *) packet;
+			u8 *msg;
 
 			SKIP_INVALID_PKT(pkt->size,
 				pkt->msg_size, sizeof(*pkt));
@@ -2740,8 +2744,9 @@ static void __flush_debug_queue(struct iris_hfi_device *device, u8 *packet)
 			 * from the message fixes this to print it in a single
 			 * line.
 			 */
-			pkt->rg_msg_data[pkt->msg_size-1] = '\0';
-			dprintk(log_level, "%s", &pkt->rg_msg_data[1]);
+			msg = pkt->rg_msg_data;
+			msg[pkt->msg_size-1] = '\0';
+			dprintk(log_level, "%s", &msg[1]);
 		}
 	}
 #undef SKIP_INVALID_PKT

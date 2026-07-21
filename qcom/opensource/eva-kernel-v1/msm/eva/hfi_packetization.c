@@ -68,6 +68,8 @@ int cvp_create_pkt_cmd_sys_coverage_config(
 	struct cvp_hfi_cmd_sys_set_property_packet *pkt,
 	u32 mode)
 {
+	u32 *prop;
+
 	if (!pkt) {
 		dprintk(CVP_ERR, "In %s(), No input packet\n", __func__);
 		return -EINVAL;
@@ -77,10 +79,10 @@ int cvp_create_pkt_cmd_sys_coverage_config(
 		sizeof(u32);
 	pkt->packet_type = HFI_CMD_SYS_SET_PROPERTY;
 	pkt->num_properties = 1;
-	pkt->rg_property_data[0] = HFI_PROPERTY_SYS_CONFIG_COVERAGE;
-	pkt->rg_property_data[1] = mode;
-	dprintk(CVP_PKT, "Firmware coverage mode %d\n",
-			pkt->rg_property_data[1]);
+	prop = pkt->rg_property_data;
+	prop[0] = HFI_PROPERTY_SYS_CONFIG_COVERAGE;
+	prop[1] = mode;
+	dprintk(CVP_PKT, "Firmware coverage mode %d\n", prop[1]);
 	return 0;
 }
 
@@ -88,6 +90,8 @@ int cvp_create_pkt_cmd_sys_set_idle_indicator(
 	struct cvp_hfi_cmd_sys_set_property_packet *pkt,
 	u32 mode)
 {
+	u32 *prop;
+
 	if (!pkt) {
 		dprintk(CVP_ERR, "In %s(), No input packet\n", __func__);
 		return -EINVAL;
@@ -97,10 +101,10 @@ int cvp_create_pkt_cmd_sys_set_idle_indicator(
 		sizeof(u32);
 	pkt->packet_type = HFI_CMD_SYS_SET_PROPERTY;
 	pkt->num_properties = 1;
-	pkt->rg_property_data[0] = HFI_PROPERTY_SYS_IDLE_INDICATOR;
-	pkt->rg_property_data[1] = mode;
-	dprintk(CVP_PKT, "Firmware idle indicator mode %d\n",
-			pkt->rg_property_data[1]);
+	prop = pkt->rg_property_data;
+	prop[0] = HFI_PROPERTY_SYS_IDLE_INDICATOR;
+	prop[1] = mode;
+	dprintk(CVP_PKT, "Firmware idle indicator mode %d\n", prop[1]);
 	return 0;
 }
 
