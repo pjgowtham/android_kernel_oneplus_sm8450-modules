@@ -25,7 +25,7 @@ static void * __cvp_dma_buf_vmap(struct dma_buf *dbuf)
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 13, 0))
 	return dma_buf_vmap(dbuf);
 #else
-	struct dma_buf_map map;
+	struct iosys_map map;
 	void *dma_map;
 	int err;
 
@@ -43,7 +43,7 @@ static void __cvp_dma_buf_vunmap(struct dma_buf *dbuf, void *vaddr)
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 13, 0))
 	dma_buf_vunmap(dbuf, vaddr);
 #else
-	struct dma_buf_map map = { \
+	struct iosys_map map = { \
 			.vaddr = vaddr, \
 			.is_iomem = false, \
 	};
@@ -100,7 +100,7 @@ static int msm_dma_get_device_address(struct dma_buf *dbuf, u32 align,
 		attach->dma_map_attrs |= DMA_ATTR_SKIP_CPU_SYNC;
 		if (res->sys_cache_present)
 			attach->dma_map_attrs |=
-				DMA_ATTR_IOMMU_USE_UPSTREAM_HINT;
+				DMA_ATTR_SYS_CACHE;
 
 		table = dma_buf_map_attachment(attach, DMA_BIDIRECTIONAL);
 		if (IS_ERR_OR_NULL(table)) {

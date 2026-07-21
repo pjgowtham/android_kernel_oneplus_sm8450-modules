@@ -7,18 +7,27 @@
 #include <linux/rpmsg.h>
 #include <linux/of_platform.h>
 #include <linux/of_fdt.h>
+#include <linux/version.h>
 #include <soc/qcom/secure_buffer.h>
+#if (KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE)
+#include <linux/firmware/qcom/qcom_scm.h>
+#else
+#include <linux/qcom_scm.h>
+#endif
 #include "msm_cvp_core.h"
 #include "msm_cvp.h"
 #include "cvp_hfi.h"
 #include "cvp_dump.h"
 
 struct cvp_dsp_apps gfa_cv;
-static int hlosVM[HLOS_VM_NUM] = {VMID_HLOS};
-static int dspVM[DSP_VM_NUM] = {VMID_HLOS, VMID_CDSP_Q6};
-static int dspVMperm[DSP_VM_NUM] = { PERM_READ | PERM_WRITE | PERM_EXEC,
-				PERM_READ | PERM_WRITE | PERM_EXEC };
-static int hlosVMperm[HLOS_VM_NUM] = { PERM_READ | PERM_WRITE | PERM_EXEC };
+static u64 cvp_hyp_srcvm = BIT(VMID_HLOS);
+static const struct qcom_scm_vmperm dspVM[DSP_VM_NUM] = {
+	{VMID_HLOS, PERM_READ | PERM_WRITE | PERM_EXEC},
+	{VMID_CDSP_Q6, PERM_READ | PERM_WRITE | PERM_EXEC},
+};
+static const struct qcom_scm_vmperm hlosVM[HLOS_VM_NUM] = {
+	{VMID_HLOS, PERM_READ | PERM_WRITE | PERM_EXEC},
+};
 
 static int cvp_reinit_dsp(void);
 
@@ -142,8 +151,8 @@ static int cvp_hyp_assign_to_dsp(uint64_t addr, uint32_t size)
 	struct cvp_dsp_apps *me = &gfa_cv;
 
 	if (!me->hyp_assigned) {
-		rc = hyp_assign_phys(addr, size, hlosVM, HLOS_VM_NUM, dspVM,
-			dspVMperm, DSP_VM_NUM);
+		rc = qcom_scm_assign_mem(addr, size, &cvp_hyp_srcvm,
+			dspVM, DSP_VM_NUM);
 		if (rc) {
 			dprintk(CVP_ERR, "%s failed. rc=%d\n", __func__, rc);
 			return rc;
@@ -162,8 +171,8 @@ static int cvp_hyp_assign_from_dsp(void)
 	struct cvp_dsp_apps *me = &gfa_cv;
 
 	if (me->hyp_assigned) {
-		rc = hyp_assign_phys(me->addr, me->size, dspVM, DSP_VM_NUM,
-				hlosVM, hlosVMperm, HLOS_VM_NUM);
+		rc = qcom_scm_assign_mem(me->addr, me->size, &cvp_hyp_srcvm,
+				hlosVM, HLOS_VM_NUM);
 		if (rc) {
 			dprintk(CVP_ERR, "%s failed. rc=%d\n", __func__, rc);
 			return rc;
@@ -1944,7 +1953,6 @@ wait_dsp:
 	goto wait_dsp;
 exit:
 	dprintk(CVP_DBG, "dsp thread exit\n");
-	do_exit(rc);
 	return rc;
 }
 

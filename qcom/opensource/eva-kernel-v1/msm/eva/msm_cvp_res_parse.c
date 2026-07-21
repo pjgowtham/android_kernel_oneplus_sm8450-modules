@@ -846,8 +846,7 @@ int cvp_read_platform_resources_from_dt(
 	res->register_base = kres ? kres->start : -1;
 	res->register_size = kres ? (kres->end + 1 - kres->start) : -1;
 
-	kres = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
-	res->irq = kres ? kres->start : -1;
+	res->irq = platform_get_irq(pdev, 0);
 
 	rc = msm_cvp_load_subcache_info(res);
 	if (rc)
@@ -925,7 +924,7 @@ static int msm_cvp_setup_context_bank(struct msm_cvp_platform_resources *res,
 		struct context_bank_info *cb, struct device *dev)
 {
 	int rc = 0;
-	struct bus_type *bus;
+	const struct bus_type *bus;
 
 	if (!dev || !cb || !res) {
 		dprintk(CVP_ERR,

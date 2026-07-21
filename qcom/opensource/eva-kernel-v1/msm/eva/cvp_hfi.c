@@ -20,7 +20,12 @@
 #include <linux/workqueue.h>
 #include <linux/platform_device.h>
 #include <linux/soc/qcom/llcc-qcom.h>
+#include <linux/version.h>
+#if (KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE)
+#include <linux/firmware/qcom/qcom_scm.h>
+#else
 #include <linux/qcom_scm.h>
+#endif
 #include <linux/soc/qcom/smem.h>
 #include <linux/dma-mapping.h>
 #include <linux/reset.h>
@@ -1483,7 +1488,7 @@ static int __get_qdss_iommu_virtual_addr(struct iris_hfi_device *dev,
 			rc = iommu_map(domain, iova,
 					qdss_addr_tbl[i].start,
 					qdss_addr_tbl[i].size,
-					IOMMU_READ | IOMMU_WRITE);
+					IOMMU_READ | IOMMU_WRITE, GFP_KERNEL);
 
 			if (rc) {
 				dprintk(CVP_ERR,
@@ -3292,8 +3297,7 @@ static int __init_bus(struct iris_hfi_device *device)
 		WARN(dev_get_drvdata(bus->dev), "%s's drvdata already set\n",
 				dev_name(bus->dev));
 		dev_set_drvdata(bus->dev, device);
-		bus->client = icc_get(&device->res->pdev->dev,
-				bus->master, bus->slave);
+		bus->client = of_icc_get(bus->dev, bus->name);
 		if (IS_ERR_OR_NULL(bus->client)) {
 			rc = PTR_ERR(bus->client) ?: -EBADHANDLE;
 			dprintk(CVP_ERR, "Failed to register bus %s: %d\n",

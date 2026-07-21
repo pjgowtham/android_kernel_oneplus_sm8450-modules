@@ -19,7 +19,12 @@
 #include <linux/workqueue.h>
 #include <linux/platform_device.h>
 #include <linux/soc/qcom/llcc-qcom.h>
+#include <linux/version.h>
+#if (KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE)
+#include <linux/firmware/qcom/qcom_scm.h>
+#else
 #include <linux/qcom_scm.h>
+#endif
 #include <linux/soc/qcom/smem.h>
 #include <linux/dma-mapping.h>
 #include <linux/reset.h>
@@ -150,7 +155,7 @@ void cvp_va_md_register(char* name, void* notf_blk_ptr)
 	}
 }
 
-void cvp_register_va_md_region()
+void cvp_register_va_md_region(void)
 {
 	if (qcom_va_md_enabled()) {
 		cvp_va_md_register("eva_queues", &eva_hfiq_list_notif_blk);

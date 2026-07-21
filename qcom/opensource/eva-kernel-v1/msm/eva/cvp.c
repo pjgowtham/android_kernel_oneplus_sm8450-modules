@@ -357,7 +357,11 @@ static int msm_probe_cvp_device(struct platform_device *pdev)
 		goto err_alloc_chrdev;
 	}
 
+#if (KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE)
+	core->class = class_create(CLASS_NAME);
+#else
 	core->class = class_create(THIS_MODULE, CLASS_NAME);
+#endif
 	if (IS_ERR(core->class)) {
 		rc = PTR_ERR(core->class);
 		dprintk(CVP_ERR, "class_create failed: %d\n",
@@ -648,4 +652,5 @@ module_init(msm_cvp_init);
 module_exit(msm_cvp_exit);
 
 MODULE_SOFTDEP("pre: msm-mmrm");
+MODULE_IMPORT_NS(DMA_BUF);
 MODULE_LICENSE("GPL v2");

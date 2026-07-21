@@ -6,7 +6,12 @@
 #include <linux/of.h>
 #include <linux/pm_qos.h>
 #include <linux/platform_device.h>
+#include <linux/version.h>
+#if (KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE)
+#include <linux/firmware/qcom/qcom_scm.h>
+#else
 #include <linux/qcom_scm.h>
+#endif
 #include "msm_cvp_debug.h"
 #include "cvp_comm_def.h"
 #include "cvp_core_hfi.h"
