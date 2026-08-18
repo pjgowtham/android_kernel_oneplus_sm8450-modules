@@ -1715,6 +1715,54 @@ config FEATURE_PKTLOG_EN_NON_LEGACY
 	bool "Enable FEATURE_PKTLOG_EN_NON_LEGACY"
 	default n
 
+config DBR_HOLD_LARGE_MEM
+	bool "Enable DBR_HOLD_LARGE_MEM"
+	default n
+
+config DEVICE_FORCE_WAKE_ENABLE
+	bool "Enable DEVICE_FORCE_WAKE_ENABLE"
+	default n
+
+config HIF_REG_WINDOW_SUPPORT
+	bool "Enable HIF_REG_WINDOW_SUPPORT"
+	default n
+
+config WINDOW_REG_PLD_LOCK_ENABLE
+	bool "Enable WINDOW_REG_PLD_LOCK_ENABLE"
+	default n
+
+config DUMP_REO_QUEUE_INFO_IN_DDR
+	bool "Enable DUMP_REO_QUEUE_INFO_IN_DDR"
+	default n
+
+config DCS
+	bool "Enable DCS"
+	default n
+
+config WLAN_SYNC_TSF_PLUS
+	bool "Enable WLAN_SYNC_TSF_PLUS"
+	default n
+
+config WLAN_SYNC_TSF_TIMER
+	bool "Enable WLAN_SYNC_TSF_TIMER"
+	default n
+
+config OFDM_SCRAMBLER_SEED
+	bool "Enable OFDM_SCRAMBLER_SEED"
+	default n
+
+config FEATURE_WLAN_CH_AVOID_EXT
+	bool "Enable FEATURE_WLAN_CH_AVOID_EXT"
+	default n
+
+config WLAN_TWT_SAP_PDEV_COUNT
+	bool "Enable WLAN_TWT_SAP_PDEV_COUNT"
+	default n
+
+config WLAN_TWT_SAP_STA_COUNT
+	bool "Enable WLAN_TWT_SAP_STA_COUNT"
+	default n
+
 if CNSS_ADRASTEA
 config MULTI_IF_NAME
 	string "Enable CONFIG_MULTI_IF_NAME"
