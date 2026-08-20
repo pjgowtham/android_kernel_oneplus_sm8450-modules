@@ -40,3 +40,5 @@ define_modules("monaco", "perf")
 define_modules("parrot", "consolidate")
 
 define_modules("parrot", "gki")
+
+define_modules("waipio", "perf")
