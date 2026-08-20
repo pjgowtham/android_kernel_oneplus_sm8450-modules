@@ -153,6 +153,8 @@ struct tfa98xx {
 	bool set_mtp_cal;
 	uint16_t cal_data;
 	#ifdef OPLUS_ARCH_EXTENDS
+	/*Add for fpga i2c aging test node*/
+	struct proc_dir_entry *pa_proc_entry;
 	/*Add for resource*/
 	struct regulator *tfa98xx_vdd;
 	int min_uV;

@@ -5933,20 +5933,51 @@ static struct proc_dir_entry *fpga_audio_pa_proc_dir = NULL;
 static int tfa98xx_proc_init(struct tfa98xx *tfa98xx)
 {
 	const char *proc_path = "audio_pa_i2c_aging";
-	char pa_name[10] = {0};
+	char pa_name[24] = {0};
 
 	pr_info("%s: enter\n", __func__);
 
+	mutex_lock(&tfa98xx_mutex);
 	if (fpga_audio_pa_proc_dir == NULL) {
 		fpga_audio_pa_proc_dir = proc_mkdir(proc_path, NULL);
+		if (fpga_audio_pa_proc_dir == NULL) {
+			mutex_unlock(&tfa98xx_mutex);
+			pr_err("%s: create %s failed\n", __func__, proc_path);
+			return -ENOMEM;
+		}
+	}
+	mutex_unlock(&tfa98xx_mutex);
+
+	/* the same pa address can be used on several i2c buses,
+	 * so the bus number has to be part of the node name
+	 */
+	snprintf(pa_name, sizeof(pa_name), "pa_%d-0x%02x",
+			tfa98xx->i2c->adapter->nr, tfa98xx->i2c->addr);
+	pr_info("%s: pa_name=%s\n", __func__, pa_name);
+	tfa98xx->pa_proc_entry = proc_create_data((const char *)pa_name, S_IRUGO,
+				fpga_audio_pa_proc_dir,
+				&tfa98xx_i2c_test_fops, tfa98xx->i2c);
+	if (tfa98xx->pa_proc_entry == NULL) {
+		pr_err("%s: create %s failed\n", __func__, pa_name);
+		return -ENOMEM;
 	}
 
-	snprintf(pa_name, 10, "pa_0x%x", tfa98xx->i2c->addr);
-	pr_info("%s: pa_name=%s\n", __func__, pa_name);
-	proc_create_data((const char*)pa_name, S_IRUGO, fpga_audio_pa_proc_dir,
-				&tfa98xx_i2c_test_fops, tfa98xx->i2c);
-
 	return 0;
+}
+
+static void tfa98xx_proc_deinit(struct tfa98xx *tfa98xx)
+{
+	if (tfa98xx->pa_proc_entry) {
+		proc_remove(tfa98xx->pa_proc_entry);
+		tfa98xx->pa_proc_entry = NULL;
+	}
+
+	mutex_lock(&tfa98xx_mutex);
+	if (fpga_audio_pa_proc_dir && tfa98xx_device_count == 0) {
+		proc_remove(fpga_audio_pa_proc_dir);
+		fpga_audio_pa_proc_dir = NULL;
+	}
+	mutex_unlock(&tfa98xx_mutex);
 }
 #endif /* OPLUS_ARCH_EXTENDS */
 
@@ -6613,6 +6644,10 @@ static int tfa98xx_i2c_remove(struct i2c_client *i2c)
 		tfa98xx_container = NULL;
 	}
 	mutex_unlock(&tfa98xx_mutex);
+
+#ifdef OPLUS_ARCH_EXTENDS
+	tfa98xx_proc_deinit(tfa98xx);
+#endif /* OPLUS_ARCH_EXTENDS */
 
 #if IS_ENABLED(CONFIG_OPLUS_FPGA_NOTIFY)
 	if (tfa98xx->fpga_check_enable && tfa98xx->fpga_notify_reg_success == 0) {
