@@ -1,10 +1,18 @@
 # Bazel file for fastrpc
 # Two modules to be exported - fastrpc, cdsp-loader
 
+load("//build/kernel/kleaf:kernel.bzl", "ddk_headers")
+
 package(
     default_visibility = [
         "//visibility:public",
     ],
+)
+
+ddk_headers(
+    name = "fastrpc_headers",
+    hdrs = glob(["include/linux/*.h"]),
+    includes = ["include"],
 )
 
 load(":define_modules.bzl", "define_modules")
