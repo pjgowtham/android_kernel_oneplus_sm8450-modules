@@ -1,5 +1,18 @@
 load(":bt_kernel.bzl", "define_bt_modules")
 
+def define_waipio():
+    define_bt_modules(
+        target = "waipio",
+        modules = [
+            "btpower",
+            "bt_fm_slim",
+        ],
+        config_options = [
+            "CONFIG_MSM_BT_POWER",
+            "CONFIG_BTFM_SLIM",
+        ]
+    )
+
 def define_pineapple():
     define_bt_modules(
         target = "pineapple",
