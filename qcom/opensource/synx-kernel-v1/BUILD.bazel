@@ -52,3 +52,6 @@ define_neo61()
 
 load(":anorak61.bzl", "define_anorak61")
 define_anorak61()
+
+load(":waipio.bzl", "define_waipio")
+define_waipio()
