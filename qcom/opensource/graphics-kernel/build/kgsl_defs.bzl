@@ -106,7 +106,7 @@ def external_deps(target, variant):
             "//vendor/qcom/sm8450-modules/qcom/opensource/synx-kernel:synx_headers"
             ]
 
-    if target in [ "monaco", "parrot" ]:
+    if target in [ "monaco", "parrot", "waipio" ]:
         deplist = deplist + [
             "//vendor/qcom/sm8450-modules/qcom/opensource/mm-drivers/hw_fence:hw_fence_headers"
             ]
