@@ -49,6 +49,9 @@
 /*fpGripStatus*/
 #define HBP_IOCTRL_FP_GRIP_STATUS          _IO(HBP_IOCTRL_GROUP, 0x22)
 
+/* Gesture scan-code base used by the LineageOS touch HAL. */
+#define KEY_GESTURE_START                 246
+
 #define HBP_IOCTRL_IRQ_FREE                _IO(HBP_IOCTRL_GROUP, 0x23)
 
 extern void hbp_state_notify(struct hbp_core *hbp, int id, hbp_panel_event event);
@@ -77,6 +80,7 @@ static void hbp_start_flow(struct hbp_core *hbp)
 static int init_input_device(struct hbp_device *hbp_dev, int id)
 {
 	int ret = 0;
+	unsigned int gesture;
 
 	hbp_dev->i_dev = input_allocate_device();
 	if (!hbp_dev->i_dev) {
@@ -109,7 +113,10 @@ static int init_input_device(struct hbp_device *hbp_dev, int id)
 	set_bit(INPUT_PROP_DIRECT, hbp_dev->i_dev->propbit);
 	set_bit(BTN_TOUCH, hbp_dev->i_dev->keybit);
 	set_bit(BTN_TOOL_FINGER, hbp_dev->i_dev->keybit);
-	set_bit(KEY_F4, hbp_dev->i_dev->keybit);		/*for black gesture*/
+	input_set_capability(hbp_dev->i_dev, EV_KEY, KEY_WAKEUP);
+	for (gesture = UpVee; gesture <= FP_GESTURE_RELEASE; gesture++)
+		input_set_capability(hbp_dev->i_dev, EV_KEY,
+				     KEY_GESTURE_START + gesture);
 	set_bit(KEY_POWER, hbp_dev->i_dev->keybit);		/*for apk test*/
 	set_bit(KEY_SLEEP, hbp_dev->i_dev->keybit);
 
@@ -600,6 +607,7 @@ void touch_call_fp_grip(struct hbp_device *hbp_dev, int state)
 
 static void hbp_gesture_report(struct hbp_device *hbp_dev, struct gesture_info *gesture)
 {
+	unsigned int keycode;
 
 	if (gesture->type == FingerprintDown ||
 		gesture->type == FingerprintEarlyDown ||
@@ -631,14 +639,16 @@ static void hbp_gesture_report(struct hbp_device *hbp_dev, struct gesture_info *
 			gesture->type == FP_GESTURE_RELEASE ? "fp_gesture_release" :
 			gesture->type == SGesture? "(S)" : "unknown");
 
-		if (gesture->type != UnknownGesture) {
+		if (gesture->type > UnknownGesture &&
+		    gesture->type <= FP_GESTURE_RELEASE) {
 			gesture->id = hbp_dev->id;
 			hbp_core_set_gesture_coord(gesture);
 
-			//back up gesture info
-			input_report_key(hbp_dev->i_dev, KEY_F4, 1);
+			keycode = gesture->type == DoubleTap ? KEY_WAKEUP :
+				  KEY_GESTURE_START + gesture->type;
+			input_report_key(hbp_dev->i_dev, keycode, 1);
 			input_sync(hbp_dev->i_dev);
-			input_report_key(hbp_dev->i_dev, KEY_F4, 0);
+			input_report_key(hbp_dev->i_dev, keycode, 0);
 			input_sync(hbp_dev->i_dev);
 		} else {
 			hbp_err("detect unkown gesture\n");
