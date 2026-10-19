@@ -1082,9 +1082,9 @@ static int syna_dev_create_input_device(struct syna_tcm *tcm)
 	set_bit(ABS_MT_POSITION_Y, input_dev->absbit);
 	set_bit(ABS_MT_PRESSURE, input_dev->absbit);
 	set_bit(ABS_MT_TOOL_TYPE, input_dev->absbit);
-	set_bit(ABS_TOUCH_COST_TIME_KERNEL, input_dev->absbit);
-	set_bit(ABS_TOUCH_COST_TIME_ALGO, input_dev->absbit);
-	set_bit(ABS_TOUCH_COST_TIME_DAEMON, input_dev->absbit);
+	// set_bit(ABS_TOUCH_COST_TIME_KERNEL, input_dev->absbit);
+	// set_bit(ABS_TOUCH_COST_TIME_ALGO, input_dev->absbit);
+	// set_bit(ABS_TOUCH_COST_TIME_DAEMON, input_dev->absbit);
 
 	set_bit(BTN_TOUCH, input_dev->keybit);
 	set_bit(BTN_TOOL_FINGER, input_dev->keybit);
