@@ -136,6 +136,8 @@ camera-$(CONFIG_QCOM_CX_IPEAK) += drivers/cam_utils/cam_cx_ipeak.o
 camera-$(CONFIG_QCOM_BUS_SCALING) += drivers/cam_utils/cam_soc_bus.o
 camera-$(CONFIG_INTERCONNECT_QCOM) += drivers/cam_utils/cam_soc_icc.o
 
+ccflags-y += -DCAMERA_COMPILE_BY=\"\" -DCAMERA_COMPILE_HOST=\"\" -DCAMERA_COMPILE_TIME=\"\"
+
 camera-$(CONFIG_SPECTRA_ISP) += \
 	drivers/cam_isp/isp_hw_mgr/hw_utils/cam_tasklet_util.o \
 	drivers/cam_isp/isp_hw_mgr/hw_utils/cam_isp_packet_parser.o \
