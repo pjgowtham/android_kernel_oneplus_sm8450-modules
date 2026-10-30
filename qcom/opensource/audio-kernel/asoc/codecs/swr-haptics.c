@@ -923,7 +923,8 @@ static int swr_haptics_probe(struct swr_device *sdev)
 	}
 
 	swr_hap->hboost_nb.notifier_call = hboost_notifier;
-	register_hboost_event_notifier(&swr_hap->hboost_nb);
+	if (IS_ENABLED(CONFIG_OPLUS_ADSP_CHARGER))
+		register_hboost_event_notifier(&swr_hap->hboost_nb);
 	if (swr_hap->flags & HAP_ENUM_AFTER_SSR) {
 		swr_hap->ssr_nb.notifier_call = lpass_ssr_notifier;
 		swr_hap->ssr_handle =
@@ -961,7 +962,8 @@ static int swr_haptics_remove(struct swr_device *sdev)
 	if (swr_hap->flags & HAP_ENUM_AFTER_SSR)
 		qcom_unregister_ssr_notifier(swr_hap->ssr_handle, &swr_hap->ssr_nb);
 
-	unregister_hboost_event_notifier(&swr_hap->hboost_nb);
+	if (IS_ENABLED(CONFIG_OPLUS_ADSP_CHARGER))
+		unregister_hboost_event_notifier(&swr_hap->hboost_nb);
 	rc = swr_haptics_slave_disable(swr_hap);
 	if (rc < 0) {
 		dev_err(swr_hap->dev, "%s: disable swr-slave failed, rc=%d\n",
