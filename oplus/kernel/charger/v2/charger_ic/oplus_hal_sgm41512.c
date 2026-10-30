@@ -5,6 +5,7 @@
 
 #define pr_fmt(fmt) "[SGM41512]([%s][%d]): " fmt, __func__, __LINE__
 
+#include <linux/pinctrl/consumer.h>
 #include <linux/i2c.h>
 #include <linux/version.h>
 #include <linux/interrupt.h>
@@ -1027,8 +1028,7 @@ static int sgm41512_hw_init(struct sgm41512_chip *chip)
 	return 0;
 }
 
-static int sgm41512_driver_probe(struct i2c_client *client,
-				 const struct i2c_device_id *id)
+static int sgm41512_driver_probe(struct i2c_client *client)
 {
 	int rc = 0;
 	struct sgm41512_chip *chip;
@@ -1121,7 +1121,7 @@ regmap_init_err:
 
 static struct i2c_driver sgm41512_i2c_driver;
 
-static int sgm41512_driver_remove(struct i2c_client *client)
+static void sgm41512_driver_remove(struct i2c_client *client)
 {
 	struct sgm41512_chip *chip = i2c_get_clientdata(client);
 
@@ -1130,7 +1130,7 @@ static int sgm41512_driver_remove(struct i2c_client *client)
 		gpio_free(chip->event_gpio);
 	i2c_set_clientdata(client, NULL);
 	devm_kfree(&client->dev, chip);
-	return 0;
+	return;
 }
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))

@@ -5,6 +5,7 @@
 
 #define pr_fmt(fmt) "[DA9313]([%s][%d]): " fmt, __func__, __LINE__
 
+#include <linux/pinctrl/consumer.h>
 #include <linux/interrupt.h>
 #include <linux/i2c.h>
 #include <linux/version.h>
@@ -785,8 +786,7 @@ static int init_da9313_proc(struct chip_da9313 *da)
 	return 0;
 }
 
-static int da9313_driver_probe(struct i2c_client *client,
-			       const struct i2c_device_id *id)
+static int da9313_driver_probe(struct i2c_client *client)
 {
 	struct chip_da9313 *divider_ic;
 	int ret = 0;
@@ -861,12 +861,12 @@ static int da9313_suspend(struct i2c_client *client, pm_message_t mesg)
 
 static struct i2c_driver da9313_i2c_driver;
 
-static int da9313_driver_remove(struct i2c_client *client)
+static void da9313_driver_remove(struct i2c_client *client)
 {
 	int ret = 0;
 
 	chg_debug("  ret = %d\n", ret);
-	return 0;
+	return;
 }
 
 static void da9313_shutdown(struct i2c_client *client)
