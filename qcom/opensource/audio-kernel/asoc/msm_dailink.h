@@ -33,6 +33,12 @@ SND_SOC_DAILINK_DEFS(slimbus_7_tx,
 			"btfm_bt_sco_slim_tx")),
 	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
 
+SND_SOC_DAILINK_DEFS(slimbus_8_tx,
+	DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+	DAILINK_COMP_ARRAY(COMP_CODEC("btfmslim_slave",
+			"btfm_fm_slim_tx")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
 SND_SOC_DAILINK_DEFS(btfm_0_rx,
 	DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
 	DAILINK_COMP_ARRAY(COMP_CODEC("btfmcodec_dev",
@@ -608,5 +614,23 @@ SND_SOC_DAILINK_DEFS(hs_if4_tdm_rx_0_dummy,
 SND_SOC_DAILINK_DEFS(hs_if4_tdm_tx_0_dummy,
 	DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
 	DAILINK_COMP_ARRAY(COMP_CODEC("msm-stub-codec.1", "msm-stub-tx")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+SND_SOC_DAILINK_DEFS(four_wsa_dma_rx0,
+	DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+	DAILINK_COMP_ARRAY(COMP_CODEC("lpass-cdc", "wsa_macro_rx1"),
+			   COMP_CODEC("wsa-codec1", "wsa_rx1"),
+			   COMP_CODEC("wsa-codec2", "wsa_rx2"),
+			   COMP_CODEC("wsa-codec3", "wsa_rx3"),
+			   COMP_CODEC("wsa-codec4", "wsa_rx4")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+SND_SOC_DAILINK_DEFS(four_wsa_dma_rx1,
+	DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+	DAILINK_COMP_ARRAY(COMP_CODEC("lpass-cdc", "wsa_macro_rx_mix"),
+			   COMP_CODEC("wsa-codec1", "wsa_rx1"),
+			   COMP_CODEC("wsa-codec2", "wsa_rx2"),
+			   COMP_CODEC("wsa-codec3", "wsa_rx3"),
+			   COMP_CODEC("wsa-codec4", "wsa_rx4")),
 	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
 

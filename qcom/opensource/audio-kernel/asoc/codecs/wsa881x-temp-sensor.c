@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2015, 2017-2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/bitops.h>
@@ -17,6 +18,8 @@
 #define HIGH_TEMP_THRESHOLD 45
 #define TEMP_INVALID	0xFFFF
 #define WSA881X_TEMP_RETRY 3
+
+static struct thermal_trip trip = { .type = THERMAL_TRIP_CRITICAL } ;
 /*
  * wsa881x_get_temp - get wsa temperature
  * @thermal: thermal zone device
@@ -156,11 +159,11 @@ int wsa881x_init_thermal(struct wsa881x_tz_priv *tz_pdata)
 		return -EINVAL;
 	}
 	/* Register with the thermal zone */
-	tz_dev = thermal_zone_device_register(tz_pdata->name,
-				0, 0, tz_pdata,
+	tz_dev = thermal_zone_device_register_with_trips(tz_pdata->name,
+				&trip, 0, 0, tz_pdata,
 				&wsa881x_thermal_ops, NULL, 0, 0);
 	if (IS_ERR(tz_dev)) {
-		pr_err("%s: thermal device register failed.\n", __func__);
+		pr_err("%s: thermal device register with trip failed.\n", __func__);
 		return -EINVAL;
 	}
 	tz_pdata->tz_dev = tz_dev;

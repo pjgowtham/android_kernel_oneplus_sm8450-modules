@@ -12,6 +12,7 @@
  * changes need to be made in the HA/AGM to ensure they still match.
  */
 
+#define LPASS_BE_DISPLAY_PORT_RX "DISPLAY_PORT-RX"
 #define LPASS_BE_DISPLAY_PORT_RX_0 "DISPLAY_PORT-RX-0"
 #define LPASS_BE_DISPLAY_PORT_RX_1 "DISPLAY_PORT-RX-1"
 
