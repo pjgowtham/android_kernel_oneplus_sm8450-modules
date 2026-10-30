@@ -36,7 +36,7 @@ TRACE_EVENT(key_process_frozen,
 #endif /* _TRACE_KP_FREEZE_PROTECT_H */
 
 #undef TRACE_INCLUDE_PATH
-#define TRACE_INCLUDE_PATH ../../../vendor/oplus/kernel/dfr/common/kp_freeze_detect
+#define TRACE_INCLUDE_PATH ../../../sm8450-modules/oplus/kernel/dfr/common/kp_freeze_detect
 
 #undef TRACE_INCLUDE_FILE
 #define TRACE_INCLUDE_FILE kp_freeze_trace

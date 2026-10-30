@@ -63,7 +63,7 @@ TRACE_EVENT(hungtask_monitor,
 #endif /* _HUNGTASK_TRACE_H */
 
 #undef TRACE_INCLUDE_PATH
-#define TRACE_INCLUDE_PATH ../../../vendor/oplus/kernel/dfr/common/hung_task_enhance
+#define TRACE_INCLUDE_PATH ../../../sm8450-modules/oplus/kernel/dfr/common/hung_task_enhance
 #undef TRACE_INCLUDE_FILE
 #define TRACE_INCLUDE_FILE hungtask_trace
 
