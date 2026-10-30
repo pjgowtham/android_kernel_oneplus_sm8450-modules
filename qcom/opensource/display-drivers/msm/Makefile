@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0
 
 KBUILD_OPTIONS+= DISPLAY_ROOT=$(KERNEL_SRC)/$(M)/../
+KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(M)/../../mm-drivers/sync_fence/Module.symvers
+KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(M)/../../mm-drivers/msm_ext_display/Module.symvers
+KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(M)/../../mmrm-driver/Module.symvers
+KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(M)/../../securemsm-kernel/Module.symvers
+KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(M)/../../synx-kernel-v1/Module.symvers
+KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS+=$(M)/../../../../oplus/kernel/device_info/oplus_fpga/fpga_monitor/Module.symvers
 
 all: modules
 
