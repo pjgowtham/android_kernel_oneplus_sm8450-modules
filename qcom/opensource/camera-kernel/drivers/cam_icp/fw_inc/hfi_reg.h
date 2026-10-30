@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_HFI_REG_H_
@@ -10,25 +11,27 @@
 #include "hfi_intf.h"
 
 /* general purpose registers */
-#define GEN_PURPOSE_REG(n)              (n * 4)
+#define GEN_PURPOSE_REG(n)              (n << 2)
 
-#define HFI_REG_FW_VERSION              GEN_PURPOSE_REG(1)
-#define HFI_REG_HOST_ICP_INIT_REQUEST   GEN_PURPOSE_REG(2)
-#define HFI_REG_ICP_HOST_INIT_RESPONSE  GEN_PURPOSE_REG(3)
-#define HFI_REG_SHARED_MEM_PTR          GEN_PURPOSE_REG(4)
-#define HFI_REG_SHARED_MEM_SIZE         GEN_PURPOSE_REG(5)
-#define HFI_REG_QTBL_PTR                GEN_PURPOSE_REG(6)
-#define HFI_REG_SECONDARY_HEAP_PTR      GEN_PURPOSE_REG(7)
-#define HFI_REG_SECONDARY_HEAP_SIZE     GEN_PURPOSE_REG(8)
-#define HFI_REG_SFR_PTR                 GEN_PURPOSE_REG(10)
-#define HFI_REG_QDSS_IOVA               GEN_PURPOSE_REG(11)
-#define HFI_REG_QDSS_IOVA_SIZE          GEN_PURPOSE_REG(12)
-#define HFI_REG_IO_REGION_IOVA          GEN_PURPOSE_REG(13)
-#define HFI_REG_IO_REGION_SIZE          GEN_PURPOSE_REG(14)
-#define HFI_REG_IO2_REGION_IOVA         GEN_PURPOSE_REG(15)
-#define HFI_REG_IO2_REGION_SIZE         GEN_PURPOSE_REG(16)
-#define HFI_REG_FWUNCACHED_REGION_IOVA  GEN_PURPOSE_REG(17)
-#define HFI_REG_FWUNCACHED_REGION_SIZE  GEN_PURPOSE_REG(18)
+#define HFI_REG_FW_VERSION                   GEN_PURPOSE_REG(1)
+#define HFI_REG_HOST_ICP_INIT_REQUEST        GEN_PURPOSE_REG(2)
+#define HFI_REG_ICP_HOST_INIT_RESPONSE       GEN_PURPOSE_REG(3)
+#define HFI_REG_SHARED_MEM_PTR               GEN_PURPOSE_REG(4)
+#define HFI_REG_SHARED_MEM_SIZE              GEN_PURPOSE_REG(5)
+#define HFI_REG_QTBL_PTR                     GEN_PURPOSE_REG(6)
+#define HFI_REG_SECONDARY_HEAP_PTR           GEN_PURPOSE_REG(7)
+#define HFI_REG_SECONDARY_HEAP_SIZE          GEN_PURPOSE_REG(8)
+#define HFI_REG_SFR_PTR                      GEN_PURPOSE_REG(10)
+#define HFI_REG_QDSS_IOVA                    GEN_PURPOSE_REG(11)
+#define HFI_REG_QDSS_IOVA_SIZE               GEN_PURPOSE_REG(12)
+#define HFI_REG_IO_REGION_IOVA               GEN_PURPOSE_REG(13)
+#define HFI_REG_IO_REGION_SIZE               GEN_PURPOSE_REG(14)
+#define HFI_REG_IO2_REGION_IOVA              GEN_PURPOSE_REG(15)
+#define HFI_REG_IO2_REGION_SIZE              GEN_PURPOSE_REG(16)
+#define HFI_REG_FWUNCACHED_REGION_IOVA       GEN_PURPOSE_REG(17)
+#define HFI_REG_FWUNCACHED_REGION_SIZE       GEN_PURPOSE_REG(18)
+#define HFI_REG_DEVICE_REGION_IOVA           GEN_PURPOSE_REG(19)
+#define HFI_REG_DEVICE_REGION_IOVA_SIZE      GEN_PURPOSE_REG(20)
 
 /* start of Queue table and queues */
 #define MAX_ICP_HFI_QUEUES                      4
@@ -36,16 +39,13 @@
 #define ICP_QHDR_RX_TYPE_MASK                   0x00FF0000
 #define ICP_QHDR_PRI_TYPE_MASK                  0x0000FF00
 #define ICP_QHDR_Q_ID_MASK                      0x000000FF
+#define ICP_QTBL_SIZE_IN_BYTES                  sizeof(struct hfi_qtbl)
 
-#define ICP_CMD_Q_SIZE_IN_BYTES                 4096
-#define ICP_MSG_Q_SIZE_IN_BYTES                 4096
+#define ICP_CMD_Q_SIZE_IN_BYTES                 8192
+#define ICP_MSG_Q_SIZE_IN_BYTES                 8192
 #define ICP_DBG_Q_SIZE_IN_BYTES                 102400
 #define ICP_MSG_SFR_SIZE_IN_BYTES               4096
-
-#define ICP_SHARED_MEM_IN_BYTES                 (1024 * 1024)
-#define ICP_UNCACHED_HEAP_SIZE_IN_BYTES         (2 * 1024 * 1024)
-#define ICP_HFI_MAX_PKT_SIZE_IN_WORDS           25600
-#define ICP_HFI_MAX_PKT_SIZE_MSGQ_IN_WORDS      1024
+#define ICP_SEC_HEAP_SIZE_IN_BYTES              1048576
 
 #define ICP_HFI_QTBL_HOSTID1                    0x01000000
 #define ICP_HFI_QTBL_STATUS_ENABLED             0x00000001
@@ -71,6 +71,10 @@
 #define RX_EVENT_POLL_MODE_2                    0x00020000
 #define U32_OFFSET                              0x1
 #define BYTE_WORD_SHIFT                         2
+
+#define HFI_GET_CLIENT_HANDLE(idx) (idx)
+#define HFI_GET_INDEX(client_handle) (client_handle)
+#define IS_VALID_HFI_INDEX(idx) ((idx) < HFI_NUM_MAX)
 
 /**
  * @INVALID: Invalid state
@@ -272,13 +276,17 @@ struct hfi_qtbl {
  * @smem_size: Shared memory size
  * @uncachedheap_size: uncached heap size
  * @msgpacket_buf: message buffer
- * @hfi_state: State machine for hfi
  * @cmd_q_lock: Lock for command queue
- * @cmd_q_state: State of command queue
- * @mutex msg_q_lock: Lock for message queue
- * @msg_q_state: State of message queue
+ * @msg_q_lock: Lock for message queue
+ * @dbg_q_lock: Lock for debug queue
+ * @hfi_state: State machine for hfi
  * @priv: device private data
  * @dbg_lvl: debug level set to FW
+ * @fw_version: firmware version
+ * @client_name: hfi client's name
+ * @cmd_q_state: State of command queue
+ * @msg_q_state: State of message queue
+ * @dbg_q_state: State of debug queue
  */
 struct hfi_info {
 	struct hfi_mem_info map;
@@ -286,13 +294,17 @@ struct hfi_info {
 	uint32_t smem_size;
 	uint32_t uncachedheap_size;
 	uint32_t msgpacket_buf[ICP_HFI_MAX_MSG_SIZE_IN_WORDS];
-	uint8_t hfi_state;
 	struct mutex cmd_q_lock;
-	bool cmd_q_state;
 	struct mutex msg_q_lock;
-	bool msg_q_state;
+	struct mutex dbg_q_lock;
+	uint8_t hfi_state;
 	void *priv;
 	u64 dbg_lvl;
+	uint32_t fw_version;
+	char client_name[HFI_CLIENT_NAME_LEN];
+	bool cmd_q_state;
+	bool msg_q_state;
+	bool dbg_q_state;
 };
 
 #endif /* _CAM_HFI_REG_H_ */

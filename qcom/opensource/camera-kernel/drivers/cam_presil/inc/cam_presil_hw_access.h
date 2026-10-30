@@ -1,12 +1,35 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_PRESIL_HW_ACCESS_H_
 #define _CAM_PRESIL_HW_ACCESS_H_
 
 #include <linux/interrupt.h>
+
+#define CAM_PRESIL_CLIENT_ID_CAMERA 0x1
+#define CAM_PRESIL_CLIENT_ID_EVA    0x2
+
+#define CAM_SS_START_PRESIL    0x08000000
+#define CAM_SS_END_PRESIL      0x09000000
+#define CVP_SS_START_PRESIL    0x06c00000
+#define CAM_EVENT_START_PRESIL 0x20000000
+
+/* presil events to carry shared values from HW-KMD to PC-HOST CSim Wrapper */
+#define CAM_PRESIL_EVENT_HFI_REG_BASE                                0x600
+#define CAM_PRESIL_EVENT_HFI_REG(n) (CAM_PRESIL_EVENT_HFI_REG_BASE + (n * 4))
+#define CAM_PRESIL_EVENT_HFI_REG_CMD_Q_IOVA                          CAM_PRESIL_EVENT_HFI_REG(1)
+#define CAM_PRESIL_EVENT_HFI_REG_MSG_Q_IOVA                          CAM_PRESIL_EVENT_HFI_REG(2)
+#define CAM_PRESIL_EVENT_HFI_REG_DBG_Q_IOVA                          CAM_PRESIL_EVENT_HFI_REG(3)
+#define CAM_PRESIL_EVENT_HFI_REG_SFR_LEN                             CAM_PRESIL_EVENT_HFI_REG(4)
+#define CAM_PRESIL_EVENT_HFI_REG_ICP_V1_HW_VERSION_TO_START_HFI_INIT CAM_PRESIL_EVENT_HFI_REG(13)
+#define CAM_PRESIL_EVENT_HFI_REG_ON_FIRST_REG_START_FW_DOWNLOAD      0x638   /* write FF to start */
+#define CAM_PRESIL_EVENT_IFE_FRAME_RUN                               0x123   /* write FF to start */
+
+typedef int (*CAM_PRESIL_IRQ_HANDLER_BOTTOM_HALF)(void *handler_priv,
+	void *evt_payload_priv);
 
 /*
  * enum cam_presil_err - return code from presil apis
@@ -123,11 +146,12 @@ int cam_presil_register_write(void *addr, uint32_t value, uint32_t flags);
  * @offset       :  Offset to start copy
  * @size         :  Size of copy
  * @addr32       :  Iova to start copy at
+ * @hfi_skip     :  Skip logs for HFI actions
  *
  * @return:  Success or Failure
  */
 int cam_presil_send_buffer(uint64_t dma_buf_uint, int mmu_hdl, uint32_t offset,
-	uint32_t size, uint32_t addr32);
+	uint32_t size, uint32_t addr32, uintptr_t cpu_vaddr, bool hfi_skip);
 
 /*
  *  cam_presil_retrieve_buffer()
@@ -140,11 +164,13 @@ int cam_presil_send_buffer(uint64_t dma_buf_uint, int mmu_hdl, uint32_t offset,
  * @offset       :  Offset to start copy
  * @size         :  Size of copy
  * @addr32       :  Iova to start copy at
+ * @hfi_skip	 :  Skip logs for HFI actions
  *
  * @return:  Success or Failure
  */
 int cam_presil_retrieve_buffer(uint64_t dma_buf_uint,
-	int mmu_hdl, uint32_t offset, uint32_t size, uint32_t addr32);
+	int mmu_hdl, uint32_t offset, uint32_t size, uint32_t addr32,
+	uintptr_t cpu_vaddr, bool hfi_skip);
 
 /*
  *  cam_presil_readl_poll_timeout()
@@ -166,12 +192,13 @@ int cam_presil_readl_poll_timeout(void __iomem *mem_address, uint32_t val,
  *
  * @brief   :  Write HFI command to presil hw.
  *
- * @addr    :  Pointer to HFI command
- * @cmdlen  :  Length
+ * @addr       :  Pointer to HFI command
+ * @cmdlen     :  Length
+ * @client_id  :  client Id of caller
  *
  * @return:  Success or Failure
  */
-int cam_presil_hfi_write_cmd(void *addr, uint32_t cmdlen);
+int cam_presil_hfi_write_cmd(void *addr, uint32_t cmdlen, uint32_t client_id);
 
 /*
  *  cam_presil_hfi_read_message()
@@ -181,12 +208,12 @@ int cam_presil_hfi_write_cmd(void *addr, uint32_t cmdlen);
  * @pmsg          :  Pointer to HFI message buffer
  * @q_id          :  Length
  * @words_read    :  Response message
- * @interval_msec :  Interval between tries
+ * @client_id     :  client Id of caller
  *
  * @return:  Success or Failure
  */
 int cam_presil_hfi_read_message(uint32_t *pmsg, uint8_t q_id,
-	uint32_t *words_read);
+	uint32_t *words_read, uint32_t client_id);
 
 /**
  * @brief : API to check if camera driver running in presil
@@ -195,4 +222,31 @@ int cam_presil_hfi_read_message(uint32_t *pmsg, uint8_t q_id,
  * @return true or false.
  */
 bool cam_presil_mode_enabled(void);
+
+/*
+ *  cam_presil_send_event()
+ *
+ * @brief   :  send event to pchost.
+ *
+ * @event_id :  Event Id
+ * @value  :  Value with additional information
+ *
+ * @return:  Success or Failure
+ */
+int cam_presil_send_event(uint32_t event_id, uint32_t value);
+
+/*
+ *  cam_presil_enqueue_presil_irq_tasklet()
+ *
+ * @brief   :  enqueue workqueue cb for bottom half of irq in presil mode.
+ *
+ * @bh_handler   :  Bottom half handler func
+ * @handler_priv :  Handler private data
+ * @payload      :  Payload
+ *
+ * @return:  Success or Failure
+ */
+int cam_presil_enqueue_presil_irq_tasklet(CAM_PRESIL_IRQ_HANDLER_BOTTOM_HALF bh_handler,
+	void *handler_priv,
+	void *payload);
 #endif /* _CAM_PRESIL_HW_ACCESS_H_ */

@@ -1,11 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_DEBUG_UTIL_H_
 #define _CAM_DEBUG_UTIL_H_
 
+#include <dt-bindings/msm-camera.h>
 #include <linux/platform_device.h>
 #include "cam_presil_hw_access.h"
 #include "cam_trace.h"
@@ -13,8 +15,15 @@
 extern unsigned long long debug_mdl;
 extern unsigned int debug_type;
 extern unsigned int debug_priority;
+extern unsigned int debug_drv;
+extern unsigned int debug_disable_rt_clk_bw_limit;
+extern unsigned int debug_bypass_drivers;
 
 #define CAM_IS_NULL_TO_STR(ptr) ((ptr) ? "Non-NULL" : "NULL")
+
+#define CAM_LOG_BUF_LEN                  512
+#define BYPASS_VALUE       0xDEADBEEF
+#define DEFAULT_CLK_VALUE  19200000
 
 /* Module IDs used for debug logging */
 enum cam_debug_module_id {
@@ -52,6 +61,12 @@ enum cam_debug_module_id {
 	CAM_CRE,                 /* bit 31 */
 	CAM_PRESIL_CORE,         /* bit 32 */
 	CAM_TPG,                 /* bit 33 */
+	CAM_DMA_FENCE,           /* bit 34 */
+	CAM_SENSOR_UTIL,         /* bit 35 */
+	CAM_SYNX,                /* bit 36 */
+	CAM_VMRM,                /* bit 37 */
+	CAM_IO_DUMP,             /* bit 38 */
+	CAM_SENSOR_IO,           /* bit 39 */
 	CAM_DBG_MOD_MAX
 };
 
@@ -109,6 +124,12 @@ static const char *cam_debug_mod_name[CAM_DBG_MOD_MAX] = {
 	[CAM_CRE]         = "CAM-CRE",
 	[CAM_PRESIL_CORE] = "CAM-CORE-PRESIL",
 	[CAM_TPG]         = "CAM-TPG",
+	[CAM_DMA_FENCE]   = "CAM-DMA-FENCE",
+	[CAM_SENSOR_UTIL] = "CAM-SENSOR-UTIL",
+	[CAM_SYNX]        = "CAM_SYNX",
+	[CAM_VMRM]        = "CAM-VMRM",
+	[CAM_IO_DUMP]     = "CAM-IO-DUMP",
+	[CAM_SENSOR_IO]   = "CAM-SENSOR-IO",
 };
 
 #define ___CAM_DBG_MOD_NAME(module_id)                                      \
@@ -146,7 +167,13 @@ __builtin_choose_expr(((module_id) == CAM_SFE), "CAM-SFE",                  \
 __builtin_choose_expr(((module_id) == CAM_CRE), "CAM-CRE",                  \
 __builtin_choose_expr(((module_id) == CAM_PRESIL_CORE), "CAM-CORE-PRESIL",  \
 __builtin_choose_expr(((module_id) == CAM_TPG), "CAM-TPG",                  \
-"CAMERA"))))))))))))))))))))))))))))))))))
+__builtin_choose_expr(((module_id) == CAM_DMA_FENCE), "CAM-DMA-FENCE",      \
+__builtin_choose_expr(((module_id) == CAM_SENSOR_UTIL), "CAM-SENSOR-UTIL",  \
+__builtin_choose_expr(((module_id) == CAM_SYNX), "CAM-SYNX",                \
+__builtin_choose_expr(((module_id) == CAM_VMRM), "CAM-VMRM",                \
+__builtin_choose_expr(((module_id) == CAM_IO_DUMP), "CAM-IO-DUMP",          \
+__builtin_choose_expr(((module_id) == CAM_SENSOR_IO), "CAM-SENSOR-IO",      \
+"CAMERA"))))))))))))))))))))))))))))))))))))))
 
 #define CAM_DBG_MOD_NAME(module_id) \
 ((module_id < CAM_DBG_MOD_MAX) ? cam_debug_mod_name[module_id] : "CAMERA")
@@ -181,24 +208,28 @@ enum cam_log_print_type {
 	CAM_PRINT_BOTH  = 0x3,
 };
 
-#define __CAM_LOG_FMT KERN_INFO "%s: %s: %s: %d "
+#define __CAM_LOG_FMT KERN_INFO "%s: %s: %s: %d: %s "
 
 /**
  * cam_print_log() - function to print logs (internal use only, use macros instead)
  *
- * @type: corresponds to enum cam_log_print_type, selects if logs are printed in log buffer,
+ * @type:      Corresponds to enum cam_log_print_type, selects if logs are printed in log buffer,
  *        trace buffers or both
- * @fmt:  formatting string
- * @args: arguments corresponding to formatting string
+ * @module_id: Module calling the log macro
+ * @tag:       Tag for log level
+ * @func:      Function string
+ * @line:      Line number
+ * @fmt:       Formatting string
  */
 
-void cam_print_log(int type, const char *fmt, ...);
+void cam_print_log(int type, int module, int tag, const char *func,
+	int line, const char *fmt, ...);
 
 #define __CAM_LOG(type, tag, module_id, fmt, args...)                               \
 ({                                                                                  \
-	cam_print_log(type, __CAM_LOG_FMT fmt,                                      \
-		__CAM_LOG_TAG_NAME(tag), __CAM_DBG_MOD_NAME(module_id), __func__,   \
-		__LINE__, ##args);                                                  \
+	cam_print_log(type,                                      \
+		module_id, tag, __func__,   \
+		__LINE__,  fmt, ##args);                                                  \
 })
 
 #define CAM_LOG(tag, module_id, fmt, args...) \
@@ -336,6 +367,22 @@ struct cam_cpas_debug_settings {
 	uint64_t mnoc_sf_icp_ab_bw;
 	uint64_t mnoc_sf_icp_ib_bw;
 	uint64_t camnoc_bw;
+	uint64_t cam_ife_0_drv_ab_high_bw;
+	uint64_t cam_ife_0_drv_ib_high_bw;
+	uint64_t cam_ife_1_drv_ab_high_bw;
+	uint64_t cam_ife_1_drv_ib_high_bw;
+	uint64_t cam_ife_2_drv_ab_high_bw;
+	uint64_t cam_ife_2_drv_ib_high_bw;
+	uint64_t cam_ife_0_drv_ab_low_bw;
+	uint64_t cam_ife_0_drv_ib_low_bw;
+	uint64_t cam_ife_1_drv_ab_low_bw;
+	uint64_t cam_ife_1_drv_ib_low_bw;
+	uint64_t cam_ife_2_drv_ab_low_bw;
+	uint64_t cam_ife_2_drv_ib_low_bw;
+	uint64_t cam_ife_0_drv_low_set_zero;
+	uint64_t cam_ife_1_drv_low_set_zero;
+	uint64_t cam_ife_2_drv_low_set_zero;
+	bool     is_updated;
 };
 
 /**
@@ -359,5 +406,60 @@ const struct camera_debug_settings *cam_debug_get_settings(void);
  */
 ssize_t cam_debug_sysfs_node_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count);
+
+/**
+ * cam_debugfs_init()
+ *
+ * @brief: create camera debugfs root folder
+ */
+void cam_debugfs_init(void);
+
+/**
+ * cam_debugfs_deinit()
+ *
+ * @brief: remove camera debugfs root folder
+ */
+void cam_debugfs_deinit(void);
+
+/**
+ * cam_debugfs_create_subdir()
+ *
+ * @brief:  create a directory within the camera debugfs root folder
+ *
+ * @name:   name of the directory
+ * @subdir: pointer to the newly created directory entry
+ *
+ * @return: 0 on success, negative on failure
+ */
+int cam_debugfs_create_subdir(const char *name, struct dentry **subdir);
+
+/**
+ * cam_debugfs_lookup_subdir()
+ *
+ * @brief:  lookup a directory within the camera debugfs root folder
+ *
+ * @name:   name of the directory
+ * @subdir: pointer to the successfully found directory entry
+ *
+ * @return: 0 on success, negative on failure
+ */
+int cam_debugfs_lookup_subdir(const char *name, struct dentry **subdir);
+
+/**
+ * cam_debugfs_available()
+ *
+ * @brief:  Check if debugfs is enabled for camera. Use this function before creating any
+ *          debugfs entries.
+ *
+ * @return: true if enabled, false otherwise
+ */
+static inline bool cam_debugfs_available(void)
+{
+	#if defined(CONFIG_DEBUG_FS)
+		return true;
+	#else
+		return false;
+	#endif
+}
 
 #endif /* _CAM_DEBUG_UTIL_H_ */

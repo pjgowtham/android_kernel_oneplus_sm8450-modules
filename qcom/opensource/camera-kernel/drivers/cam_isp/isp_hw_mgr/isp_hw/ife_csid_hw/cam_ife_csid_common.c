@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/iopoll.h>
@@ -25,7 +25,10 @@
 #include "cam_ife_csid_hw_ver2.h"
 #include "cam_cdm_intf_api.h"
 
-const uint8_t *cam_ife_csid_irq_reg_tag[CAM_IFE_CSID_IRQ_REG_MAX] = {
+/* factor to conver qtime to boottime */
+int64_t qtime_to_boottime;
+
+const uint8_t *cam_ife_csid_irq_reg_tag[CAM_IFE_CSID_IRQ_REG_MAX + 1] = {
 	"TOP",
 	"RX",
 	"RDI0",
@@ -38,6 +41,11 @@ const uint8_t *cam_ife_csid_irq_reg_tag[CAM_IFE_CSID_IRQ_REG_MAX] = {
 	"UDI0",
 	"UDI1",
 	"UDI2",
+	"TOP2",
+	"RX2",
+	"IPP1",
+	"IPP2",
+	"MAX",
 };
 
 static int cam_ife_csid_get_cid(struct cam_ife_csid_cid_data *cid_data,
@@ -125,31 +133,16 @@ static int cam_ife_csid_validate_rdi_format(uint32_t in_format,
 		}
 		break;
 	case CAM_FORMAT_MIPI_RAW_10:
-		switch (out_format) {
-		case CAM_FORMAT_MIPI_RAW_10:
-		case CAM_FORMAT_PLAIN128:
-		case CAM_FORMAT_PLAIN16_10:
-		case CAM_FORMAT_PLAIN16_16:
-			break;
-		default:
-			rc = -EINVAL;
-			break;
-		}
-		break;
 	case CAM_FORMAT_MIPI_RAW_12:
-		switch (out_format) {
-		case CAM_FORMAT_MIPI_RAW_12:
-		case CAM_FORMAT_PLAIN16_12:
-		case CAM_FORMAT_PLAIN16_16:
-			break;
-		default:
-			rc = -EINVAL;
-			break;
-		}
-		break;
 	case CAM_FORMAT_MIPI_RAW_14:
 		switch (out_format) {
+		case CAM_FORMAT_MIPI_RAW_10:
+		case CAM_FORMAT_MIPI_RAW_12:
 		case CAM_FORMAT_MIPI_RAW_14:
+		case CAM_FORMAT_PLAIN128:
+		case CAM_FORMAT_PLAIN16_10:
+		case CAM_FORMAT_PLAIN16_10_LSB:
+		case CAM_FORMAT_PLAIN16_12:
 		case CAM_FORMAT_PLAIN16_14:
 		case CAM_FORMAT_PLAIN16_16:
 			break;
@@ -287,6 +280,7 @@ int cam_ife_csid_get_format_rdi(
 			path_format->packing_fmt = 0x1;
 		break;
 	case CAM_FORMAT_PLAIN16_10:
+	case CAM_FORMAT_PLAIN16_10_LSB:
 	case CAM_FORMAT_PLAIN16_12:
 	case CAM_FORMAT_PLAIN16_14:
 	case CAM_FORMAT_PLAIN16_16:
@@ -477,16 +471,6 @@ int cam_ife_csid_cid_reserve(struct cam_ife_csid_cid_data *cid_data,
 {
 	int i, j, rc = 0;
 
-	for (i = 0; i < reserve->in_port->num_valid_vc_dt; i++)
-		CAM_DBG(CAM_ISP,
-			"CSID:%d res_:0x%x Lane type:%d lane_num:%d dt:%d vc:%d",
-			hw_idx,
-			reserve->in_port->res_type,
-			reserve->in_port->lane_type,
-			reserve->in_port->lane_num,
-			reserve->in_port->dt[i],
-			reserve->in_port->vc[i]);
-
 	for (i = 0; i < CAM_IFE_CSID_CID_MAX; i++) {
 		rc = cam_ife_csid_get_cid(&cid_data[i], reserve);
 		if (!rc)
@@ -494,13 +478,13 @@ int cam_ife_csid_cid_reserve(struct cam_ife_csid_cid_data *cid_data,
 	}
 
 	if (i == CAM_IFE_CSID_CID_MAX) {
-		for (j = 0; j < reserve->in_port->num_valid_vc_dt; j++) {
+		for (j = 0; j < reserve->in_port->num_valid_vc_dt; j++)
 			CAM_ERR(CAM_ISP,
 				"CSID[%d] reserve fail vc[%d] dt[%d]",
 				hw_idx, reserve->in_port->vc[j],
 				reserve->in_port->dt[j]);
-			return -EINVAL;
-		}
+
+		return -EINVAL;
 	}
 
 	cid_data[i].cid_cnt++;
@@ -589,43 +573,6 @@ int cam_ife_csid_check_in_port_args(
 	return 0;
 }
 
-int cam_ife_csid_get_rt_irq_idx(
-	uint32_t irq_reg, uint32_t num_ipp,
-	uint32_t num_ppp, uint32_t num_rdi)
-{
-	int rt_irq_reg_idx = -EINVAL;
-
-	switch (irq_reg) {
-	case CAM_IFE_CSID_IRQ_REG_IPP:
-		rt_irq_reg_idx = CAM_IFE_CSID_IRQ_REG_RX +
-			num_rdi + 1;
-		break;
-	case CAM_IFE_CSID_IRQ_REG_PPP:
-		rt_irq_reg_idx = CAM_IFE_CSID_IRQ_REG_RX +
-			num_rdi + num_ipp + 1;
-		break;
-	case CAM_IFE_CSID_IRQ_REG_RDI_0:
-	case CAM_IFE_CSID_IRQ_REG_RDI_1:
-	case CAM_IFE_CSID_IRQ_REG_RDI_2:
-	case CAM_IFE_CSID_IRQ_REG_RDI_3:
-	case CAM_IFE_CSID_IRQ_REG_RDI_4:
-		rt_irq_reg_idx = irq_reg;
-		break;
-	case CAM_IFE_CSID_IRQ_REG_UDI_0:
-	case CAM_IFE_CSID_IRQ_REG_UDI_1:
-	case CAM_IFE_CSID_IRQ_REG_UDI_2:
-		rt_irq_reg_idx = CAM_IFE_CSID_IRQ_REG_RX +
-			num_rdi + num_ipp + num_ppp +
-			(irq_reg - CAM_IFE_CSID_IRQ_REG_UDI_0) + 1;
-		break;
-	default:
-		CAM_ERR(CAM_ISP, "Invalid irq reg %d", irq_reg);
-		break;
-	}
-
-	return rt_irq_reg_idx;
-}
-
 int cam_ife_csid_convert_res_to_irq_reg(uint32_t res_id)
 {
 	switch (res_id) {
@@ -650,6 +597,10 @@ int cam_ife_csid_convert_res_to_irq_reg(uint32_t res_id)
 		return CAM_IFE_CSID_IRQ_REG_UDI_1;
 	case CAM_IFE_PIX_PATH_RES_UDI_2:
 		return CAM_IFE_CSID_IRQ_REG_UDI_2;
+	case CAM_IFE_PIX_PATH_RES_IPP_1:
+		return CAM_IFE_CSID_IRQ_REG_IPP_1;
+	case CAM_IFE_PIX_PATH_RES_IPP_2:
+		return CAM_IFE_CSID_IRQ_REG_IPP_2;
 	default:
 		return CAM_IFE_CSID_IRQ_REG_MAX;
 	}
@@ -660,6 +611,8 @@ const char *cam_ife_csid_reset_type_to_string(enum cam_ife_csid_reset_type reset
 	switch (reset_type) {
 	case CAM_IFE_CSID_RESET_GLOBAL: return "global";
 	case CAM_IFE_CSID_RESET_PATH: return "path";
+	case CAM_IFE_CSID_RESET_GLOBAL_HW_ONLY: return "global_hw";
+	case CAM_IFE_CSID_RESET_GLOBAL_IRQ_CNTRL: return "global_irq_rst";
 	default: return "invalid";
 	}
 }
@@ -707,6 +660,12 @@ int cam_ife_csid_get_base(struct cam_hw_soc_info *soc_info,
 	}
 
 	mem_base = CAM_SOC_GET_REG_MAP_CAM_BASE(soc_info, base_id);
+	if (mem_base == -1) {
+		CAM_ERR(CAM_ISP, "failed to get mem_base, index: %d num_reg_map: %u",
+				base_id, soc_info->num_reg_map);
+		return -EINVAL;
+	}
+
 	if (cdm_args->cdm_id == CAM_CDM_RT) {
 		if (!soc_private->rt_wrapper_base) {
 			CAM_ERR(CAM_ISP, "rt_wrapper_base_addr is null");

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/of.h>
@@ -148,7 +148,7 @@ int cam_cre_init_hw(void *device_priv,
 	}
 	cre_hw = core_info->cre_hw_info->cre_hw;
 
-	cpas_vote = kzalloc(sizeof(struct cam_cre_cpas_vote), GFP_KERNEL);
+	cpas_vote = CAM_MEM_ZALLOC(sizeof(struct cam_cre_cpas_vote), GFP_KERNEL);
 	if (!cpas_vote) {
 		CAM_ERR(CAM_ISP, "Out of memory");
 		rc = -ENOMEM;
@@ -156,7 +156,7 @@ int cam_cre_init_hw(void *device_priv,
 	}
 
 	cpas_vote->ahb_vote.type = CAM_VOTE_ABSOLUTE;
-	cpas_vote->ahb_vote.vote.level = CAM_SVS_VOTE;
+	cpas_vote->ahb_vote.vote.level = CAM_LOWSVS_D1_VOTE;
 	cpas_vote->axi_vote.num_paths = 1;
 	cpas_vote->axi_vote.axi_path[0].path_data_type =
 		CAM_AXI_PATH_DATA_ALL;
@@ -205,7 +205,7 @@ enable_soc_resource_failed:
 	else
 		core_info->cpas_start = false;
 free_cpas_vote:
-	cam_free_clear((void *)cpas_vote);
+	CAM_MEM_ZFREE((void *)cpas_vote, sizeof(struct cam_cre_cpas_vote));
 	cpas_vote = NULL;
 end:
 	return rc;
@@ -236,11 +236,6 @@ int cam_cre_deinit_hw(void *device_priv,
 	if (rc)
 		CAM_ERR(CAM_CRE, "soc disable is failed : %d", rc);
 	core_info->clk_enable = false;
-
-	if (cam_cpas_stop(core_info->cpas_handle))
-		CAM_ERR(CAM_CRE, "cpas stop is failed");
-	else
-		core_info->cpas_start = false;
 
 	return rc;
 }
@@ -484,8 +479,8 @@ int cam_cre_process_cmd(void *device_priv, uint32_t cmd_type,
 			(struct cam_cre_dev_clk_update *)cmd_args;
 
 		if (!core_info->clk_enable) {
-			rc = cam_soc_util_clk_enable_default(soc_info,
-				CAM_SVS_VOTE);
+			rc = cam_soc_util_clk_enable_default(soc_info, CAM_CLK_SW_CLIENT_IDX,
+				soc_info->lowest_clk_level);
 			if (rc) {
 				CAM_ERR(CAM_CRE, "Clock enable is failed");
 				return rc;
@@ -500,7 +495,7 @@ int cam_cre_process_cmd(void *device_priv, uint32_t cmd_type,
 		break;
 	case CRE_HW_CLK_DISABLE: {
 		if (core_info->clk_enable)
-			cam_soc_util_clk_disable_default(soc_info);
+			cam_soc_util_clk_disable_default(soc_info, CAM_CLK_SW_CLIENT_IDX);
 
 		core_info->clk_enable = false;
 		}

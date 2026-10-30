@@ -1,30 +1,47 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_SENSOR_IO_H_
 #define _CAM_SENSOR_IO_H_
 
 #include <media/cam_sensor.h>
-
 #include "cam_sensor_cmn_header.h"
 
-#define CCI_MASTER 1
-#define I2C_MASTER 2
-#define SPI_MASTER 3
+/* Master Types */
+#define CCI_MASTER           1
+#define I2C_MASTER           2
+#define SPI_MASTER           3
+#define I3C_MASTER           4
+
+/**
+ * @i2c_client: I2C client information structure
+ * @i3c_client: I3C client information structure
+ * @pm_enable: Power Management Enable flag
+ * @i3c_wait_for_hotjoin: Flag to notify I3C master about HOT_JOIN wait
+ */
+struct cam_sensor_qup_client {
+	struct i2c_client *i2c_client;
+	struct i3c_device *i3c_client;
+	bool   pm_ctrl_client_enable;
+	bool   i3c_wait_for_hotjoin;
+};
 
 /**
  * @master_type: CCI master type
- * @client: I2C client information structure
+ * @qup_client: QUP client information structure
  * @cci_client: CCI client information structure
  * @spi_client: SPI client information structure
+ * @pm_enable: Power Management Enable flag
  */
 struct camera_io_master {
 	int master_type;
-	struct i2c_client *client;
+	struct cam_sensor_qup_client *qup_client;
 	struct cam_sensor_cci_client *cci_client;
 	struct cam_sensor_spi_client *spi_client;
+	char   sensor_name[CAM_SENSOR_NAME_MAX_SIZE];
 };
 
 /**
@@ -33,13 +50,15 @@ struct camera_io_master {
  * @data: I2C data
  * @addr_type: I2C addr_type
  * @data_type: I2C data type
+ * @is_probing: Is probing a sensor
  *
  * This API abstracts read functionality based on master type
  */
 int32_t camera_io_dev_read(struct camera_io_master *io_master_info,
 	uint32_t addr, uint32_t *data,
 	enum camera_sensor_i2c_type addr_type,
-	enum camera_sensor_i2c_type data_type);
+	enum camera_sensor_i2c_type data_type,
+	bool is_probing);
 
 /**
  * @io_master_info: I2C/SPI master information
@@ -113,4 +132,6 @@ int32_t camera_io_dev_poll(struct camera_io_master *io_master_info,
 
 #include "cam_sensor_i2c.h"
 #include "cam_sensor_spi.h"
+#include "cam_sensor_i3c.h"
+
 #endif /* _CAM_SENSOR_IO_H_ */

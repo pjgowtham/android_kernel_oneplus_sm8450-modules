@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/of.h>
@@ -41,6 +42,14 @@ static int cam_ois_get_dt_data(struct cam_ois_ctrl_t *o_ctrl)
 		return rc;
 	}
 
+	rc = of_property_read_bool(of_node, "i3c-target");
+	if (rc) {
+		o_ctrl->is_i3c_device = true;
+		o_ctrl->io_master_info.master_type = I3C_MASTER;
+	}
+
+	CAM_DBG(CAM_SENSOR, "I3C Target: %s", CAM_BOOL_TO_YESNO(o_ctrl->is_i3c_device));
+
 	/* Initialize regulators to default parameters */
 	for (i = 0; i < soc_info->num_rgltr; i++) {
 		soc_info->rgltr[i] = devm_regulator_get(soc_info->dev,
@@ -55,6 +64,8 @@ static int cam_ois_get_dt_data(struct cam_ois_ctrl_t *o_ctrl)
 		CAM_DBG(CAM_OIS, "get for regulator %s",
 			soc_info->rgltr_name[i]);
 	}
+
+	cam_sensor_utils_parse_pm_ctrl_flag(of_node, &(o_ctrl->io_master_info));
 
 	if (!soc_info->gpio_data) {
 		CAM_INFO(CAM_OIS, "No GPIO found");
@@ -76,11 +87,15 @@ static int cam_ois_get_dt_data(struct cam_ois_ctrl_t *o_ctrl)
 	for (i = 0; i < soc_info->num_clk; i++) {
 		soc_info->clk[i] = devm_clk_get(soc_info->dev,
 			soc_info->clk_name[i]);
-		if (!soc_info->clk[i]) {
-			CAM_ERR(CAM_SENSOR, "get failed for %s",
+		if (IS_ERR(soc_info->clk[i])) {
+			CAM_ERR(CAM_OIS, "get failed for %s",
 				soc_info->clk_name[i]);
 			rc = -ENOENT;
 			return rc;
+		} else if (!soc_info->clk[i]) {
+			CAM_DBG(CAM_OIS, "%s handle is NULL skip get",
+				soc_info->clk_name[i]);
+			continue;
 		}
 	}
 
@@ -94,7 +109,7 @@ static int cam_ois_get_dt_data(struct cam_ois_ctrl_t *o_ctrl)
  */
 int cam_ois_driver_soc_init(struct cam_ois_ctrl_t *o_ctrl)
 {
-	int                             rc = 0;
+	int                             rc = 0, i = 0;
 	struct cam_hw_soc_info         *soc_info = &o_ctrl->soc_info;
 	struct device_node             *of_node = NULL;
 	struct device_node             *of_parent = NULL;
@@ -126,12 +141,24 @@ int cam_ois_driver_soc_init(struct cam_ois_ctrl_t *o_ctrl)
 
 		o_ctrl->io_master_info.cci_client->cci_device = o_ctrl->cci_num;
 		CAM_DBG(CAM_OIS, "cci-device %d", o_ctrl->cci_num, rc);
-
 	}
 
 	rc = cam_ois_get_dt_data(o_ctrl);
 	if (rc < 0)
 		CAM_DBG(CAM_OIS, "failed: ois get dt data rc %d", rc);
+
+	memset(&o_ctrl->fw_info, 0, sizeof(struct cam_cmd_ois_fw_info));
+
+	INIT_LIST_HEAD(&(o_ctrl->i2c_init_data.list_head));
+	INIT_LIST_HEAD(&(o_ctrl->i2c_calib_data.list_head));
+	INIT_LIST_HEAD(&(o_ctrl->i2c_fwinit_data.list_head));
+	for (i = 0; i < MAX_OIS_FW_COUNT; i++) {
+		INIT_LIST_HEAD(&(o_ctrl->i2c_fw_init_data[i].list_head));
+		INIT_LIST_HEAD(&(o_ctrl->i2c_fw_finalize_data[i].list_head));
+	}
+	INIT_LIST_HEAD(&(o_ctrl->i2c_fw_version_data.list_head));
+	INIT_LIST_HEAD(&(o_ctrl->i2c_mode_data.list_head));
+	INIT_LIST_HEAD(&(o_ctrl->i2c_time_data.list_head));
 
 	return rc;
 }

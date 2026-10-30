@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -11,6 +12,7 @@
 #include "cam_vfe_top_ver3.h"
 #include "cam_debug_util.h"
 #include "cam_vfe_soc.h"
+#include "cam_mem_mgr_api.h"
 
 #define CAM_VFE_HW_RESET_HW_AND_REG_VAL       0x00000001
 #define CAM_VFE_HW_RESET_HW_VAL               0x00010000
@@ -82,6 +84,11 @@ static int cam_vfe_top_ver3_mux_get_base(struct cam_vfe_top_ver3_priv *top_priv,
 
 	mem_base = CAM_SOC_GET_REG_MAP_CAM_BASE(
 		top_priv->top_common.soc_info, VFE_CORE_BASE_IDX);
+	if (mem_base == -1) {
+		CAM_ERR(CAM_ISP, "failed to get mem_base, index: %d num_reg_map: %u",
+			VFE_CORE_BASE_IDX, top_priv->top_common.soc_info->num_reg_map);
+		return -EINVAL;
+	}
 	CAM_DBG(CAM_ISP, "core %d mem_base 0x%x",
 		top_priv->top_common.soc_info->index, mem_base);
 
@@ -118,7 +125,7 @@ static int cam_vfe_top_ver3_dump_info(
 	switch (cmd_type) {
 	case CAM_ISP_HW_NOTIFY_OVERFLOW:
 		CAM_INFO_RATE_LIMIT(CAM_ISP, "VFE%d src_clk_rate:%luHz",
-			soc_info->index, soc_info->applied_src_clk_rate);
+			soc_info->index, soc_info->applied_src_clk_rates.sw_client);
 		break;
 	default:
 		CAM_ERR(CAM_ISP, "cmd_type: %u not supported", cmd_type);
@@ -495,7 +502,6 @@ int cam_vfe_top_ver3_reserve(void *device_priv,
 int cam_vfe_top_ver3_release(void *device_priv,
 	void *release_args, uint32_t arg_size)
 {
-	struct cam_vfe_top_ver3_priv            *top_priv;
 	struct cam_isp_resource_node            *mux_res;
 
 	if (!device_priv || !release_args) {
@@ -503,7 +509,6 @@ int cam_vfe_top_ver3_release(void *device_priv,
 		return -EINVAL;
 	}
 
-	top_priv = (struct cam_vfe_top_ver3_priv   *)device_priv;
 	mux_res = (struct cam_isp_resource_node *)release_args;
 
 	CAM_DBG(CAM_ISP, "%s Resource in state %d", mux_res->res_name,
@@ -581,7 +586,6 @@ int cam_vfe_top_ver3_stop(void *device_priv,
 {
 	struct cam_vfe_top_ver3_priv            *top_priv;
 	struct cam_isp_resource_node            *mux_res;
-	struct cam_hw_info                      *hw_info = NULL;
 	struct cam_hw_soc_info                  *soc_info = NULL;
 	struct cam_vfe_soc_private              *soc_private = NULL;
 	int i, rc = 0;
@@ -593,10 +597,6 @@ int cam_vfe_top_ver3_stop(void *device_priv,
 
 	top_priv = (struct cam_vfe_top_ver3_priv   *)device_priv;
 	mux_res = (struct cam_isp_resource_node *)stop_args;
-	hw_info = (struct cam_hw_info  *)mux_res->hw_intf->hw_priv;
-	soc_info = top_priv->top_common.soc_info;
-	soc_private = soc_info->soc_private;
-
 	soc_info = top_priv->top_common.soc_info;
 	soc_private = soc_info->soc_private;
 
@@ -736,14 +736,14 @@ int cam_vfe_top_ver3_init(
 	struct cam_vfe_top_ver3_hw_info        *ver3_hw_info = top_hw_info;
 	struct cam_vfe_top                     *vfe_top;
 
-	vfe_top = kzalloc(sizeof(struct cam_vfe_top), GFP_KERNEL);
+	vfe_top = CAM_MEM_ZALLOC(sizeof(struct cam_vfe_top), GFP_KERNEL);
 	if (!vfe_top) {
 		CAM_DBG(CAM_ISP, "Error, Failed to alloc for vfe_top");
 		rc = -ENOMEM;
 		goto end;
 	}
 
-	top_priv = kzalloc(sizeof(struct cam_vfe_top_ver3_priv),
+	top_priv = CAM_MEM_ZALLOC(sizeof(struct cam_vfe_top_ver3_priv),
 		GFP_KERNEL);
 	if (!top_priv) {
 		CAM_DBG(CAM_ISP, "Error, Failed to alloc for vfe_top_priv");
@@ -888,9 +888,9 @@ deinit_resources:
 	}
 
 free_top_priv:
-	kfree(vfe_top->top_priv);
+	CAM_MEM_FREE(vfe_top->top_priv);
 free_vfe_top:
-	kfree(vfe_top);
+	CAM_MEM_FREE(vfe_top);
 end:
 	return rc;
 }
@@ -947,10 +947,10 @@ int cam_vfe_top_ver3_deinit(struct cam_vfe_top  **vfe_top_ptr)
 		}
 	}
 
-	kfree(vfe_top->top_priv);
+	CAM_MEM_FREE(vfe_top->top_priv);
 
 free_vfe_top:
-	kfree(vfe_top);
+	CAM_MEM_FREE(vfe_top);
 	*vfe_top_ptr = NULL;
 
 	return rc;

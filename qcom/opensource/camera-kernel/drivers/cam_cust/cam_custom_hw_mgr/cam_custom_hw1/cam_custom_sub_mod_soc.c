@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/slab.h>
 #include "cam_cpas_api.h"
 #include "cam_custom_sub_mod_soc.h"
 #include "cam_debug_util.h"
+#include "cam_mem_mgr_api.h"
 
 int cam_custom_hw_sub_mod_init_soc_resources(struct cam_hw_soc_info *soc_info,
-	irq_handler_t irq_handler, void *irq_data)
+	irq_handler_t irq_handler, void *data)
 {
-	int                               rc = 0;
+	int                               rc = 0, i;
 	struct cam_custom_hw_soc_private *soc_private = NULL;
 	struct cam_cpas_register_params   cpas_register_param;
+	void                             *irq_data[CAM_SOC_MAX_IRQ_LINES_PER_DEV] = {0};
 
 	rc = cam_soc_util_get_dt_properties(soc_info);
 	if (rc < 0) {
@@ -23,7 +26,7 @@ int cam_custom_hw_sub_mod_init_soc_resources(struct cam_hw_soc_info *soc_info,
 		return 0;
 	}
 
-	soc_private = kzalloc(sizeof(struct cam_custom_hw_soc_private),
+	soc_private = CAM_MEM_ZALLOC(sizeof(struct cam_custom_hw_soc_private),
 		GFP_KERNEL);
 	if (!soc_private) {
 		CAM_DBG(CAM_CUSTOM, "Error! soc_private Alloc Failed");
@@ -31,8 +34,10 @@ int cam_custom_hw_sub_mod_init_soc_resources(struct cam_hw_soc_info *soc_info,
 	}
 	soc_info->soc_private = soc_private;
 
-	rc = cam_soc_util_request_platform_resource(soc_info, irq_handler,
-		irq_data);
+	for (i = 0; i < soc_info->irq_count; i++)
+		irq_data[i] = data;
+
+	rc = cam_soc_util_request_platform_resource(soc_info, irq_handler, &(irq_data[0]));
 	if (rc < 0) {
 		CAM_ERR(CAM_CUSTOM,
 			"Error! Request platform resources failed rc=%d", rc);
@@ -41,7 +46,7 @@ int cam_custom_hw_sub_mod_init_soc_resources(struct cam_hw_soc_info *soc_info,
 
 	memset(&cpas_register_param, 0, sizeof(cpas_register_param));
 
-	strlcpy(cpas_register_param.identifier, "custom",
+	strscpy(cpas_register_param.identifier, "custom",
 		CAM_HW_IDENTIFIER_LENGTH);
 	cpas_register_param.cell_index = soc_info->index;
 	cpas_register_param.dev = soc_info->dev;
@@ -97,7 +102,7 @@ int cam_custom_hw_sub_mod_deinit_soc_resources(struct cam_hw_soc_info *soc_info)
 		CAM_ERR(CAM_CUSTOM,
 			"Error! Release platform resources failed rc=%d", rc);
 
-	kfree(soc_private);
+	CAM_MEM_FREE(soc_private);
 
 	return rc;
 }
@@ -110,7 +115,7 @@ int cam_custom_hw_sub_mod_enable_soc_resources(struct cam_hw_soc_info *soc_info)
 	struct cam_axi_vote axi_vote =    {0};
 
 	ahb_vote.type = CAM_VOTE_ABSOLUTE;
-	ahb_vote.vote.level = CAM_LOWSVS_VOTE;
+	ahb_vote.vote.level = CAM_LOWSVS_D1_VOTE;
 	axi_vote.num_paths = 2;
 	axi_vote.axi_path[0].path_data_type = CAM_AXI_PATH_DATA_ALL;
 	axi_vote.axi_path[0].transac_type = CAM_AXI_TRANSACTION_READ;
@@ -130,8 +135,8 @@ int cam_custom_hw_sub_mod_enable_soc_resources(struct cam_hw_soc_info *soc_info)
 		goto end;
 	}
 
-	rc = cam_soc_util_enable_platform_resource(soc_info, true,
-		CAM_LOWSVS_VOTE, true);
+	rc = cam_soc_util_enable_platform_resource(soc_info, CAM_CLK_SW_CLIENT_IDX, true,
+		soc_info->lowest_clk_level, true);
 	if (rc) {
 		CAM_ERR(CAM_CUSTOM, "Error! enable platform failed rc=%d", rc);
 		goto stop_cpas;
@@ -158,7 +163,7 @@ int cam_custom_hw_sub_mod_disable_soc_resources(
 	}
 	soc_private = soc_info->soc_private;
 
-	rc = cam_soc_util_disable_platform_resource(soc_info, true, true);
+	rc = cam_soc_util_disable_platform_resource(soc_info, CAM_CLK_SW_CLIENT_IDX, true, true);
 	if (rc) {
 		CAM_ERR(CAM_CUSTOM, "Disable platform failed rc=%d", rc);
 		return rc;

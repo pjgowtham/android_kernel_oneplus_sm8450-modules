@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/delay.h>
@@ -16,26 +17,61 @@
 #include "cam_debug_util.h"
 #include "cam_smmu_api.h"
 #include "camera_main.h"
+#include "cam_common_util.h"
+#include "cam_context_utils.h"
+#include "cam_req_mgr_dev.h"
 
 #define CAM_JPEG_DEV_NAME "cam-jpeg"
 
 static struct cam_jpeg_dev g_jpeg_dev;
 
-static void cam_jpeg_dev_iommu_fault_handler(
-	struct cam_smmu_pf_info *pf_info)
+static int cam_jpeg_dev_evt_inject_cb(void *inject_args)
 {
-	int i = 0;
-	struct cam_node *node = NULL;
+	struct cam_common_inject_evt_param *inject_params = inject_args;
+	int i;
 
-	if (!pf_info || !pf_info->token) {
-		CAM_ERR(CAM_ISP, "invalid token in page handler cb");
+	for (i = 0; i < CAM_JPEG_CTX_MAX; i++) {
+		if (g_jpeg_dev.ctx[i].dev_hdl == inject_params->dev_hdl) {
+			cam_context_add_evt_inject(&g_jpeg_dev.ctx[i],
+				&inject_params->evt_params);
+			return 0;
+		}
+	}
+
+	CAM_ERR(CAM_JPEG, "No dev hdl found %d", inject_params->dev_hdl);
+	return -EINVAL;
+}
+
+static void cam_jpeg_dev_iommu_fault_handler(
+	struct cam_smmu_pf_info *pf_smmu_info)
+{
+	int i, rc;
+	struct cam_node *node = NULL;
+	struct cam_hw_dump_pf_args pf_args = {0};
+
+	if (!pf_smmu_info || !pf_smmu_info->token) {
+		CAM_ERR(CAM_JPEG, "invalid token in page handler cb");
 		return;
 	}
 
-	node = (struct cam_node *)pf_info->token;
+	node = (struct cam_node *)pf_smmu_info->token;
 
-	for (i = 0; i < node->ctx_size; i++)
-		cam_context_dump_pf_info(&(node->ctx_list[i]), pf_info);
+	pf_args.pf_smmu_info = pf_smmu_info;
+
+	for (i = 0; i < node->ctx_size; i++) {
+		cam_context_dump_pf_info(&(node->ctx_list[i]), &pf_args);
+		if (pf_args.pf_context_info.ctx_found)
+			/* found ctx and packet of the faulted address */
+			break;
+	}
+
+	if (i == node->ctx_size) {
+		/* Faulted ctx not found. But report PF to UMD anyway*/
+		rc = cam_context_send_pf_evt(NULL, &pf_args);
+		if (rc)
+			CAM_ERR(CAM_JPEG,
+				"Failed to notify PF event to userspace rc: %d", rc);
+	}
 }
 
 static void cam_jpeg_dev_mini_dump_cb(void *priv, void *args)
@@ -126,7 +162,10 @@ static int cam_jpeg_dev_component_bind(struct device *dev,
 	struct cam_node *node;
 	int iommu_hdl = -1;
 	struct platform_device *pdev = to_platform_device(dev);
+	struct timespec64 ts_start, ts_end;
+	long microsec = 0;
 
+	CAM_GET_TIMESTAMP(ts_start);
 	g_jpeg_dev.sd.internal_ops = &cam_jpeg_subdev_internal_ops;
 	g_jpeg_dev.sd.close_seq_prior = CAM_SD_CLOSE_MEDIUM_PRIORITY;
 	rc = cam_subdev_probe(&g_jpeg_dev.sd, pdev, CAM_JPEG_DEV_NAME,
@@ -157,6 +196,9 @@ static int cam_jpeg_dev_component_bind(struct device *dev,
 		}
 	}
 
+	cam_common_register_evt_inject_cb(cam_jpeg_dev_evt_inject_cb,
+		CAM_COMMON_EVT_INJECT_HW_JPEG);
+
 	rc = cam_node_init(node, &hw_mgr_intf, g_jpeg_dev.ctx, CAM_JPEG_CTX_MAX,
 		CAM_JPEG_DEV_NAME);
 	if (rc) {
@@ -171,6 +213,9 @@ static int cam_jpeg_dev_component_bind(struct device *dev,
 	mutex_init(&g_jpeg_dev.jpeg_mutex);
 
 	CAM_DBG(CAM_JPEG, "Component bound successfully");
+	CAM_GET_TIMESTAMP(ts_end);
+	CAM_GET_TIMESTAMP_DIFF_IN_MICRO(ts_start, ts_end, microsec);
+	cam_record_bind_latency(pdev->name, microsec);
 
 	return rc;
 

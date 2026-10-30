@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2021, The Linux Foundataion. All rights reserved.
- * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/io.h>
 #include <linux/slab.h>
 #include <linux/module.h>
+#include <linux/debugfs.h>
 #include "cam_trace.h"
 
 #include "cam_debug_util.h"
+#include "cam_mem_mgr_api.h"
 
 unsigned long long debug_mdl;
 module_param(debug_mdl, ullong, 0644);
@@ -21,7 +23,95 @@ module_param(debug_type, uint, 0644);
 uint debug_priority;
 module_param(debug_priority, uint, 0644);
 
+uint debug_drv;
+module_param(debug_drv, uint, 0644);
+
+uint debug_disable_rt_clk_bw_limit;
+module_param(debug_disable_rt_clk_bw_limit, uint, 0644);
+
+uint debug_bypass_drivers;
+module_param(debug_bypass_drivers, uint, 0644);
+
 struct camera_debug_settings cam_debug;
+
+struct dentry *cam_debugfs_root;
+
+void cam_debugfs_init(void)
+{
+	struct dentry *tmp;
+
+	if (!cam_debugfs_available()) {
+		cam_debugfs_root = NULL;
+		CAM_DBG(CAM_UTIL, "debugfs not available");
+		return;
+	}
+
+	if (cam_debugfs_root) {
+		CAM_WARN(CAM_UTIL, "already created debugfs root");
+		return;
+	}
+
+	tmp = debugfs_create_dir("camera", NULL);
+	if (IS_ERR_VALUE(tmp)) {
+		CAM_ERR(CAM_UTIL, "failed to create debugfs root folder (rc=%d)", PTR_ERR(tmp));
+		return;
+	}
+
+	cam_debugfs_root = tmp;
+	CAM_DBG(CAM_UTIL, "successfully created debugfs root");
+}
+
+void cam_debugfs_deinit(void)
+{
+	if (!cam_debugfs_available())
+		return;
+
+	debugfs_remove_recursive(cam_debugfs_root);
+	cam_debugfs_root = NULL;
+}
+
+int cam_debugfs_create_subdir(const char *name, struct dentry **subdir)
+{
+	struct dentry *tmp;
+
+	if (!cam_debugfs_root) {
+		CAM_WARN(CAM_UTIL, "debugfs root not created");
+		*subdir = NULL;
+		return -ENODEV;
+	}
+
+	if (!subdir) {
+		CAM_ERR(CAM_UTIL, "invalid subdir pointer %pK", subdir);
+		return -EINVAL;
+	}
+
+	tmp = debugfs_create_dir(name, cam_debugfs_root);
+	if (IS_ERR_VALUE(tmp)) {
+		CAM_ERR(CAM_UTIL, "failed to create debugfs subdir (name=%s, rc=%d)", name,
+			PTR_ERR(tmp));
+		return PTR_ERR(tmp);
+	}
+
+	*subdir = tmp;
+	return 0;
+}
+
+int cam_debugfs_lookup_subdir(const char *name, struct dentry **subdir)
+{
+	if (!cam_debugfs_root) {
+		CAM_WARN(CAM_UTIL, "debugfs root not created");
+		*subdir = NULL;
+		return -ENODEV;
+	}
+
+	if (!subdir) {
+		CAM_ERR(CAM_UTIL, "invalid subdir pointer %pK", subdir);
+		return -EINVAL;
+	}
+
+	*subdir = debugfs_lookup(name, cam_debugfs_root);
+	return (*subdir) ? 0 : -ENOENT;
+}
 
 const struct camera_debug_settings *cam_debug_get_settings(void)
 {
@@ -52,11 +142,42 @@ static int cam_debug_parse_cpas_settings(const char *setting, u64 value)
 		cam_debug.cpas_settings.mnoc_sf_icp_ab_bw = value;
 	} else if (!strcmp(setting, "mnoc_sf_icp_ib_bw")) {
 		cam_debug.cpas_settings.mnoc_sf_icp_ib_bw = value;
+	} else if (!strcmp(setting, "cam_ife_0_drv_ab_high_bw")) {
+		cam_debug.cpas_settings.cam_ife_0_drv_ab_high_bw = value;
+	} else if (!strcmp(setting, "cam_ife_0_drv_ib_high_bw")) {
+		cam_debug.cpas_settings.cam_ife_0_drv_ib_high_bw = value;
+	} else if (!strcmp(setting, "cam_ife_1_drv_ab_high_bw")) {
+		cam_debug.cpas_settings.cam_ife_1_drv_ab_high_bw = value;
+	} else if (!strcmp(setting, "cam_ife_1_drv_ib_high_bw")) {
+		cam_debug.cpas_settings.cam_ife_1_drv_ib_high_bw = value;
+	} else if (!strcmp(setting, "cam_ife_2_drv_ab_high_bw")) {
+		cam_debug.cpas_settings.cam_ife_2_drv_ab_high_bw = value;
+	} else if (!strcmp(setting, "cam_ife_2_drv_ib_high_bw")) {
+		cam_debug.cpas_settings.cam_ife_2_drv_ib_high_bw = value;
+	} else if (!strcmp(setting, "cam_ife_0_drv_ab_low_bw")) {
+		cam_debug.cpas_settings.cam_ife_0_drv_ab_low_bw = value;
+	} else if (!strcmp(setting, "cam_ife_0_drv_ib_low_bw")) {
+		cam_debug.cpas_settings.cam_ife_0_drv_ib_low_bw = value;
+	} else if (!strcmp(setting, "cam_ife_1_drv_ab_low_bw")) {
+		cam_debug.cpas_settings.cam_ife_1_drv_ab_low_bw = value;
+	} else if (!strcmp(setting, "cam_ife_1_drv_ib_low_bw")) {
+		cam_debug.cpas_settings.cam_ife_1_drv_ib_low_bw = value;
+	} else if (!strcmp(setting, "cam_ife_2_drv_ab_low_bw")) {
+		cam_debug.cpas_settings.cam_ife_2_drv_ab_low_bw = value;
+	} else if (!strcmp(setting, "cam_ife_2_drv_ib_low_bw")) {
+		cam_debug.cpas_settings.cam_ife_2_drv_ib_low_bw = value;
+	} else if (!strcmp(setting, "cam_ife_0_drv_low_set_zero")) {
+		cam_debug.cpas_settings.cam_ife_0_drv_low_set_zero = value;
+	} else if (!strcmp(setting, "cam_ife_1_drv_low_set_zero")) {
+		cam_debug.cpas_settings.cam_ife_1_drv_low_set_zero = value;
+	} else if (!strcmp(setting, "cam_ife_2_drv_low_set_zero")) {
+		cam_debug.cpas_settings.cam_ife_2_drv_low_set_zero = value;
 	} else {
 		CAM_ERR(CAM_UTIL, "Unsupported cpas sysfs entry");
 		return -EINVAL;
 	}
 
+	cam_debug.cpas_settings.is_updated = true;
 	return 0;
 }
 
@@ -129,9 +250,10 @@ static inline void __cam_print_to_buffer(char *buf, const size_t buf_size, size_
 {
 	size_t buf_len = *len;
 
-	buf_len += scnprintf(buf + buf_len, (buf_size - buf_len), "\n%-8s: %s:\t",
-			CAM_LOG_TAG_NAME(tag), CAM_DBG_MOD_NAME(module_id));
-	buf_len += vscnprintf(buf + buf_len, (buf_size - buf_len), fmt, args);
+	buf_len += scnprintf(buf + buf_len, ((buf_size <= buf_len) ? 0 : (buf_size - buf_len)),
+			"\n%-8s: %s:\t", CAM_LOG_TAG_NAME(tag), CAM_DBG_MOD_NAME(module_id));
+	buf_len += vscnprintf(buf + buf_len, ((buf_size <= buf_len) ? 0 : (buf_size - buf_len)),
+		fmt, args);
 	*len = buf_len;
 }
 
@@ -140,15 +262,21 @@ void cam_print_to_buffer(char *buf, const size_t buf_size, size_t *len, unsigned
 {
 	va_list args;
 
+	if ((*len) >= buf_size) {
+		CAM_ERR(CAM_UTIL, "Inadequate buffer size: %lu for length: %lu", buf_size, len);
+		return;
+	}
+
 	va_start(args, fmt);
 	__cam_print_to_buffer(buf, buf_size, len, tag, module_id, fmt, args);
 	va_end(args);
 }
 
-static void __cam_print_log(int type, const char *fmt, va_list args)
+static void __cam_print_log(int type, const char *fmt, ...)
 {
-	va_list args1, args2;
+	va_list args1, args2, args;
 
+	va_start(args, fmt);
 	va_copy(args1, args);
 	va_copy(args2, args1);
 	if ((type & CAM_PRINT_LOG) && (debug_type != 1))
@@ -159,16 +287,26 @@ static void __cam_print_log(int type, const char *fmt, va_list args)
 	}
 	va_end(args2);
 	va_end(args1);
+	va_end(args);
 }
 
-void cam_print_log(int type, const char *fmt, ...)
+void cam_print_log(int type, int module, int tag, const char *func,
+	int line, const char *fmt, ...)
 {
+	char buf[CAM_LOG_BUF_LEN] = {0,};
 	va_list args;
 
 	if (!type)
 		return;
 
 	va_start(args, fmt);
-	__cam_print_log(type, fmt, args);
+	vscnprintf(buf, CAM_LOG_BUF_LEN, fmt, args);
+	__cam_print_log(type, __CAM_LOG_FMT,
+		CAM_LOG_TAG_NAME(tag), CAM_DBG_MOD_NAME(module), func,
+		line, buf);
 	va_end(args);
 }
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+EXPORT_SYMBOL(cam_print_log);
+#endif

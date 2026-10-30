@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_VFE680_H_
@@ -451,6 +452,9 @@ static struct cam_irq_register_set vfe680_top_irq_reg_set[2] = {
 		.mask_reg_offset   = 0x00000034,
 		.clear_reg_offset  = 0x0000003c,
 		.status_reg_offset = 0x00000044,
+		.set_reg_offset    = 0x0000004C,
+		.test_set_val      = BIT(1),
+		.test_sub_val      = BIT(0),
 	},
 	{
 		.mask_reg_offset   = 0x00000038,
@@ -462,9 +466,30 @@ static struct cam_irq_register_set vfe680_top_irq_reg_set[2] = {
 static struct cam_irq_controller_reg_info vfe680_top_irq_reg_info = {
 	.num_registers = 2,
 	.irq_reg_set = vfe680_top_irq_reg_set,
-	.global_clear_offset  = 0x00000030,
-	.global_clear_bitmask = 0x00000001,
-	.clear_all_bitmask = 0xFFFFFFFF,
+	.global_irq_cmd_offset = 0x00000030,
+	.global_clear_bitmask  = 0x00000001,
+	.global_set_bitmask    = 0x00000010,
+	.clear_all_bitmask     = 0xFFFFFFFF,
+};
+
+static uint32_t vfe680_top_debug_reg[] = {
+	0x000000A0,
+	0x000000A4,
+	0x000000A8,
+	0x000000AC,
+	0x000000B0,
+	0x000000B4,
+	0x000000B8,
+	0x000000BC,
+	0x000000C0,
+	0x000000C4,
+	0x000000C8,
+	0x000000CC,
+	0x000000D0,
+	0x000000D4,
+	0x000000D8,
+	0x000000DC,
+	0x000000E0,
 };
 
 static struct cam_vfe_top_ver4_reg_offset_common vfe680_top_common_reg = {
@@ -479,10 +504,8 @@ static struct cam_vfe_top_ver4_reg_offset_common vfe680_top_common_reg = {
 	.core_cfg_2               = 0x0000002C,
 	.global_reset_cmd         = 0x00000030,
 	.diag_config              = 0x00000050,
-	.diag_sensor_status_0     = 0x00000054,
-	.diag_sensor_status_1     = 0x00000058,
-	.diag_frm_cnt_status_0    = 0x0000005C,
-	.diag_frm_cnt_status_1    = 0x00000060,
+	.diag_sensor_status       = {0x00000054, 0x00000058},
+	.diag_frm_cnt_status      = {0x0000005C, 0x00000060},
 	.ipp_violation_status     = 0x00000064,
 	.pdaf_violation_status    = 0x00000404,
 	.core_cfg_3               = 0x00000068,
@@ -503,27 +526,29 @@ static struct cam_vfe_top_ver4_reg_offset_common vfe680_top_common_reg = {
 	.epoch_height_cfg         = 0x0000009C,
 	.bus_violation_status     = 0x00000C64,
 	.bus_overflow_status      = 0x00000C68,
+	.num_perf_counters        = 2,
+	.perf_count_reg = {
+		{
+			.perf_count_cfg    = 0x00000100,
+			.perf_pix_count    = 0x00000104,
+			.perf_line_count   = 0x00000108,
+			.perf_stall_count  = 0x0000010C,
+			.perf_always_count = 0x00000110,
+			.perf_count_status = 0x00000114,
+		},
+		{
+			.perf_count_cfg    = 0x00000118,
+			.perf_pix_count    = 0x0000011C,
+			.perf_line_count   = 0x00000120,
+			.perf_stall_count  = 0x00000124,
+			.perf_always_count = 0x00000128,
+			.perf_count_status = 0x0000012C,
+		},
+	},
 	.top_debug_cfg            = 0x000000FC,
 	.num_top_debug_reg        = CAM_VFE_680_NUM_DBG_REG,
-	.top_debug = {
-		0x000000A0,
-		0x000000A4,
-		0x000000A8,
-		0x000000AC,
-		0x000000B0,
-		0x000000B4,
-		0x000000B8,
-		0x000000BC,
-		0x000000C0,
-		0x000000C4,
-		0x000000C8,
-		0x000000CC,
-		0x000000D0,
-		0x000000D4,
-		0x000000D8,
-		0x000000DC,
-		0x000000E0,
-	},
+	.top_debug = vfe680_top_debug_reg,
+	.frame_timing_irq_reg_idx = CAM_IFE_IRQ_CAMIF_REG_STATUS1,
 };
 
 static struct cam_vfe_ver4_path_reg_data vfe_pp_common_reg_data = {
@@ -531,11 +556,15 @@ static struct cam_vfe_ver4_path_reg_data vfe_pp_common_reg_data = {
 	.epoch0_irq_mask                 = 0x10000,
 	.epoch1_irq_mask                 = 0x20000,
 	.eof_irq_mask                    = 0x00000002,
-	.error_irq_mask                  = 0x7F050,
+	.error_irq_mask                  = 0x7F1D0,
 	.enable_diagnostic_hw            = 0x1,
 	.top_debug_cfg_en                = 3,
 	.ipp_violation_mask              = 0x10,
 	.pdaf_violation_mask             = 0x40,
+	.diag_violation_mask             = 0x40000,
+	.diag_frm_count_mask_0           = 0x3f0,
+	.diag_sensor_sel_mask            = 0x0,
+	.diag_frm_count_mask_0           = 0x10,
 };
 
 static struct cam_vfe_ver4_path_reg_data vfe680_vfe_full_rdi_reg_data[3] = {
@@ -543,6 +572,8 @@ static struct cam_vfe_ver4_path_reg_data vfe680_vfe_full_rdi_reg_data[3] = {
 		.sof_irq_mask                    = 0x100,
 		.eof_irq_mask                    = 0x200,
 		.error_irq_mask                  = 0x0,
+		.diag_sensor_sel_mask            = 0x2,
+		.diag_frm_count_mask_0           = 0x40,
 		.enable_diagnostic_hw            = 0x1,
 		.top_debug_cfg_en                = 3,
 	},
@@ -550,6 +581,8 @@ static struct cam_vfe_ver4_path_reg_data vfe680_vfe_full_rdi_reg_data[3] = {
 		.sof_irq_mask                    = 0x400,
 		.eof_irq_mask                    = 0x800,
 		.error_irq_mask                  = 0x0,
+		.diag_sensor_sel_mask            = 0x4,
+		.diag_frm_count_mask_0           = 0x80,
 		.enable_diagnostic_hw            = 0x1,
 		.top_debug_cfg_en                = 3,
 	},
@@ -557,6 +590,8 @@ static struct cam_vfe_ver4_path_reg_data vfe680_vfe_full_rdi_reg_data[3] = {
 		.sof_irq_mask                    = 0x1000,
 		.eof_irq_mask                    = 0x2000,
 		.error_irq_mask                  = 0x0,
+		.diag_sensor_sel_mask            = 0x6,
+		.diag_frm_count_mask_0           = 0x100,
 		.enable_diagnostic_hw            = 0x1,
 		.top_debug_cfg_en                = 3,
 	},
@@ -566,12 +601,14 @@ static struct cam_vfe_ver4_path_reg_data vfe680_pdlib_reg_data = {
 	.sof_irq_mask                    = 0x4,
 	.eof_irq_mask                    = 0x8,
 	.error_irq_mask                  = 0x0,
+	.diag_sensor_sel_mask            = 0x8,
+	.diag_frm_count_mask_0           = 0x20,
 	.enable_diagnostic_hw            = 0x1,
 	.top_debug_cfg_en                = 3,
 };
 
 struct cam_vfe_ver4_path_hw_info
-	vfe680_rdi_hw_info_arr[CAM_VFE_RDI_VER2_MAX] = {
+	vfe680_rdi_hw_info_arr[] = {
 	{
 		.common_reg     = &vfe680_top_common_reg,
 		.reg_data       = &vfe680_vfe_full_rdi_reg_data[0],
@@ -758,6 +795,71 @@ static struct cam_vfe_top_ver4_debug_reg_info vfe680_dbg_reg_info[CAM_VFE_680_NU
 	),
 };
 
+static struct cam_vfe_top_ver4_diag_reg_info vfe680_diag_reg_info[] = {
+	{
+		.bitmask = 0x3FFF,
+		.name    = "SENSOR_HBI",
+	},
+	{
+		.bitmask = 0x4000,
+		.name    = "SENSOR_NEQ_HBI",
+	},
+	{
+		.bitmask = 0x8000,
+		.name    = "SENSOR_HBI_MIN_ERROR",
+	},
+	{
+		.bitmask = 0xFFFFFF,
+		.name    = "SENSOR_VBI",
+	},
+	{
+		.bitmask = 0xFF,
+		.name    = "FRAME_CNT_PIXEL_PIPE",
+	},
+	{
+		.bitmask = 0xFF00,
+		.name    = "FRAME_CNT_PDAF_PIPE",
+	},
+	{
+		.bitmask = 0xFF0000,
+		.name    = "FRAME_CNT_RDI_0_PIPE",
+	},
+	{
+		.bitmask = 0xFF000000,
+		.name    = "FRAME_CNT_RDI_1_PIPE",
+	},
+	{
+		.bitmask = 0xFF,
+		.name    = "FRAME_CNT_RDI_2_PIPE",
+	},
+	{
+		.bitmask = 0xFF00,
+		.name    = "FRAME_CNT_DSP_PIPE",
+	},
+};
+
+static struct cam_vfe_top_ver4_diag_reg_fields vfe680_diag_sensor_field[] = {
+	{
+		.num_fields = 3,
+		.field      = &vfe680_diag_reg_info[0],
+	},
+	{
+		.num_fields = 1,
+		.field      = &vfe680_diag_reg_info[3],
+	},
+};
+
+static struct cam_vfe_top_ver4_diag_reg_fields vfe680_diag_frame_field[] = {
+	{
+		.num_fields = 4,
+		.field      = &vfe680_diag_reg_info[4],
+	},
+	{
+		.num_fields = 2,
+		.field      = &vfe680_diag_reg_info[8],
+	},
+};
+
 static struct cam_vfe_top_ver4_hw_info vfe680_top_hw_info = {
 	.common_reg = &vfe680_top_common_reg,
 	.vfe_full_hw_info = {
@@ -768,29 +870,30 @@ static struct cam_vfe_top_ver4_hw_info vfe680_top_hw_info = {
 		.common_reg     = &vfe680_top_common_reg,
 		.reg_data       = &vfe680_pdlib_reg_data,
 	},
-	.rdi_hw_info[0] = &vfe680_rdi_hw_info_arr[0],
-	.rdi_hw_info[1] = &vfe680_rdi_hw_info_arr[1],
-	.rdi_hw_info[2] = &vfe680_rdi_hw_info_arr[2],
+	.rdi_hw_info            = vfe680_rdi_hw_info_arr,
 	.wr_client_desc         = vfe680_wr_client_desc,
 	.ipp_module_desc        = vfe680_ipp_mod_desc,
 	.num_mux = 5,
 	.mux_type = {
 		CAM_VFE_CAMIF_VER_4_0,
-		CAM_VFE_RDI_VER_1_0,
-		CAM_VFE_RDI_VER_1_0,
-		CAM_VFE_RDI_VER_1_0,
 		CAM_VFE_PDLIB_VER_1_0,
+		CAM_VFE_RDI_VER_1_0,
+		CAM_VFE_RDI_VER_1_0,
+		CAM_VFE_RDI_VER_1_0,
 	},
 	.num_path_port_map = 2,
 	.path_port_map = {
 		{CAM_ISP_HW_VFE_IN_PDLIB, CAM_ISP_IFE_OUT_RES_2PD},
 		{CAM_ISP_HW_VFE_IN_PDLIB, CAM_ISP_IFE_OUT_RES_PREPROCESS_2PD}
 	},
+	.num_rdi                         = ARRAY_SIZE(vfe680_rdi_hw_info_arr),
 	.num_top_errors                  = ARRAY_SIZE(vfe680_top_irq_err_desc),
 	.top_err_desc                    = vfe680_top_irq_err_desc,
 	.num_pdaf_violation_errors       = ARRAY_SIZE(vfe680_pdaf_violation_desc),
 	.pdaf_violation_desc             = vfe680_pdaf_violation_desc,
-	.debug_reg_info                  = &vfe680_dbg_reg_info,
+	.top_debug_reg_info              = &vfe680_dbg_reg_info,
+	.diag_sensor_info                = vfe680_diag_sensor_field,
+	.diag_frame_info                 = vfe680_diag_frame_field,
 };
 
 static struct cam_irq_register_set vfe680_bus_irq_reg[2] = {
@@ -798,11 +901,13 @@ static struct cam_irq_register_set vfe680_bus_irq_reg[2] = {
 			.mask_reg_offset   = 0x00000C18,
 			.clear_reg_offset  = 0x00000C20,
 			.status_reg_offset = 0x00000C28,
+			.set_reg_offset    = 0x00000C50,
 		},
 		{
 			.mask_reg_offset   = 0x00000C1C,
 			.clear_reg_offset  = 0x00000C24,
 			.status_reg_offset = 0x00000C2C,
+			.set_reg_offset    = 0x00000C54,
 		},
 };
 
@@ -862,6 +967,34 @@ static struct cam_vfe_bus_ver3_reg_offset_ubwc_client
 	.ubwc_comp_en_bit = BIT(1),
 };
 
+static uint32_t vfe680_out_port_mid[][4] = {
+	{18, 0, 0, 0},
+	{19, 0, 0, 0},
+	{20, 0, 0, 0},
+	{8, 9, 10, 11},
+	{32, 0, 0, 0},
+	{33, 0, 0, 0},
+	{16, 17, 0, 0},
+	{36, 37, 38, 0},
+	{4, 0, 0, 0},
+	{41, 0, 0, 0},
+	{44, 0, 0, 0},
+	{42, 0, 0, 0},
+	{40, 0, 0, 0},
+	{46, 0, 0, 0},
+	{47, 0, 0, 0},
+	{12, 13, 14, 15},
+	{34, 0, 0, 0},
+	{35, 0, 0, 0},
+	{5, 6, 0, 0},
+	{48, 0, 0, 0},
+	{43, 0, 0, 0},
+	{7, 0, 0, 0},
+	{39, 0, 0, 0},
+	{49, 50, 0, 0},
+	{45, 0, 0, 0},
+};
+
 static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 	.common_reg = {
 		.hw_version                       = 0x00000C00,
@@ -882,10 +1015,15 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 		.debug_status_top_cfg             = 0x00000CD4,
 		.debug_status_top                 = 0x00000CD8,
 		.test_bus_ctrl                    = 0x00000CDC,
+		.wm_mode_shift                    = 16,
+		.wm_mode_val                      = { 0x0, 0x1, 0x2 },
+		.wm_en_shift                      = 0,
+		.frmheader_en_shift               = 2,
+		.virtual_frm_en_shift		  = 1,
 		.irq_reg_info = {
 			.num_registers            = 2,
 			.irq_reg_set              = vfe680_bus_irq_reg,
-			.global_clear_offset      = 0x00000C30,
+			.global_irq_cmd_offset    = 0x00000C30,
 			.global_clear_bitmask     = 0x00000001,
 		},
 	},
@@ -920,6 +1058,11 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x00000E1C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_0,
 			.ubwc_regs                = &vfe680_ubwc_regs_client_0,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_UBWC_NV12) |
+				BIT_ULL(CAM_FORMAT_UBWC_NV12_4R) | BIT_ULL(CAM_FORMAT_NV21) |
+				BIT_ULL(CAM_FORMAT_NV12) | BIT_ULL(CAM_FORMAT_Y_ONLY) |
+				BIT_ULL(CAM_FORMAT_UBWC_TP10) | BIT_ULL(CAM_FORMAT_TP10) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10),
 		},
 		/* BUS Client 1 FULL C */
 		{
@@ -950,6 +1093,11 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x00000F1C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_0,
 			.ubwc_regs                = &vfe680_ubwc_regs_client_1,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_UBWC_NV12) |
+				BIT_ULL(CAM_FORMAT_UBWC_NV12_4R) | BIT_ULL(CAM_FORMAT_NV21) |
+				BIT_ULL(CAM_FORMAT_NV12) | BIT_ULL(CAM_FORMAT_Y_ONLY) |
+				BIT_ULL(CAM_FORMAT_UBWC_TP10) | BIT_ULL(CAM_FORMAT_TP10) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10),
 		},
 		/* BUS Client 2 DS4 */
 		{
@@ -977,6 +1125,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000101C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_0,
 			.ubwc_regs                = NULL,
+			.supported_formats        = 0xFFFFFFFFFFFFFFFF,
 		},
 		/* BUS Client 3 DS16 */
 		{
@@ -1004,6 +1153,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000111C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_0,
 			.ubwc_regs                = NULL,
+			.supported_formats        = 0xFFFFFFFFFFFFFFFF,
 		},
 		/* BUS Client 4 DISP Y */
 		{
@@ -1034,6 +1184,11 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000121C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_1,
 			.ubwc_regs                = &vfe680_ubwc_regs_client_4,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_UBWC_NV12) |
+				BIT_ULL(CAM_FORMAT_UBWC_NV12_4R) | BIT_ULL(CAM_FORMAT_NV21) |
+				BIT_ULL(CAM_FORMAT_NV12) | BIT_ULL(CAM_FORMAT_Y_ONLY) |
+				BIT_ULL(CAM_FORMAT_UBWC_TP10) | BIT_ULL(CAM_FORMAT_TP10) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10),
 		},
 		/* BUS Client 5 DISP C */
 		{
@@ -1064,6 +1219,11 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000131C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_1,
 			.ubwc_regs                = &vfe680_ubwc_regs_client_5,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_UBWC_NV12) |
+				BIT_ULL(CAM_FORMAT_UBWC_NV12_4R) | BIT_ULL(CAM_FORMAT_NV21) |
+				BIT_ULL(CAM_FORMAT_NV12) | BIT_ULL(CAM_FORMAT_Y_ONLY) |
+				BIT_ULL(CAM_FORMAT_UBWC_TP10) | BIT_ULL(CAM_FORMAT_TP10) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10),
 		},
 		/* BUS Client 6 DISP DS4 */
 		{
@@ -1091,6 +1251,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000141C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_1,
 			.ubwc_regs                = NULL,
+			.supported_formats        = 0xFFFFFFFFFFFFFFFF,
 		},
 		/* BUS Client 7 DISP DS16 */
 		{
@@ -1118,6 +1279,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000151C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_1,
 			.ubwc_regs                = NULL,
+			.supported_formats        = 0xFFFFFFFFFFFFFFFF,
 		},
 		/* BUS Client 8 FD Y */
 		{
@@ -1148,6 +1310,11 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000161C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_2,
 			.ubwc_regs                = NULL,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_UBWC_NV12) |
+				BIT_ULL(CAM_FORMAT_UBWC_NV12_4R) | BIT_ULL(CAM_FORMAT_NV21) |
+				BIT_ULL(CAM_FORMAT_NV12) | BIT_ULL(CAM_FORMAT_Y_ONLY) |
+				BIT_ULL(CAM_FORMAT_UBWC_TP10) | BIT_ULL(CAM_FORMAT_TP10) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10),
 		},
 		/* BUS Client 9 FD C */
 		{
@@ -1175,6 +1342,11 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000171C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_2,
 			.ubwc_regs                = NULL,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_UBWC_NV12) |
+				BIT_ULL(CAM_FORMAT_UBWC_NV12_4R) | BIT_ULL(CAM_FORMAT_NV21) |
+				BIT_ULL(CAM_FORMAT_NV12) | BIT_ULL(CAM_FORMAT_Y_ONLY) |
+				BIT_ULL(CAM_FORMAT_UBWC_TP10) | BIT_ULL(CAM_FORMAT_TP10) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10),
 		},
 		/* BUS Client 10 PIXEL RAW */
 		{
@@ -1205,6 +1377,15 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000181C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_3,
 			.ubwc_regs                = NULL,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_MIPI_RAW_6) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_8) | BIT_ULL(CAM_FORMAT_MIPI_RAW_10) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_12) | BIT_ULL(CAM_FORMAT_MIPI_RAW_14) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_16) | BIT_ULL(CAM_FORMAT_MIPI_RAW_20) |
+				BIT_ULL(CAM_FORMAT_PLAIN8) | BIT_ULL(CAM_FORMAT_PLAIN16_8) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10) | BIT_ULL(CAM_FORMAT_PLAIN16_12) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_14) | BIT_ULL(CAM_FORMAT_PLAIN16_16) |
+				BIT_ULL(CAM_FORMAT_PLAIN32_20) | BIT_ULL(CAM_FORMAT_PLAIN64) |
+				BIT_ULL(CAM_FORMAT_PLAIN128),
 		},
 		/* BUS Client 11 STATS BE 0 */
 		{
@@ -1235,6 +1416,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000191C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_4,
 			.ubwc_regs                = NULL,
+			.supported_formats        = 0xFFFFFFFFFFFFFFFF,
 		},
 		/* BUS Client 12 STATS BHIST 0 */
 		{
@@ -1265,6 +1447,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x00001A1C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_4,
 			.ubwc_regs                = NULL,
+			.supported_formats        = 0xFFFFFFFFFFFFFFFF,
 		},
 		/* BUS Client 13 STATS TINTLESS BG */
 		{
@@ -1295,6 +1478,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x00001B1C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_5,
 			.ubwc_regs                = NULL,
+			.supported_formats        = 0xFFFFFFFFFFFFFFFF,
 		},
 		/* BUS Client 14 STATS AWB BG */
 		{
@@ -1325,6 +1509,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x00001C1C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_6,
 			.ubwc_regs                = NULL,
+			.supported_formats        = 0xFFFFFFFFFFFFFFFF,
 		},
 		/* BUS Client 15 STATS AWB BFW */
 		{
@@ -1355,6 +1540,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x00001D1C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_6,
 			.ubwc_regs                = NULL,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_PLAIN64),
 		},
 		/* BUS Client 16 STATS BAF */
 		{
@@ -1385,6 +1571,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x00001E1C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_7,
 			.ubwc_regs                = NULL,
+			.supported_formats        = 0xFFFFFFFFFFFFFFFF,
 		},
 		/* BUS Client 17 STATS BHIST */
 		{
@@ -1415,6 +1602,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x00001F1C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_8,
 			.ubwc_regs                = NULL,
+			.supported_formats        = 0xFFFFFFFFFFFFFFFF,
 		},
 		/* BUS Client 18 STATS RS */
 		{
@@ -1445,6 +1633,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000201C,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_9,
 			.ubwc_regs                = NULL,
+			.supported_formats        = 0xFFFFFFFFFFFFFFFF,
 		},
 		/* BUS Client 19 STATS IHIST */
 		{
@@ -1475,6 +1664,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000211C,
 			.comp_group              = CAM_VFE_BUS_VER3_COMP_GRP_10,
 			.ubwc_regs                = NULL,
+			.supported_formats        = 0xFFFFFFFFFFFFFFFF,
 		},
 		/* BUS Client 20 SPARSE PD */
 		{
@@ -1505,6 +1695,10 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000221C,
 			.comp_group              = CAM_VFE_BUS_VER3_COMP_GRP_12,
 			.ubwc_regs                = NULL,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_PLAIN16_8) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10) | BIT_ULL(CAM_FORMAT_PLAIN16_12) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_14) | BIT_ULL(CAM_FORMAT_PLAIN16_16) |
+				BIT_ULL(CAM_FORMAT_PLAIN8) | BIT_ULL(CAM_FORMAT_PLAIN8_10),
 		},
 		/* BUS Client 21 PDAF V2.0 PD DATA - 2PD */
 		{
@@ -1535,6 +1729,9 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000231C,
 			.comp_group              = CAM_VFE_BUS_VER3_COMP_GRP_13,
 			.ubwc_regs                = NULL,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_PLAIN16_8) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10) | BIT_ULL(CAM_FORMAT_PLAIN16_12) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_14) | BIT_ULL(CAM_FORMAT_PLAIN16_16),
 		},
 		/* BUS Client 22 PDAF V2.0 SAD STATS */
 		{
@@ -1565,6 +1762,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000241C,
 			.comp_group              = CAM_VFE_BUS_VER3_COMP_GRP_13,
 			.ubwc_regs                = NULL,
+			.supported_formats        = 0xFFFFFFFFFFFFFFFF,
 		},
 		/* BUS Client 23 LCR */
 		{
@@ -1595,6 +1793,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000251C,
 			.comp_group              = CAM_VFE_BUS_VER3_COMP_GRP_11,
 			.ubwc_regs                = NULL,
+			.supported_formats        = 0xFFFFFFFFFFFFFFFF,
 		},
 		/* BUS Client 24 RDI0 */
 		{
@@ -1625,6 +1824,15 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000261C,
 			.comp_group              = CAM_VFE_BUS_VER3_COMP_GRP_14,
 			.ubwc_regs                = NULL,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_MIPI_RAW_10) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_6) | BIT_ULL(CAM_FORMAT_MIPI_RAW_8) |
+				BIT_ULL(CAM_FORMAT_YUV422) | BIT_ULL(CAM_FORMAT_MIPI_RAW_12) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_14) | BIT_ULL(CAM_FORMAT_MIPI_RAW_16) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_20) | BIT_ULL(CAM_FORMAT_PLAIN128) |
+				BIT_ULL(CAM_FORMAT_PLAIN32_20) | BIT_ULL(CAM_FORMAT_PLAIN8) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10) | BIT_ULL(CAM_FORMAT_PLAIN16_12) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_14) | BIT_ULL(CAM_FORMAT_PLAIN16_16) |
+				BIT_ULL(CAM_FORMAT_PLAIN64) | BIT_ULL(CAM_FORMAT_YUV422_10),
 		},
 		/* BUS Client 25 RDI1 */
 		{
@@ -1655,6 +1863,15 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000271C,
 			.comp_group              = CAM_VFE_BUS_VER3_COMP_GRP_15,
 			.ubwc_regs                = NULL,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_MIPI_RAW_10) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_6) | BIT_ULL(CAM_FORMAT_MIPI_RAW_8) |
+				BIT_ULL(CAM_FORMAT_YUV422) | BIT_ULL(CAM_FORMAT_MIPI_RAW_12) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_14) | BIT_ULL(CAM_FORMAT_MIPI_RAW_16) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_20) | BIT_ULL(CAM_FORMAT_PLAIN128) |
+				BIT_ULL(CAM_FORMAT_PLAIN32_20) | BIT_ULL(CAM_FORMAT_PLAIN8) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10) | BIT_ULL(CAM_FORMAT_PLAIN16_12) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_14) | BIT_ULL(CAM_FORMAT_PLAIN16_16) |
+				BIT_ULL(CAM_FORMAT_PLAIN64) | BIT_ULL(CAM_FORMAT_YUV422_10),
 		},
 		/* BUS Client 26 RDI2 */
 		{
@@ -1685,6 +1902,15 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000281C,
 			.comp_group              = CAM_VFE_BUS_VER3_COMP_GRP_16,
 			.ubwc_regs                = NULL,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_MIPI_RAW_10) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_6) | BIT_ULL(CAM_FORMAT_MIPI_RAW_8) |
+				BIT_ULL(CAM_FORMAT_YUV422) | BIT_ULL(CAM_FORMAT_MIPI_RAW_12) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_14) | BIT_ULL(CAM_FORMAT_MIPI_RAW_16) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_20) | BIT_ULL(CAM_FORMAT_PLAIN128) |
+				BIT_ULL(CAM_FORMAT_PLAIN32_20) | BIT_ULL(CAM_FORMAT_PLAIN8) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10) | BIT_ULL(CAM_FORMAT_PLAIN16_12) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_14) | BIT_ULL(CAM_FORMAT_PLAIN16_16) |
+				BIT_ULL(CAM_FORMAT_PLAIN64) | BIT_ULL(CAM_FORMAT_YUV422_10),
 		},
 		/* BUS Client 27 LTM STATS */
 		{
@@ -1715,6 +1941,7 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.bw_limiter_addr          = 0x0000291C,
 			.comp_group              = CAM_VFE_BUS_VER3_COMP_GRP_3,
 			.ubwc_regs                = NULL,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_PLAIN32),
 		},
 	},
 	.num_out = 25,
@@ -1724,7 +1951,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_2,
-			.mid[0]        = 18,
+			.mid           = vfe680_out_port_mid[0],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.line_based    = 1,
 			.wm_idx        = {
@@ -1739,7 +1967,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_3,
-			.mid[0]        = 19,
+			.mid           = vfe680_out_port_mid[1],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.line_based    = 1,
 			.wm_idx        = {
@@ -1754,7 +1983,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_4,
-			.mid[0]        = 20,
+			.mid           = vfe680_out_port_mid[2],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.line_based    = 1,
 			.wm_idx        = {
@@ -1769,11 +1999,10 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = 4096,
 			.max_height    = 4096,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 8,
-			.mid[1]        = 9,
-			.mid[2]        = 10,
-			.mid[3]        = 11,
+			.mid           = vfe680_out_port_mid[3],
+			.num_mid       = 4,
 			.num_wm        = 2,
+			.line_based    = 1,
 			.wm_idx        = {
 				0,
 				1,
@@ -1788,8 +2017,10 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = 1920,
 			.max_height    = 1080,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 32,
+			.mid           = vfe680_out_port_mid[4],
+			.num_mid       = 1,
 			.num_wm        = 1,
+			.line_based    = 1,
 			.wm_idx        = {
 				2,
 			},
@@ -1802,8 +2033,10 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = 1920,
 			.max_height    = 1080,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 33,
+			.mid           = vfe680_out_port_mid[5],
+			.num_mid       = 1,
 			.num_wm        = 1,
+			.line_based    = 1,
 			.wm_idx        = {
 				3,
 			},
@@ -1816,9 +2049,10 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 16,
-			.mid[1]        = 17,
+			.mid           = vfe680_out_port_mid[6],
+			.num_mid       = 2,
 			.num_wm        = 1,
+			.line_based    = 1,
 			.wm_idx        = {
 				10,
 			},
@@ -1831,10 +2065,10 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = 1920,
 			.max_height    = 1080,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 36,
-			.mid[1]        = 37,
-			.mid[2]        = 38,
+			.mid           = vfe680_out_port_mid[7],
+			.num_mid       = 3,
 			.num_wm        = 2,
+			.line_based    = 1,
 			.wm_idx        = {
 				8,
 				9,
@@ -1849,8 +2083,10 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = 1920,
 			.max_height    = 1080,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 4,
+			.mid           = vfe680_out_port_mid[8],
+			.num_mid       = 1,
 			.num_wm        = 1,
+			.line_based    = 1,
 			.wm_idx        = {
 				20,
 			},
@@ -1864,7 +2100,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 41,
+			.mid           = vfe680_out_port_mid[9],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = {
 				13,
@@ -1878,7 +2115,9 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 44,
+
+			.mid           = vfe680_out_port_mid[10],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = {
 				16,
@@ -1892,7 +2131,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 42,
+			.mid           = vfe680_out_port_mid[11],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = {
 				14,
@@ -1906,7 +2146,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 40,
+			.mid           = vfe680_out_port_mid[12],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = {
 				12,
@@ -1920,7 +2161,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 46,
+			.mid           = vfe680_out_port_mid[13],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = {
 				18,
@@ -1934,7 +2176,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 47,
+			.mid           = vfe680_out_port_mid[14],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = {
 				19,
@@ -1948,11 +2191,10 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = 4096,
 			.max_height    = 4096,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 12,
-			.mid[1]        = 13,
-			.mid[2]        = 14,
-			.mid[3]        = 15,
+			.mid           = vfe680_out_port_mid[15],
+			.num_mid       = 4,
 			.num_wm        = 2,
+			.line_based    = 1,
 			.wm_idx        = {
 				4,
 				5,
@@ -1967,8 +2209,10 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = 1920,
 			.max_height    = 1080,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 34,
+			.mid           = vfe680_out_port_mid[16],
+			.num_mid       = 1,
 			.num_wm        = 1,
+			.line_based    = 1,
 			.wm_idx        = {
 				6,
 			},
@@ -1981,8 +2225,10 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = 1920,
 			.max_height    = 1080,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 35,
+			.mid           = vfe680_out_port_mid[17],
+			.num_mid       = 1,
 			.num_wm        = 1,
+			.line_based    = 1,
 			.wm_idx        = {
 				7,
 			},
@@ -1995,9 +2241,10 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = 1920,
 			.max_height    = 1080,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_1,
-			.mid[0]        = 5,
-			.mid[1]        = 6,
+			.mid           = vfe680_out_port_mid[18],
+			.num_mid       = 2,
 			.num_wm        = 1,
+			.line_based    = 1,
 			.wm_idx        = {
 				21,
 			},
@@ -2010,8 +2257,10 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 48,
+			.mid           = vfe680_out_port_mid[19],
+			.num_mid       = 1,
 			.num_wm        = 1,
+			.line_based    = 1,
 			.wm_idx        = {
 				23,
 			},
@@ -2024,7 +2273,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 43,
+			.mid           = vfe680_out_port_mid[20],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = {
 				15,
@@ -2038,7 +2288,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_1,
-			.mid[0]        = 7,
+			.mid           = vfe680_out_port_mid[21],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = {
 				22,
@@ -2052,7 +2303,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 39,
+			.mid           = vfe680_out_port_mid[22],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = {
 				11,
@@ -2066,9 +2318,10 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 49,
-			.mid[1]        = 50,
+			.mid           = vfe680_out_port_mid[23],
+			.num_mid       = 2,
 			.num_wm        = 1,
+			.line_based    = 1,
 			.wm_idx        = {
 				27,
 			},
@@ -2082,7 +2335,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 			.max_width     = 1920,
 			.max_height    = 1080,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 45,
+			.mid           = vfe680_out_port_mid[24],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = {
 				17,
@@ -2213,7 +2467,12 @@ static struct cam_vfe_bus_ver3_hw_info vfe680_bus_hw_info = {
 	},
 	.num_comp_grp          = 17,
 	.support_consumed_addr = true,
-	.comp_done_shift       = 0,
+	.comp_done_mask = {
+		BIT(0), BIT(1), BIT(2), BIT(3),
+		BIT(4), BIT(5), BIT(6), BIT(7),
+		BIT(8), BIT(9), BIT(10), BIT(11),
+		BIT(12), BIT(13), BIT(14), BIT(15), BIT(16),
+	},
 	.top_irq_shift         = 0,
 	.max_out_res           = CAM_ISP_IFE_OUT_RES_BASE + 33,
 	.pack_align_shift      = 5,

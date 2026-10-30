@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -12,7 +13,7 @@
 static const char lrme_dev_name[] = "cam-lrme";
 
 static int __cam_lrme_ctx_acquire_dev_in_available(struct cam_context *ctx,
-	struct cam_acquire_dev_cmd *cmd)
+	struct cam_acquire_dev_cmd_unified *args)
 {
 	int rc = 0;
 	uintptr_t ctxt_to_hw_map = (uintptr_t)ctx->ctxt_to_hw_map;
@@ -20,7 +21,7 @@ static int __cam_lrme_ctx_acquire_dev_in_available(struct cam_context *ctx,
 
 	CAM_DBG(CAM_LRME, "Enter ctx %d", ctx->ctx_id);
 
-	rc = cam_context_acquire_dev_to_hw(ctx, cmd);
+	rc = cam_context_acquire_dev_to_hw(ctx, args);
 	if (rc) {
 		CAM_ERR(CAM_LRME, "Failed to acquire");
 		return rc;
@@ -105,10 +106,14 @@ static int __cam_lrme_ctx_flush_dev_in_activated(struct cam_context *ctx,
 	struct cam_flush_dev_cmd *cmd)
 {
 	int rc;
+	struct cam_context_utils_flush_args flush_args;
 
 	CAM_DBG(CAM_LRME, "Enter ctx %d", ctx->ctx_id);
 
-	rc = cam_context_flush_dev_to_hw(ctx, cmd);
+	flush_args.cmd = cmd;
+	flush_args.flush_active_req = true;
+
+	rc = cam_context_flush_dev_to_hw(ctx, &flush_args);
 	if (rc)
 		CAM_ERR(CAM_LRME, "Failed to flush device");
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2019, 2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/of.h>
@@ -12,6 +12,10 @@
 #include <cam_req_mgr_util.h>
 #include "cam_sensor_soc.h"
 #include "cam_soc_util.h"
+#include "cam_mem_mgr_api.h"
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#include "oplus_cam_sensor.h"
+#endif
 
 int32_t cam_sensor_get_sub_module_index(struct device_node *of_node,
 	struct cam_sensor_board_info *s_info)
@@ -108,16 +112,21 @@ static int32_t cam_sensor_init_bus_params(struct cam_sensor_ctrl_t *s_ctrl)
 		"master_type: %d", s_ctrl->io_master_info.master_type);
 	/* Initialize cci_client */
 	if (s_ctrl->io_master_info.master_type == CCI_MASTER) {
-		s_ctrl->io_master_info.cci_client = kzalloc(sizeof(
+		s_ctrl->io_master_info.cci_client = CAM_MEM_ZALLOC(sizeof(
 			struct cam_sensor_cci_client), GFP_KERNEL);
-		if (!(s_ctrl->io_master_info.cci_client))
+		if (!(s_ctrl->io_master_info.cci_client)) {
+			CAM_ERR(CAM_SENSOR, "Memory allocation failed");
 			return -ENOMEM;
+		}
 	} else if (s_ctrl->io_master_info.master_type == I2C_MASTER) {
-		if (!(s_ctrl->io_master_info.client))
+		if (!(s_ctrl->io_master_info.qup_client))
 			return -EINVAL;
+	} else if (s_ctrl->io_master_info.master_type == I3C_MASTER) {
+		CAM_DBG(CAM_SENSOR, "I3C Master Type");
 	} else {
 		CAM_ERR(CAM_SENSOR,
-			"Invalid master / Master type Not supported");
+			"Invalid master / Master type Not supported : %d",
+				s_ctrl->io_master_info.master_type);
 		return -EINVAL;
 	}
 
@@ -132,8 +141,10 @@ static int32_t cam_sensor_driver_get_dt_data(struct cam_sensor_ctrl_t *s_ctrl)
 	struct device_node *of_node = s_ctrl->of_node;
 	struct device_node *of_parent = NULL;
 	struct cam_hw_soc_info *soc_info = &s_ctrl->soc_info;
-
-	s_ctrl->sensordata = kzalloc(sizeof(*sensordata), GFP_KERNEL);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	oplus_sensor_sony_get_vsync_data(of_node,&s_ctrl->vsync_info);
+#endif
+	s_ctrl->sensordata = CAM_MEM_ZALLOC(sizeof(*sensordata), GFP_KERNEL);
 	if (!s_ctrl->sensordata)
 		return -ENOMEM;
 
@@ -159,6 +170,13 @@ static int32_t cam_sensor_driver_get_dt_data(struct cam_sensor_ctrl_t *s_ctrl)
 		CAM_ERR(CAM_SENSOR, "Failed invalid cell_id %d", s_ctrl->id);
 		rc = -EINVAL;
 		goto FREE_SENSOR_DATA;
+	}
+
+	rc = of_property_read_bool(of_node, "i3c-target");
+	if (rc) {
+		CAM_INFO(CAM_SENSOR, "I3C Target");
+		s_ctrl->is_i3c_device = true;
+		s_ctrl->io_master_info.master_type = I3C_MASTER;
 	}
 
 	/* Store the index of BoB regulator if it is available */
@@ -204,16 +222,15 @@ static int32_t cam_sensor_driver_get_dt_data(struct cam_sensor_ctrl_t *s_ctrl)
 	}
 
 	if (s_ctrl->io_master_info.master_type == CCI_MASTER) {
+
 		/* Get CCI master */
-		rc = of_property_read_u32(of_node, "cci-master",
-			&s_ctrl->cci_i2c_master);
-		CAM_DBG(CAM_SENSOR, "cci-master %d, rc %d",
-			s_ctrl->cci_i2c_master, rc);
-		if (rc < 0) {
+		if (of_property_read_u32(of_node, "cci-master",
+			&s_ctrl->cci_i2c_master)) {
 			/* Set default master 0 */
 			s_ctrl->cci_i2c_master = MASTER_0;
-			rc = 0;
 		}
+		CAM_DBG(CAM_SENSOR, "cci-master %d",
+			s_ctrl->cci_i2c_master);
 
 		of_parent = of_get_parent(of_node);
 		if (of_property_read_u32(of_parent, "cell-index",
@@ -243,21 +260,31 @@ static int32_t cam_sensor_driver_get_dt_data(struct cam_sensor_ctrl_t *s_ctrl)
 		sensordata->pos_yaw = 360;
 	}
 
-	if (!of_property_read_bool(of_node, "aon-user")) {
-		CAM_DBG(CAM_SENSOR,
-			"SENSOR cell_idx: %d not use for AON usecase",
-			s_ctrl->soc_info.index);
-		s_ctrl->is_aon_user = false;
+	if (of_property_read_u32(of_node, "aon-camera-id", &s_ctrl->aon_camera_id)) {
+		CAM_DBG(CAM_SENSOR, "cell_idx: %d is not used for AON usecase", soc_info->index);
+		s_ctrl->aon_camera_id = NOT_AON_CAM;
 	} else {
-		CAM_DBG(CAM_SENSOR,
-			"SENSOR cell_idx: %d is user for AON usecase",
-			s_ctrl->soc_info.index);
-		s_ctrl->is_aon_user = true;
+		CAM_INFO(CAM_SENSOR,
+			"AON Sensor detected in cell_idx: %d aon_camera_id: %d phy_index: %d",
+			soc_info->index, s_ctrl->aon_camera_id,
+			s_ctrl->sensordata->subdev_id[SUB_MODULE_CSIPHY]);
+		if ((s_ctrl->sensordata->subdev_id[SUB_MODULE_CSIPHY] == 2) &&
+			(s_ctrl->aon_camera_id != AON_CAM2)) {
+			CAM_ERR(CAM_SENSOR, "Incorrect AON camera id for cphy_index %d",
+				s_ctrl->sensordata->subdev_id[SUB_MODULE_CSIPHY]);
+			s_ctrl->aon_camera_id = NOT_AON_CAM;
+		}
+		if ((s_ctrl->sensordata->subdev_id[SUB_MODULE_CSIPHY] == 4) &&
+			(s_ctrl->aon_camera_id != AON_CAM1)) {
+			CAM_ERR(CAM_SENSOR, "Incorrect AON camera id for cphy_index %d",
+				s_ctrl->sensordata->subdev_id[SUB_MODULE_CSIPHY]);
+			s_ctrl->aon_camera_id = NOT_AON_CAM;
+		}
 	}
 
 	rc = cam_sensor_util_aon_registration(
 		s_ctrl->sensordata->subdev_id[SUB_MODULE_CSIPHY],
-		s_ctrl->is_aon_user);
+		s_ctrl->aon_camera_id);
 	if (rc) {
 		CAM_ERR(CAM_SENSOR, "Aon registration failed, rc: %d", rc);
 		goto FREE_SENSOR_DATA;
@@ -268,10 +295,17 @@ static int32_t cam_sensor_driver_get_dt_data(struct cam_sensor_ctrl_t *s_ctrl)
 	else
 		s_ctrl->hw_no_ops = true;
 
+	cam_sensor_utils_parse_pm_ctrl_flag(of_node, &(s_ctrl->io_master_info));
+	CAM_INFO(CAM_SENSOR,
+		"master: %d (1-CCI, 2-I2C, 3-SPI, 4-I3C) pm_ctrl_client_enable: %d",
+		s_ctrl->io_master_info.master_type,
+		(!s_ctrl->io_master_info.qup_client) ? 0 :
+			s_ctrl->io_master_info.qup_client->pm_ctrl_client_enable);
+
 	return rc;
 
 FREE_SENSOR_DATA:
-	kfree(sensordata);
+	CAM_MEM_FREE(sensordata);
 	s_ctrl->sensordata = NULL;
 
 	return rc;
@@ -296,11 +330,15 @@ int32_t cam_sensor_parse_dt(struct cam_sensor_ctrl_t *s_ctrl)
 	for (i = 0; i < soc_info->num_clk; i++) {
 		soc_info->clk[i] = devm_clk_get(soc_info->dev,
 					soc_info->clk_name[i]);
-		if (!soc_info->clk[i]) {
+		if (IS_ERR(soc_info->clk[i])) {
 			CAM_ERR(CAM_SENSOR, "get failed for %s",
 				 soc_info->clk_name[i]);
 			rc = -ENOENT;
 			return rc;
+		} else if (!soc_info->clk[i]) {
+			CAM_DBG(CAM_SENSOR, "%s handle is NULL skip get",
+				soc_info->clk_name[i]);
+			continue;
 		}
 	}
 	/* Initialize regulators to default parameters */

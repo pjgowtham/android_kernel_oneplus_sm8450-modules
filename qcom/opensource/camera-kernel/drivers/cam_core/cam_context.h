@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_CONTEXT_H_
@@ -14,6 +14,7 @@
 #include "cam_req_mgr_interface.h"
 #include "cam_hw_mgr_intf.h"
 #include "cam_smmu_api.h"
+#include "cam_common_util.h"
 
 /* Forward declarations */
 struct cam_context;
@@ -28,7 +29,7 @@ struct cam_context;
 #define CAM_CTX_RES_MAX              20
 
 /* max tag  dump header string length*/
-#define CAM_CTXT_DUMP_TAG_MAX_LEN 32
+#define CAM_CTXT_DUMP_TAG_MAX_LEN 128
 
 /* Number of words to be dumped for context*/
 #define CAM_CTXT_DUMP_NUM_WORDS 10
@@ -65,7 +66,10 @@ enum cam_context_state {
  * @index:                 Index of request in the list
  * @flushed:               Request is flushed
  * @ctx:                   The context to which this request belongs
+ * @buf_tracker:           List of buffers we want to keep ref counts on
+ *                         used by the HW block for a particular req
  * @pf_data                page fault debug data
+ * @packet                 pointer to packet
  *
  */
 struct cam_ctx_request {
@@ -84,7 +88,9 @@ struct cam_ctx_request {
 	uint32_t                       index;
 	int                            flushed;
 	struct cam_context            *ctx;
-	struct cam_hw_mgr_dump_pf_data pf_data;
+	struct list_head               buf_tracker;
+	struct cam_hw_mgr_pf_request_info  pf_data;
+	void                           *packet;
 };
 
 /**
@@ -103,7 +109,7 @@ struct cam_ctx_request {
  */
 struct cam_ctx_ioctl_ops {
 	int (*acquire_dev)(struct cam_context *ctx,
-			struct cam_acquire_dev_cmd *cmd);
+			struct cam_acquire_dev_cmd_unified *cmd);
 	int (*release_dev)(struct cam_context *ctx,
 			struct cam_release_dev_cmd *cmd);
 	int (*config_dev)(struct cam_context *ctx,
@@ -164,6 +170,7 @@ struct cam_ctx_crm_ops {
  *                         context info
  * @recovery_ops:          Function to be invoked to try hardware recovery
  * @mini_dump_ops:         Function for mini dump
+ * @err_inject_ops:        Function for error injection
  * @msg_cb_ops:            Function to be called on any message from
  *                         other subdev notifications
  *
@@ -176,8 +183,10 @@ struct cam_ctx_ops {
 	cam_ctx_info_dump_cb_func    dumpinfo_ops;
 	cam_ctx_recovery_cb_func     recovery_ops;
 	cam_ctx_mini_dump_cb_func    mini_dump_ops;
+	cam_ctx_err_inject_cb_func   evt_inject_ops;
 	cam_ctx_message_cb_func      msg_cb_ops;
 };
+
 
 /**
  * struct cam_context - camera context object for the subdevice node
@@ -207,7 +216,7 @@ struct cam_ctx_ops {
  * @ctxt_to_hw_map:        Context to hardware mapping pointer
  * @hw_mgr_ctx_id:         Hw Mgr context id returned from hw mgr
  * @ctx_id_string:         Context id string constructed with dev type,
- *                         ctx id, hw mgr ctx id
+ *                         ctx id, hw mgr ctx id, hw id
  * @refcount:              Context object refcount
  * @node:                  The main node to which this context belongs
  * @sync_mutex:            mutex to sync with sync cb thread
@@ -220,7 +229,7 @@ struct cam_ctx_ops {
  * @out_map_entries:       Out map entry
  * @mini dump cb:          Mini dump cb
  * @img_iommu_hdl:         Image IOMMU handle
- *
+ * @cdm_done_ts:           CDM callback done timestamp
  */
 struct cam_context {
 	char                         dev_name[CAM_CTX_DEV_NAME_MAX_LENGTH];
@@ -266,6 +275,39 @@ struct cam_context {
 	struct cam_hw_fence_map_entry **out_map_entries;
 	cam_ctx_mini_dump_cb_func      mini_dump_cb;
 	int                            img_iommu_hdl;
+	struct timespec64              cdm_done_ts;
+};
+
+/**
+ * struct cam_context_stream_dump - camera context stream information
+ *
+ * @hw_mgr_ctx_id:         Hw Mgr context id returned from hw mgr
+ * @dev_id:                ID of device associated
+ * @dev_hdl:               Device handle
+ * @link_hdl:              Link handle
+ * @sessoin_hdl:           Session handle
+ * @refcount:              Context object refcount
+ * @last_flush_req:        Last request to flush
+ * @state:                 Current state for top level state machine
+ */
+struct cam_context_stream_dump {
+	uint32_t                       hw_mgr_ctx_id;
+	uint32_t                       dev_id;
+	uint32_t                       dev_hdl;
+	uint32_t                       link_hdl;
+	uint32_t                       session_hdl;
+	uint32_t                       refcount;
+	uint32_t                       last_flush_req;
+	enum cam_context_state         state;
+};
+
+/**
+ * struct cam_context_each_req_info - camera each request information
+ *
+ * @request_id:         request id
+ */
+struct cam_context_each_req_info {
+	uint64_t              request_id;
 };
 
 /**
@@ -405,11 +447,11 @@ int cam_context_mini_dump_from_hw(struct cam_context *ctx,
  * @brief:        Handle dump active request request command
  *
  * @ctx:          Object pointer for cam_context
- * @pf_info:      Smmu page fault info
+ * @pf_args:      pf args to dump pf info to hw
  *
  */
-int cam_context_dump_pf_info(struct cam_context *ctx,
-	struct cam_smmu_pf_info *pf_info);
+int cam_context_dump_pf_info(void *ctx,
+	void *pf_args);
 
 /**
  * cam_context_handle_message()
@@ -434,7 +476,7 @@ int cam_context_handle_message(struct cam_context *ctx,
  *
  */
 int cam_context_handle_acquire_dev(struct cam_context *ctx,
-		struct cam_acquire_dev_cmd *cmd);
+		struct cam_acquire_dev_cmd_unified *cmd);
 
 /**
  * cam_context_handle_acquire_hw()
@@ -611,5 +653,18 @@ void cam_context_putref(struct cam_context *ctx);
  *
  */
 void cam_context_getref(struct cam_context *ctx);
+
+/**
+ * cam_context_add_evt_inject()
+ *
+ * @brief:       Add error inject parameters through evt_inject_ops.
+ *
+ * @ctx:         Context for which error is to be injected
+ *
+ * @inject_args: Event injection parameters
+ *
+ */
+int cam_context_add_evt_inject(struct cam_context *ctx,
+	void *inject_args);
 
 #endif  /* _CAM_CONTEXT_H_ */

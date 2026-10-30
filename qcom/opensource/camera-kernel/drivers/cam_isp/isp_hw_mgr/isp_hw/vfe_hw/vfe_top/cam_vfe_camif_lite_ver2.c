@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -17,6 +18,7 @@
 #include "cam_vfe_camif_lite_ver2.h"
 #include "cam_debug_util.h"
 #include "cam_cdm_util.h"
+#include "cam_mem_mgr_api.h"
 
 struct cam_vfe_mux_camif_lite_data {
 	void __iomem                                *mem_base;
@@ -76,9 +78,9 @@ static int cam_vfe_camif_lite_put_evt_payload(
 		return -EINVAL;
 	}
 
+	CAM_COMMON_SANITIZE_LIST_ENTRY((*evt_payload), struct cam_vfe_top_irq_evt_payload);
 	spin_lock_irqsave(&camif_lite_priv->spin_lock, flags);
-	list_add_tail(&(*evt_payload)->list,
-		&camif_lite_priv->free_payload_list);
+	list_add_tail(&(*evt_payload)->list, &camif_lite_priv->free_payload_list);
 	*evt_payload = NULL;
 	spin_unlock_irqrestore(&camif_lite_priv->spin_lock, flags);
 
@@ -416,73 +418,6 @@ static int cam_vfe_camif_lite_handle_irq_top_half(uint32_t evt_id,
 	return rc;
 }
 
-static int cam_vfe_camif_lite_cpas_fifo_levels_reg_dump(
-	struct cam_vfe_mux_camif_lite_data *camif_lite_priv)
-{
-	int rc = 0;
-	struct cam_vfe_soc_private *soc_private =
-		camif_lite_priv->soc_info->soc_private;
-	uint32_t  val;
-
-	if (soc_private->cpas_version == CAM_CPAS_TITAN_175_V120 ||
-		soc_private->cpas_version == CAM_CPAS_TITAN_175_V130 ||
-		soc_private->cpas_version == CAM_CPAS_TITAN_165_V100) {
-		rc = cam_cpas_reg_read(soc_private->cpas_handle,
-				CAM_CPAS_REG_CAMNOC, 0x3A20, true, &val);
-		if (rc) {
-			CAM_ERR(CAM_ISP,
-				"IFE0_nRDI_MAXWR_LOW read failed rc=%d",
-				rc);
-			return rc;
-		}
-		CAM_INFO(CAM_ISP, "IFE0_nRDI_MAXWR_LOW offset 0x3A20 val 0x%x",
-			val);
-
-		rc = cam_cpas_reg_read(soc_private->cpas_handle,
-				CAM_CPAS_REG_CAMNOC, 0x5420, true, &val);
-		if (rc) {
-			CAM_ERR(CAM_ISP,
-				"IFE1_nRDI_MAXWR_LOW read failed rc=%d",
-				rc);
-			return rc;
-		}
-		CAM_INFO(CAM_ISP, "IFE1_nRDI_MAXWR_LOW offset 0x5420 val 0x%x",
-			val);
-
-		rc = cam_cpas_reg_read(soc_private->cpas_handle,
-				CAM_CPAS_REG_CAMNOC, 0x3620, true, &val);
-		if (rc) {
-			CAM_ERR(CAM_ISP,
-				"IFE0123_RDI_WR_MAXWR_LOW read failed rc=%d",
-				rc);
-			return rc;
-		}
-		CAM_INFO(CAM_ISP,
-			"IFE0123_RDI_WR_MAXWR_LOW offset 0x3620 val 0x%x", val);
-
-	} else if (soc_private->cpas_version < CAM_CPAS_TITAN_175_V120) {
-		rc = cam_cpas_reg_read(soc_private->cpas_handle,
-				CAM_CPAS_REG_CAMNOC, 0x420, true, &val);
-		if (rc) {
-			CAM_ERR(CAM_ISP, "IFE02_MAXWR_LOW read failed rc=%d",
-				rc);
-			return rc;
-		}
-		CAM_INFO(CAM_ISP, "IFE02_MAXWR_LOW offset 0x420 val 0x%x", val);
-
-		rc = cam_cpas_reg_read(soc_private->cpas_handle,
-				CAM_CPAS_REG_CAMNOC, 0x820, true, &val);
-		if (rc) {
-			CAM_ERR(CAM_ISP, "IFE13_MAXWR_LOW read failed rc=%d",
-				rc);
-			return rc;
-		}
-		CAM_INFO(CAM_ISP, "IFE13_MAXWR_LOW offset 0x820 val 0x%x", val);
-	}
-
-	return 0;
-}
-
 static int cam_vfe_camif_lite_handle_irq_bottom_half(
 	void                                 *handler_priv,
 	void                                 *evt_payload_priv)
@@ -552,14 +487,15 @@ static int cam_vfe_camif_lite_handle_irq_bottom_half(
 
 		err_evt_info.err_type = CAM_VFE_IRQ_STATUS_OVERFLOW;
 		evt_info.event_data = (void *)&err_evt_info;
-		cam_vfe_camif_lite_cpas_fifo_levels_reg_dump(camif_lite_priv);
+
+		cam_cpas_dump_camnoc_buff_fill_info(soc_private->cpas_handle);
 
 		ktime_get_boottime_ts64(&ts);
 		CAM_INFO(CAM_ISP,
-			"current monotonic time stamp seconds %lld:%lld",
+			"current monotonic timestamp:[%lld.%09lld]",
 			ts.tv_sec, ts.tv_nsec);
 		CAM_INFO(CAM_ISP,
-			"ERROR time %lld:%lld",
+			"ERROR timestamp:[%lld.%09lld]",
 			camif_lite_priv->error_ts.tv_sec,
 			camif_lite_priv->error_ts.tv_nsec);
 		CAM_INFO(CAM_ISP, "ife_clk_src:%lld",
@@ -571,7 +507,7 @@ static int cam_vfe_camif_lite_handle_irq_bottom_half(
 
 		ret = CAM_VFE_IRQ_STATUS_OVERFLOW;
 
-		cam_cpas_log_votes();
+		cam_cpas_log_votes(false);
 
 	}
 
@@ -593,7 +529,7 @@ int cam_vfe_camif_lite_ver2_init(
 		camif_lite_hw_info;
 	int                                       i = 0;
 
-	camif_lite_priv = kzalloc(sizeof(*camif_lite_priv),
+	camif_lite_priv = CAM_MEM_ZALLOC(sizeof(*camif_lite_priv),
 		GFP_KERNEL);
 	if (!camif_lite_priv)
 		return -ENOMEM;
@@ -637,6 +573,11 @@ int cam_vfe_camif_lite_ver2_deinit(
 		camif_lite_node->res_priv;
 	int                                 i = 0;
 
+	if (!camif_lite_priv) {
+		CAM_WARN(CAM_ISP, "Error! camif_priv is NULL");
+		return -ENODEV;
+	}
+
 	INIT_LIST_HEAD(&camif_lite_priv->free_payload_list);
 	for (i = 0; i < CAM_VFE_CAMIF_LITE_EVT_MAX; i++)
 		INIT_LIST_HEAD(&camif_lite_priv->evt_payload[i].list);
@@ -646,15 +587,9 @@ int cam_vfe_camif_lite_ver2_deinit(
 	camif_lite_node->process_cmd = NULL;
 	camif_lite_node->top_half_handler = NULL;
 	camif_lite_node->bottom_half_handler = NULL;
-
 	camif_lite_node->res_priv = NULL;
 
-	if (!camif_lite_priv) {
-		CAM_ERR(CAM_ISP, "Error! camif_priv is NULL");
-		return -ENODEV;
-	}
-
-	kfree(camif_lite_priv);
+	CAM_MEM_FREE(camif_lite_priv);
 
 	return 0;
 }

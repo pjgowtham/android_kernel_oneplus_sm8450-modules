@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_SMMU_API_H_
@@ -16,6 +17,20 @@
 #include <linux/spinlock_types.h>
 #include <linux/mutex.h>
 #include <linux/msm_ion.h>
+
+#define BYTE_SIZE 8
+#define COOKIE_NUM_BYTE 2
+#define COOKIE_SIZE (BYTE_SIZE*COOKIE_NUM_BYTE)
+#define COOKIE_MASK ((1<<COOKIE_SIZE) - 1)
+#define MULTI_CLIENT_REGION_SHIFT 28
+#define CAM_SMMU_HDL_MASK ((BIT(MULTI_CLIENT_REGION_SHIFT)) - 1)
+#define GET_SMMU_TABLE_IDX(x) ((((x) & CAM_SMMU_HDL_MASK) >> COOKIE_SIZE) & COOKIE_MASK)
+#define CAM_SMMU_GET_BASE_HDL(x) ((x) & CAM_SMMU_HDL_MASK)
+
+#define CAM_SMMU_GET_IOVA_DELTA(val1, val2)                                \
+({                                                                         \
+	(val1) > (val2) ? (val1) - (val2) : (val2) - (val1);               \
+})
 
 /*Enum for possible CAM SMMU operations */
 enum cam_smmu_ops_param {
@@ -41,32 +56,93 @@ enum cam_smmu_region_id {
 	CAM_SMMU_REGION_SECHEAP,
 	CAM_SMMU_REGION_QDSS,
 	CAM_SMMU_REGION_FWUNCACHED,
+	CAM_SMMU_REGION_DEVICE,
+};
+
+enum cam_smmu_subregion_id {
+	CAM_SMMU_SUBREGION_GENERIC,
+	CAM_SMMU_SUBREGION_SYNX_HWMUTEX,
+	CAM_SMMU_SUBREGION_IPC_HWMUTEX,
+	CAM_SMMU_SUBREGION_GLOBAL_SYNC_MEM,
+	CAM_SMMU_SUBREGION_GLOBAL_CNTR,
+	CAM_SMMU_SUBREGION_LLCC_REGISTER,
+	CAM_SMMU_SUBREGION_MAX,
+};
+
+/**
+ * @brief          : Represents camera security framework version
+ *
+ * @param arch_ver          : Captures the version of the high level secure
+ *                            camera architecture.
+ * @param max_ver           : Captures the version of the solution with in the
+ *                            high level architecture.
+ * @param min_ver           : Captures the version of the memory assignment
+ *                            mechanism with in the solution.
+ */
+struct cam_csf_version {
+	uint32_t              arch_ver;
+	uint32_t              max_ver;
+	uint32_t              min_ver;
+};
+
+/**
+ * @brief : cam_smmu_buffer_tracker
+ *
+ * @param: list      : list to be inserted into list of tracked buggers
+ * @param: ref_count : Ptr to kref object of a physical buffer allocated per CB
+ * @param: ion_fd    : fd of buffer
+ * @param: i_ino     : inode of buffer
+ * @param: cb_name   : CB which this buffer belongs to
+ */
+struct cam_smmu_buffer_tracker {
+	struct list_head list;
+	struct kref *ref_count;
+	int ion_fd;
+	unsigned long i_ino;
+	const char *cb_name;
 };
 
 /**
  * @brief          : cam_smmu_pf_info
  *
- * @param domain   : Iommu domain received in iommu page fault handler
- * @param dev      : Device received in iommu page fault handler
- * @param iova     : IOVA where page fault occurred
- * @param flags    : Flags received in iommu page fault handler
- * @param token    : Userdata given during callback registration
- * @param buf_info : Closest mapped buffer info
- * @bid            : bus id
- * @pid            : unique id for hw group of ports
- * @mid            : port id of hw
+ * @param domain           : Iommu domain received in iommu page fault handler
+ * @param dev              : Device received in iommu page fault handler
+ * @param iova             : IOVA where page fault occurred
+ * @param flags            : Flags received in iommu page fault handler
+ * @param token            : Userdata given during callback registration
+ * @param buf_info         : Closest mapped buffer info
+ * @param bid              : bus id
+ * @param pid              : unique id for hw group of ports
+ * @param mid              : port id of hw
+ * @param is_secure        : Faulted memory in secure or non-secure region
+ * @param in_map_region    : Faulted memory fall in mapped region or not
  */
 
 struct cam_smmu_pf_info {
-	struct iommu_domain *domain;
+	struct iommu_domain  *domain;
 	struct device        *dev;
-	unsigned long        iova;
-	int                  flags;
-	void                *token;
-	uint32_t             buf_info;
-	uint32_t             bid;
-	uint32_t             pid;
-	uint32_t             mid;
+	unsigned long         iova;
+	int                   flags;
+	void                 *token;
+	uint32_t              buf_info;
+	uint32_t              bid;
+	uint32_t              pid;
+	uint32_t              mid;
+	bool                  is_secure;
+	bool                  in_map_region;
+};
+
+/**
+ * @brief            : Structure to store dma buf information
+ *
+ * @param buf    : dma buffer
+ * @param attach : attachment info between dma buf and device
+ * @param table  : scattered list
+ */
+struct region_buf_info {
+	struct dma_buf *buf;
+	struct dma_buf_attachment *attach;
+	struct sg_table *table;
 };
 
 /**
@@ -76,12 +152,15 @@ struct cam_smmu_pf_info {
  * @param iova_len           : length of region
  * @param discard_iova_start : iova addr start from where should not be used
  * @param discard_iova_len   : length of discard iova region
+ * @param phy_addr           : pa to which this va is mapped to
  */
 struct cam_smmu_region_info {
 	dma_addr_t iova_start;
 	size_t iova_len;
 	dma_addr_t discard_iova_start;
 	size_t discard_iova_len;
+	dma_addr_t phy_addr;
+	struct region_buf_info buf_info;
 };
 
 /**
@@ -126,11 +205,12 @@ int cam_smmu_ops(int handle, enum cam_smmu_ops_param op);
  * @len_ptr     : Length of buffer mapped returned by CAM SMMU driver.
  * @region_id   : Memory region identifier
  * @is_internal: Specifies if this buffer is kernel allocated.
+ * @ref_count:   Double ptr to store ref_cnt object in memmgr.
  * @return Status of operation. Negative in case of error. Zero otherwise.
  */
 int cam_smmu_map_user_iova(int handle, int ion_fd, struct dma_buf *dmabuf,
 	bool dis_delayed_unmap, enum cam_smmu_map_dir dir, dma_addr_t *dma_addr, size_t *len_ptr,
-	enum cam_smmu_region_id region_id, bool is_internal);
+	enum cam_smmu_region_id region_id, bool is_internal, struct kref **ref_count);
 
 /**
  * @brief        : Maps kernel space IOVA for calling driver
@@ -159,11 +239,13 @@ int cam_smmu_map_kernel_iova(int handle,
  * @param ion_fd: ION handle identifying the memory buffer.
  * @param dma_buf: DMA Buf handle identifying the memory buffer.
  * @param region_id: Region id from which to unmap buffer.
+ * @param force_unmap: If this unmap operation is part of memmgr cleanup
  *
  * @return Status of operation. Negative in case of error. Zero otherwise.
  */
 int cam_smmu_unmap_user_iova(int handle,
-	int ion_fd, struct dma_buf *dma_buf, enum cam_smmu_region_id region_id);
+	int ion_fd, struct dma_buf *dma_buf, enum cam_smmu_region_id region_id,
+	bool force_unmap);
 
 /**
  * @brief       : Unmaps kernel IOVA for calling driver
@@ -268,11 +350,14 @@ void cam_smmu_unset_client_page_fault_handler(int handle, void *token);
  * @param dma_buf: DMA buf of memory to map to
  * @param paddr_ptr: Pointer IOVA address that will be returned
  * @param len_ptr: Length of memory mapped
+ * @param buf_tracker: List to add tracked buffers to
+ * @param ref_count: Double ptr to ref_count object for memmgr table
  *
  * @return Status of operation. Negative in case of error. Zero otherwise.
  */
 int cam_smmu_get_iova(int handle, int ion_fd, struct dma_buf *dma_buf,
-	dma_addr_t *paddr_ptr, size_t *len_ptr);
+	dma_addr_t *paddr_ptr, size_t *len_ptr, struct list_head *buf_tracker,
+	struct kref **ref_count);
 
 /**
  * @brief Maps memory from an ION fd into IOVA space
@@ -282,11 +367,14 @@ int cam_smmu_get_iova(int handle, int ion_fd, struct dma_buf *dma_buf,
  * @param dma_buf: DMA Buf of memory to map to
  * @param paddr_ptr: Pointer IOVA address that will be returned
  * @param len_ptr: Length of memory mapped
+ * @param buf_tracker: List to add tracked buffers to
+ * @param ref_count: Double ptr to ref_count object for memmgr table
  *
  * @return Status of operation. Negative in case of error. Zero otherwise.
  */
 int cam_smmu_get_stage2_iova(int handle, int ion_fd, struct dma_buf *dma_buf,
-	dma_addr_t *paddr_ptr, size_t *len_ptr);
+	dma_addr_t *paddr_ptr, size_t *len_ptr, struct list_head *buf_tracker,
+	struct kref **ref_count);
 
 /**
  * @brief Unmaps memory from context bank
@@ -308,11 +396,13 @@ int cam_smmu_put_iova(int handle, int ion_fd, struct dma_buf *dma_buf);
  * @param dir: DMA Direction for the mapping
  * @param dma_addr: Returned IOVA address after mapping
  * @param len_ptr: Length of memory mapped
+ * @param ref_count: Double ptr to store ref_cnt object in memmgr
  *
  * @return Status of operation. Negative in case of error. Zero otherwise.
  */
 int cam_smmu_map_stage2_iova(int handle, int ion_fd, struct dma_buf *dmabuf,
-	enum cam_smmu_map_dir dir, dma_addr_t *dma_addr, size_t *len_ptr);
+	enum cam_smmu_map_dir dir, dma_addr_t *dma_addr, size_t *len_ptr,
+	struct kref **ref_count);
 
 /**
  * @brief Unmaps secure memopry for SMMU handle
@@ -320,10 +410,12 @@ int cam_smmu_map_stage2_iova(int handle, int ion_fd, struct dma_buf *dmabuf,
  * @param handle: SMMU handle identifying secure context bank
  * @param ion_fd: ION fd to unmap
  * @param dma_buf: DMA Buf to unmap
+ * @param force_unmap: If this unmap operation is part of memmgr cleanup
  *
  * @return Status of operation. Negative in case of error. Zero otherwise.
  */
-int cam_smmu_unmap_stage2_iova(int handle, int ion_fd, struct dma_buf *dma_buf);
+int cam_smmu_unmap_stage2_iova(int handle, int ion_fd, struct dma_buf *dma_buf,
+	bool force_unmap);
 
 /**
  * @brief Allocates firmware for context bank
@@ -389,26 +481,31 @@ int cam_smmu_release_buf_region(enum cam_smmu_region_id region,
 	int32_t smmu_hdl);
 
 /**
- * @brief Allocates qdss for context bank
+ * @brief Map va for phy addr range for a given context bank
  *
  * @param smmu_hdl: SMMU handle identifying context bank
+ * @param region_id: Region ID
+ * @optional param subregion_id: Subregion ID
  * @param iova: IOVA address of allocated qdss
  * @param len: Length of allocated qdss memory
  *
  * @return Status of operation. Negative in case of error. Zero otherwise.
  */
-int cam_smmu_alloc_qdss(int32_t smmu_hdl,
-	dma_addr_t *iova,
-	size_t *len);
+int cam_smmu_map_phy_mem_region(int32_t smmu_hdl,
+	uint32_t region_id, uint32_t subregion_id,
+	dma_addr_t *iova, size_t *len);
 
 /**
- * @brief Deallocates qdss memory for context bank
+ * @brief Unmap call for map_phy_mem for given context bank
  *
  * @param smmu_hdl: SMMU handle identifying the context bank
+ * @param region_id: Region ID
+ * @optional param subregion_id: Subregion ID
  *
  * @return Status of operation. Negative in case of error. Zero otherwise.
  */
-int cam_smmu_dealloc_qdss(int32_t smmu_hdl);
+int cam_smmu_unmap_phy_mem_region(int32_t smmu_hdl,
+	uint32_t region_id, uint32_t subregion_id);
 
 /**
  * @brief Get start addr & len of I/O region for a given cb
@@ -457,5 +554,40 @@ bool cam_smmu_need_shared_buffer_padding(void);
  * @brief : API to determine whether certain HW is 36-bit memory addressable
  */
 bool cam_smmu_is_expanded_memory(void);
+
+/**
+ * @brief : API to query whether page fault non fatal is enable for a device's context bank
+ */
+int cam_smmu_is_cb_non_fatal_fault_en(int smmu_hdl, bool *non_fatal_en);
+
+/**
+ * @brief : API to initialize any SMMU config, also get any capabilities
+ * such as num banks and the CSF version in use that's received from SMMU proxy driver
+ *
+ * @return Status of operation. Negative in case of error. Zero otherwise.
+ */
+int cam_smmu_driver_init(struct cam_csf_version *csf_ver, int32_t *num_cbs);
+
+/**
+ * @brief : API to deinitialize any initialized SMMU config
+ */
+void cam_smmu_driver_deinit(void);
+
+/**
+ * @brief : API to putref on tracked buffers whoose ref counts
+ *          are incremented
+ */
+void cam_smmu_buffer_tracker_putref(struct list_head *mapped_io_list);
+
+/**
+ * @brief : API to putref on a specific tracked buffer
+ */
+void cam_smmu_buffer_tracker_buffer_putref(struct cam_smmu_buffer_tracker *entry);
+
+/**
+ * @brief : Add tracked buffers to list that belongs to a context
+ */
+int cam_smmu_add_buf_to_track_list(int ion_fd, unsigned long inode,
+	struct kref **ref_count, struct list_head *buf_tracker, int idx);
 
 #endif /* _CAM_SMMU_API_H_ */

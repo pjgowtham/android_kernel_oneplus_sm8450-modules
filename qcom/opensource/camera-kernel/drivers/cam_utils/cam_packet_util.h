@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_PACKET_UTIL_H_
 #define _CAM_PACKET_UTIL_H_
 
 #include <media/cam_defs.h>
+#include "cam_hw_mgr_intf.h"
 
 /**
  * @brief                  KMD scratch buffer information
@@ -15,7 +16,7 @@
  * @handle:                Memory handle
  * @cpu_addr:              Cpu address
  * @offset:                Offset from the start of the buffer
- * @size:                  Size of the buffer
+ * @size:                  Size of the buffer in bytes
  * @used_bytes:            Used memory in bytes
  *
  */
@@ -61,6 +62,8 @@ int cam_packet_util_get_cmd_mem_addr(int handle, uint32_t **buf_addr,
 int cam_packet_util_validate_packet(struct cam_packet *packet,
 	size_t remain_len);
 
+int cam_packet_util_copy_pkt_to_kmd(struct cam_packet *packet_u,
+	struct cam_packet **packet, size_t remain_len);
 /**
  * cam_packet_util_validate_cmd_desc()
  *
@@ -88,7 +91,7 @@ int cam_packet_util_get_kmd_buffer(struct cam_packet *packet,
 	struct cam_kmd_buf_info *kmd_buf_info);
 
 /**
- * cam_packet_dump_patch_info()
+ * cam_packet_util_dump_patch_info()
  *
  * @brief:              Dump patch info in case of page fault
  *
@@ -96,10 +99,11 @@ int cam_packet_util_get_kmd_buffer(struct cam_packet *packet,
  * @iommu_hdl:          IOMMU handle of the HW Device that received the packet
  * @sec_iommu_hdl:      Secure IOMMU handle of the HW Device that
  *                      received the packet
+ * @pf_args:            Page fault arguments
  *
  */
-void cam_packet_dump_patch_info(struct cam_packet *packet,
-	int32_t iommu_hdl, int32_t sec_mmu_hdl);
+void cam_packet_util_dump_patch_info(struct cam_packet *packet,
+	int32_t iommu_hdl, int32_t sec_iommu_hdl, struct cam_hw_dump_pf_args *pf_args);
 
 /**
  * cam_packet_util_process_patches()
@@ -108,15 +112,36 @@ void cam_packet_dump_patch_info(struct cam_packet *packet,
  *                      information from patches.
  *
  * @packet:             Input packet containing Command Buffers and Patches
+ * @mapped_io_list:     List in to add patches/buffers to for reference counting
  * @iommu_hdl:          IOMMU handle of the HW Device that received the packet
  * @sec_iommu_hdl:      Secure IOMMU handle of the HW Device that
  *                      received the packet
+ * @exp_mem:            Boolean to know if patched address is in expanded memory range
+ *                      or within default 32-bit address space.
  *
  * @return:             0: Success
  *                      Negative: Failure
  */
 int cam_packet_util_process_patches(struct cam_packet *packet,
-	int32_t iommu_hdl, int32_t sec_mmu_hdl);
+	struct list_head *mapped_io_list,  int32_t iommu_hdl, int32_t sec_mmu_hdl,
+	bool exp_mem);
+
+/**
+ * cam_packet_util_dump_io_bufs()
+ *
+ * @brief:              Search for faulted io buffer in packet and print io buffers info
+ *
+ * @packet:             Input packet containing io buffers
+ * @iommu_hdl:          IOMMU handle of the HW Device that received the packet
+ * @sec_iommu_hdl:      Secure IOMMU handle of the HW Device that
+ *                      received the packet
+ * @pf_args:            Pault Fault related info
+ * @res_id_support:     if the specific device has knowledge of the resource id for hw
+ */
+
+void cam_packet_util_dump_io_bufs(struct cam_packet *packet,
+	int32_t iommu_hdl, int32_t sec_mmu_hdl,
+	struct cam_hw_dump_pf_args *pf_args, bool res_id_support);
 
 /**
  * cam_packet_util_process_generic_cmd_buffer()
@@ -161,5 +186,17 @@ int cam_presil_retrieve_buffers_from_packet(struct cam_packet *packet, int iommu
  */
 int cam_presil_send_buffers_from_packet(struct cam_packet *packet, int img_iommu_hdl,
 	int cdm_iommu_hdl);
+
+/**
+ * @brief : API to handle the blob data to get blob type and size
+ *
+ * @length :            length of the blob
+ * @blob_ptr:           blob base address
+ * @blob_handler_cb:    blob handler call back
+ * @user_data:          user data information
+ */
+int cam_packet_util_process_generic_blob(uint32_t length, uint32_t *blob_ptr,
+	cam_packet_generic_blob_handler blob_handler_cb, void *user_data);
+
 
 #endif /* _CAM_PACKET_UTIL_H_ */

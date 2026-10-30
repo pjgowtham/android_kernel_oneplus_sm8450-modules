@@ -14,18 +14,39 @@
 #define CAM_SENSOR_PROBE_CMD      (CAM_COMMON_OPCODE_MAX + 1)
 #define CAM_FLASH_MAX_LED_TRIGGERS 2
 #define MAX_OIS_NAME_SIZE 32
+#define MAX_OIS_FW_COUNT  2
 #define CAM_CSIPHY_SECURE_MODE_ENABLED 1
 #define CAM_SENSOR_NAME_MAX_SIZE 32
 
 #define SKEW_CAL_MASK             BIT(1)
 #define PREAMBLE_PATTEN_CAL_MASK  BIT(2)
 
-#define CAM_SENSOR_GET_QUERY_CAP_V2
-/* Sensor Driver cmd buffer meta type */
-#define CAM_SENSOR_PACKET_GENERIC_BLOB             1
+/* CSIPHY driver cmd buffer meta types */
+#define CAM_CSIPHY_PACKET_META_LANE_INFO           0
+#define CAM_CSIPHY_PACKET_META_GENERIC_BLOB        1
+#define CAM_CSIPHY_PACKET_META_LANE_INFO_V2        2
 
-/* Sensor Res Blob Type */
+/* CSIPHY blob types */
+#define CAM_CSIPHY_GENERIC_BLOB_TYPE_CDR_CONFIG    0
+#define CAM_CSIPHY_GENERIC_BLOB_TYPE_AUX_CONFIG    1
+
+/* CSIPHY CDR tolerance operations */
+#define CAM_CSIPHY_CDR_ADD_TOLERANCE               1
+#define CAM_CSIPHY_CDR_SUB_TOLERANCE               2
+
+/* SENSOR driver cmd buffer meta types */
+#define CAM_SENSOR_PACKET_I2C_COMMANDS                  0
+#define CAM_SENSOR_PACKET_GENERIC_BLOB                  1
+/* Contains I2C config to be applied on the frame post the regular update */
+#define CAM_SENSOR_PACKET_DEFERRED_I2C_COMMANDS_META    2
+/* Contains I2C config to be applied on frame skips */
+#define CAM_SENSOR_PACKET_FRAME_SKIP_I2C_COMMANDS_META  3
+/* Contains I2C config to be applied on bubble */
+#define CAM_SENSOR_PACKET_BUBBLE_UPD_I2C_COMMANDS_META  4
+
+/* SENSOR blob types */
 #define CAM_SENSOR_GENERIC_BLOB_RES_INFO           0
+#define CAM_SENSOR_GENERIC_BLOB_FRAME_INFO         1
 
 enum camera_sensor_cmd_type {
 	CAMERA_SENSOR_CMD_TYPE_INVALID,
@@ -45,6 +66,7 @@ enum camera_sensor_cmd_type {
 	CAMERA_SENSOR_FLASH_CMD_TYPE_WIDGET,
 	CAMERA_SENSOR_CMD_TYPE_RD_DATA,
 	CAMERA_SENSOR_FLASH_CMD_TYPE_INIT_FIRE,
+	CAMERA_SENSOR_OIS_CMD_TYPE_FW_INFO,
 	CAMERA_SENSOR_CMD_TYPE_MAX,
 };
 
@@ -52,7 +74,8 @@ enum cam_actuator_packet_opcodes {
 	CAM_ACTUATOR_PACKET_OPCODE_INIT,
 	CAM_ACTUATOR_PACKET_AUTO_MOVE_LENS,
 	CAM_ACTUATOR_PACKET_MANUAL_MOVE_LENS,
-	CAM_ACTUATOR_PACKET_OPCODE_READ
+	CAM_ACTUATOR_PACKET_OPCODE_READ,
+	CAM_ACTUATOR_PACKET_NOP_OPCODE = 127
 };
 
 enum cam_eeprom_packet_opcodes {
@@ -75,6 +98,8 @@ enum camera_sensor_i2c_op_code {
 	CAMERA_SENSOR_I2C_OP_CONT_WR_BRST_VERF,
 	CAMERA_SENSOR_I2C_OP_CONT_WR_SEQN,
 	CAMERA_SENSOR_I2C_OP_CONT_WR_SEQN_VERF,
+	CAMERA_SENSOR_I2C_OP_RNDM_RD,
+	CAMERA_SENSOR_I2C_OP_CONT_RD,
 	CAMERA_SENSOR_I2C_OP_MAX,
 };
 
@@ -90,6 +115,7 @@ enum cam_tpg_packet_opcodes {
 	CAM_TPG_PACKET_OPCODE_INVALID = 0,
 	CAM_TPG_PACKET_OPCODE_INITIAL_CONFIG,
 	CAM_TPG_PACKET_OPCODE_NOP,
+	CAM_TPG_PACKET_OPCODE_UPDATE,
 	CAM_TPG_PACKET_OPCODE_MAX,
 };
 
@@ -105,8 +131,22 @@ enum cam_sensor_packet_opcodes {
 	CAM_SENSOR_PACKET_OPCODE_SENSOR_PROBE_V2,
 	CAM_SENSOR_PACKET_OPCODE_SENSOR_REG_BANK_UNLOCK,
 	CAM_SENSOR_PACKET_OPCODE_SENSOR_REG_BANK_LOCK,
-	CAM_SENSOR_PACKET_OPCODE_SENSOR_RESCONFIG = 126,
+	CAM_SENSOR_PACKET_OPCODE_SENSOR_BUBBLE_UPDATE,
+	CAM_SENSOR_PACKET_OPCODE_SENSOR_DEFERRED_META,
 	CAM_SENSOR_PACKET_OPCODE_SENSOR_NOP = 127,
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	CAM_SENSOR_PACKET_OPCODE_SENSOR_RESOLUTION = 0x101,
+	CAM_SENSOR_PACKET_OPCODE_SENSOR_QSC,
+	CAM_SENSOR_PACKET_OPCODE_SENSOR_LSC,
+	CAM_SENSOR_PACKET_OPCODE_SENSOR_AWBOTP,
+	CAM_SENSOR_PACKET_OPCODE_SENSOR_SPC,
+	CAM_SENSOR_PACKET_OPCODE_SENSOR_PDC,
+#endif
+};
+
+enum cam_endianness_type {
+	CAM_ENDIANNESS_BIG,
+	CAM_ENDIANNESS_LITTLE,
 };
 
 enum tpg_command_type_t {
@@ -114,6 +154,7 @@ enum tpg_command_type_t {
 	TPG_CMD_TYPE_GLOBAL_CONFIG,
 	TPG_CMD_TYPE_STREAM_CONFIG,
 	TPG_CMD_TYPE_ILLUMINATION_CONFIG,
+	TPG_CMD_TYPE_SETTINGS_CONFIG,
 	TPG_CMD_TYPE_MAX,
 };
 
@@ -152,12 +193,40 @@ enum tpg_phy_type_t {
 	TPG_PHY_TYPE_MAX,
 };
 
+enum tpg_pixel_type_t {
+	TPG_PIXEL_TYPE_INVALID = 0,
+	TPG_PIXEL_TYPE_RED,
+	TPG_PIXEL_TYPE_GREEN,
+	TPG_PIXEL_TYPE_BLUE,
+	TPG_PIXEL_TYPE_IR,
+	TPG_PIXEL_TYPE_MONO,
+};
+
+enum tpg_exposure_type_t {
+	TPG_EXPOSUREL_TYPE_INVALID = 0,
+	TPG_EXPOSURE_TYPE_LONG,
+	TPG_EXPOSURE_TYPE_MIDDLE,
+	TPG_EXPOSURE_TYPE_SHORT,
+};
+
+enum xcfa_type_t {
+	XCFA_TYPE_BAYER = 0,
+	XCFA_TYPE_QUADCFA,
+	XCFA_TYPE_THREEXTHREECFA,
+	XCFA_TYPE_FOURXFOURCFA,
+	XCFA_TYPE_RGBIR,
+	XCFA_TYPE_RGBWC,
+	XCFA_TYPE_RGBWK,
+	XCFA_TYPE_UNCONVENTIONAL_BAYER,
+};
+
 enum tpg_interleaving_format_t {
 	TPG_INTERLEAVING_FORMAT_INVALID = 0,
 	TPG_INTERLEAVING_FORMAT_FRAME,
 	TPG_INTERLEAVING_FORMAT_LINE,
 	TPG_INTERLEAVING_FORMAT_SHDR,
 	TPG_INTERLEAVING_FORMAT_SPARSE_PD,
+	TPG_INTERLEAVING_FORMAT_SHDR_SPARSE_PD,
 	TPG_INTERLEAVING_FORMAT_MAX,
 };
 
@@ -291,6 +360,78 @@ struct cam_cmd_i2c_info {
 } __attribute__((packed));
 
 /**
+ * Below macro definition is the param mask for
+ * cam_cmd_sensor_res_info.
+ */
+#define CAM_SENSOR_FEATURE_MASK                    BIT(0)
+#define CAM_SENSOR_NUM_BATCHED_FRAMES              BIT(1)
+
+/* Below macro definition is the sub definition for CAM_SENSOR_FEATURE_MASK */
+#define CAM_SENSOR_FEATURE_NONE                         0
+#define CAM_SENSOR_FEATURE_AEB_ON                       BIT(0)
+#define CAM_SENSOR_FEATURE_AEB_UPDATE                   BIT(1)
+#define CAM_SENSOR_FEATURE_AEB_OFF                      BIT(2)
+#define CAM_SENSOR_FEATURE_INSENSOR_HDR_3EXP_ON         BIT(3)
+#define CAM_SENSOR_FEATURE_INSENSOR_HDR_3EXP_OFF        BIT(4)
+#define CAM_SENSOR_FEATURE_ALWAYS_APPLY_DEFERRED_META   BIT(5)
+
+#define CAM_CSIPHY_T3_PREPARE_NS_MASK              BIT(0)
+#define CAM_CSIPHY_T3_PREAMBLE_NS_MASK             BIT(1)
+
+/**
+ * struct cam_cmd_sensor_res_info - Contains sensor res info
+ *
+ * res_index is the key property, it specifies the
+ * combinations of other properties enclosed in this
+ * structure.
+ *
+ * @res_index        : The resolution index that gets updated
+ *                     during a mode switch
+ * @fps              : Frame rate
+ * @width            : Pixel width to output to csiphy
+ * @height           : Pixel height to output to csiphy
+ * @caps             : Specifies capability sensor is configured
+ *                     for, (eg, XCFA, HFR), num_exposures and
+ *                     PDAF type
+ * @num_valid_params : Number of valid params
+ * @valid_param_mask : Valid param mask
+ * @params           : params
+ */
+struct cam_sensor_res_info {
+	__u16 res_index;
+	__u32 fps;
+	__u32 width;
+	__u32 height;
+	char  caps[64];
+	__u32 num_valid_params;
+	__u32 valid_param_mask;
+	__u16 params[3];
+} __attribute__((packed));
+
+/**
+ * struct cam_sensor_frame_info - Contains sensor frame related info
+ *
+ * @frame_sync_shift  : Indicates how far the frame synchronization
+ *                      reference point from SOF, this is used to
+ *                      align with userland and kernel frame sync offset.
+ * @frame_duration    : Frame duration
+ * @blanking_duration : Vertical blanking duration for a request, and it
+ *                      is representing the blanking durations before the
+ *                      frame for this request.
+ * @num_valid_params  : Number of valid params
+ * @valid_param_mask  : Valid param mask
+ * @params            : params
+ */
+struct cam_sensor_frame_info {
+	__u64 frame_sync_shift;
+	__u64 frame_duration;
+	__u64 blanking_duration;
+	__u32 num_valid_params;
+	__u32 valid_param_mask;
+	__u64 params[4];
+} __attribute__((packed));
+
+/**
  * struct cam_ois_opcode - Contains OIS opcode
  *
  * @prog            :    OIS FW prog register address
@@ -324,6 +465,70 @@ struct cam_cmd_ois_info {
 	__u8                  is_ois_calib;
 	char                  ois_name[MAX_OIS_NAME_SIZE];
 	struct cam_ois_opcode opcode;
+} __attribute__((packed));
+
+
+/**
+ * struct cam_cmd_ois_fw_param - Contains OIS firmware param
+ *
+ * NOTE: if this struct is updated,
+ * please also update version in struct cam_cmd_ois_fw_info
+ *
+ * @fw_name         :       firmware file name
+ * @fw_start_pos    :       data start position in file
+ * @fw_size         :       firmware size
+ * @fw_len_per_write:       data length per write in bytes
+ * @fw_addr_type    :       addr type
+ * @fw_data_type    :       data type
+ * @fw_operation    :       type of operation
+ * @reserved        :       reserved for 32-bit alignment
+ * @fw_delayUs      :       delay in cci write
+ * @fw_reg_addr     :       start register addr to write
+ * @fw_init_size    :       size of fw download init settings
+ * @fw_finalize_size:       size of fw download finalize settings
+ */
+struct cam_cmd_ois_fw_param {
+	char        fw_name[MAX_OIS_NAME_SIZE];
+	__u32       fw_start_pos;
+	__u32       fw_size;
+	__u32       fw_len_per_write;
+	__u8        fw_addr_type;
+	__u8        fw_data_type;
+	__u8        fw_operation;
+	__u8        reserved;
+	__u32       fw_delayUs;
+	__u32       fw_reg_addr;
+	__u32       fw_init_size;
+	__u32       fw_finalize_size;
+} __attribute__((packed));
+
+/**
+ * struct cam_cmd_ois_fw_info - Contains OIS firmware info
+ *
+ * @version         :       version info
+ *                          NOTE: if struct cam_cmd_ois_fw_param is updated,
+ *                          version here needs to be updated too.
+ * @reserved        :       reserved
+ * @cmd_type        :       Explains type of command
+ * @fw_count        :       firmware count
+ * @endianness      :       endianness combo:
+ *                          bit[3:0] firmware data's endianness
+ *                          bit[7:4] endian type of input parameter to ois driver, say QTime
+ * @fw_param        :       includes firmware parameters
+ * @num_valid_params:       Number of valid params
+ * @param_mask      :       Mask to indicate fields in params
+ * @params          :       Additional Params
+ */
+struct cam_cmd_ois_fw_info {
+	__u32                           version;
+	__u8                            reserved;
+	__u8                            cmd_type;
+	__u8                            fw_count;
+	__u8                            endianness;
+	struct cam_cmd_ois_fw_param     fw_param[MAX_OIS_FW_COUNT];
+	__u32                           num_valid_params;
+	__u32                           param_mask;
+	__u32                           params[4];
 } __attribute__((packed));
 
 /**
@@ -553,9 +758,49 @@ struct cam_cmd_unconditional_wait {
 } __attribute__((packed));
 
 /**
+ * cam_csiphy_cdr_sweep_params : Provides cdr blob structre
+ *
+ * @cdr_tolerance        : CDR tolerance param
+ * @tolerance_op_type    : Determines if the tolerance needs to be added/subtracted
+ *                         from default CDR value
+ * @configured_cdr       : Configured CDR value for all the lanes for the
+ *                         selected data rate, default +/- tolerance,
+ *                         this is the output
+ * @num_valid_params     : Number of valid params
+ * @valid_param_mask     : Valid param mask
+ * @params               : params
+ *
+ */
+struct cam_csiphy_cdr_sweep_params {
+	__u32 cdr_tolerance;
+	__u32 tolerance_op_type;
+	__u32 configured_cdr;
+	__u32 num_valid_params;
+	__u32 valid_param_mask;
+	__u32 params[3];
+};
+
+/**
+ * cam_csiphy_aux_settings_params : Provides aux blob structre
+ *
+ * @data_rate_aux_mask : Auxiliary settings update for different data rates,
+ *                       this is the output
+ * @num_valid_params   : Number of valid params
+ * @valid_param_mask   : Valid param mask
+ * @params             : params
+ *
+ */
+struct cam_csiphy_aux_settings_params {
+	__u64 data_rate_aux_mask;
+	__u32 num_valid_params;
+	__u32 valid_param_mask;
+	__u32 params[2];
+};
+
+/**
  * cam_csiphy_info       : Provides cmdbuffer structre
  * @lane_assign          : Lane sensor will be using
- * @mipi_flags           : Phy flags for differnt calibration operations
+ * @mipi_flags           : Phy flags for different calibration operations
  * @lane_cnt             : Total number of lanes
  * @secure_mode          : Secure mode flag to enable / disable
  * @settle_time          : Settling time in ms
@@ -570,6 +815,34 @@ struct cam_csiphy_info {
 	__u8     secure_mode;
 	__u64    settle_time;
 	__u64    data_rate;
+} __attribute__((packed));
+
+/**
+ * cam_csiphy_info_v2    : Provides cmdbuffer structre
+ * @version              : Version number
+ * @lane_assign          : Lane sensor will be using
+ * @mipi_flags           : Phy flags for different calibration operations
+ * @lane_cnt             : Total number of lanes
+ * @secure_mode          : Secure mode flag to enable / disable
+ * @settle_time          : Settling time in ms
+ * @data_rate            : Data rate
+ * @channel_type         : Channel type indicates apply which channel settings
+ * @num_valid_params     : Number of valid params
+ * @param_mask           : Mask to indicate what the parameters are
+ * @params               : Additional params
+ */
+struct cam_csiphy_info_v2 {
+	__u16    version;
+	__u16    lane_assign;
+	__u16    mipi_flags;
+	__u8     lane_cnt;
+	__u8     secure_mode;
+	__u64    settle_time;
+	__u64    data_rate;
+	__u32    channel_type;
+	__u32    num_valid_params;
+	__u32    param_mask;
+	__u32    params[5];
 } __attribute__((packed));
 
 /**
@@ -670,6 +943,72 @@ struct tpg_command_header_t {
 } __attribute__((packed));
 
 /**
+ * tpg_pixel_coordinate_t : pixel coordinate structure
+ *
+ * @xcoordinate           : X coordinate
+ * @ycoordinate           : Y coordiante
+ * @pixel_type            : red green blue ir mono
+ */
+struct tpg_pixel_coordinate_t {
+	uint32_t xcoordinate;
+	uint32_t ycoordinate;
+	uint32_t exposure_type;
+	uint32_t pixel_type;
+} __attribute__((packed));
+
+/**
+ * tpg_cfa_information_t      : tpg cfa information structure
+ *
+ * @number_of_pixel_per_color : number of pixel per color
+ * @pattern_width             : pattern width
+ * @pattern_height            : pattern height
+ * @pixel_coordinate_count    : pixel coordinate count
+ * @pixel_coordinate          : pixel coordinate array
+ */
+struct tpg_cfa_information_t {
+	uint32_t number_of_pixel_per_color;
+	uint32_t pattern_width;
+	uint32_t pattern_height;
+	uint32_t pixel_coordinate_count;
+	struct tpg_pixel_coordinate_t pixel_coordinate[64];
+} __attribute__((packed));
+
+/**
+ * tpg_reg_settings : TPG register settings
+ *
+ * @reg_offset : register offset
+ * @reg_value  : register value
+ * @operation  : operation
+ * @delay_us   : delay in micro second
+ */
+struct tpg_reg_settings {
+	uint32_t reg_offset;
+	uint32_t reg_value;
+	uint32_t operation;
+	uint32_t delay_us;
+	uint32_t reserved[4];
+} __attribute__((packed));
+
+/**
+ * tpg_settings_config_t : settings configuration command structure
+ *
+ * @header                : common header
+ * @settings_array_offset : settings array offset
+ * @settings_array_size   : settings array size
+ * @active_count          : active count
+ * @param_mask            : Mask to indicate fields in params
+ * @params                : Additional Params
+ */
+struct tpg_settings_config_t {
+	struct tpg_command_header_t header;
+	uint32_t settings_array_offset;
+	uint32_t settings_array_size;
+	uint32_t active_count;
+	uint32_t param_mask;
+	uint32_t params[4];
+} __attribute__((packed));
+
+/**
  * tpg_global_config_t : global configuration command structure
  *
  * @header              : common header
@@ -701,6 +1040,45 @@ struct tpg_global_config_t {
 } __attribute__((packed));
 
 /**
+ * tpg_old_stream_config_t : stream configuration command
+ *
+ * @header:  common tpg command header
+ * @pattern_type     : tpg pattern type used in this stream
+ * @cb_mode          : tpg color bar mode used in this stream
+ * @frame_count      : frame count in case of trigger burst mode
+ * @stream_type      : type of stream like image pdaf etc
+ * @stream_dimension : Dimension of the stream
+ * @pixel_depth      : bits per each pixel
+ * @cfa_arrangement  : color filter arragement
+ * @output_format    : output image format
+ * @hbi              : horizontal blanking intervel
+ * @vbi              : vertical   blanking intervel
+ * @vc               : virtual channel of this stream
+ * @dt               : data type of this stream
+ * @skip_pattern     : skip pattern for this stream
+ * @rotate_period    : rotate period for this stream
+ * @reserved         : reserved for future use
+ */
+struct tpg_old_stream_config_t {
+	struct tpg_command_header_t header;
+	enum tpg_pattern_t pattern_type;
+	enum tpg_color_bar_mode_t cb_mode;
+	uint32_t frame_count;
+	enum tpg_stream_t stream_type;
+	struct stream_dimension stream_dimension;
+	uint8_t pixel_depth;
+	enum tpg_cfa_arrangement_t cfa_arrangement;
+	enum tpg_image_format_t output_format;
+	uint32_t hbi;
+	uint32_t vbi;
+	uint16_t vc;
+	uint16_t dt;
+	uint32_t skip_pattern;
+	uint32_t rotate_period;
+	uint32_t reserved[4];
+} __attribute__((packed));
+
+/**
  * tpg_stream_config_t : stream configuration command
  *
  * @header:  common tpg command header
@@ -717,6 +1095,10 @@ struct tpg_global_config_t {
  * @vc               : virtual channel of this stream
  * @dt               : data type of this stream
  * @skip_pattern     : skip pattern for this stream
+ * @rotate_period    : rotate period for this stream
+ * @xcfa_debug       : for xcfa debug;
+ * @shdr_line_offset0 : for shdr line offset0
+ * @shdr_line_offset1 : for shdr line offset1
  * @reserved         : reserved for future use
  */
 struct tpg_stream_config_t {
@@ -735,7 +1117,60 @@ struct tpg_stream_config_t {
 	uint16_t dt;
 	uint32_t skip_pattern;
 	uint32_t rotate_period;
+	uint32_t xcfa_debug;
+	uint32_t shdr_line_offset0;
+	uint32_t shdr_line_offset1;
 	uint32_t reserved[4];
+} __attribute__((packed));
+
+/**
+ * tpg_stream_config_t : stream configuration command
+ *
+ * @header:  common tpg command header
+ * @pattern_type     : tpg pattern type used in this stream
+ * @cb_mode          : tpg color bar mode used in this stream
+ * @frame_count      : frame count in case of trigger burst mode
+ * @stream_type      : type of stream like image pdaf etc
+ * @stream_dimension : Dimension of the stream
+ * @pixel_depth      : bits per each pixel
+ * @cfa_arrangement  : color filter arragement
+ * @output_format    : output image format
+ * @hbi              : horizontal blanking intervel
+ * @vbi              : vertical   blanking intervel
+ * @vc               : virtual channel of this stream
+ * @dt               : data type of this stream
+ * @skip_pattern     : skip pattern for this stream
+ * @rotate_period    : rotate period for this stream
+ * @shdr_line_offset0 : for shdr line offset0
+ * @shdr_line_offset1 : for shdr line offset1
+ * @cfa_info_exist    : cfa info exists
+ * @cfa_info          : cfa information
+ * @xcfa_type         : xcfa type
+ * @reserved          : reserved for future use
+ */
+struct tpg_stream_config_v3_t {
+	struct tpg_command_header_t header;
+	uint32_t pattern_type;
+	uint32_t cb_mode;
+	uint32_t frame_count;
+	uint32_t stream_type;
+	struct stream_dimension stream_dimension;
+	uint32_t pixel_depth;
+	uint32_t cfa_arrangement;
+	uint32_t output_format;
+	uint32_t hbi;
+	uint32_t vbi;
+	uint16_t vc;
+	uint16_t dt;
+	uint32_t skip_pattern;
+	uint32_t rotate_period;
+	uint32_t xcfa_debug;
+	uint32_t shdr_line_offset0;
+	uint32_t shdr_line_offset1;
+	uint32_t cfa_info_exist;
+	struct tpg_cfa_information_t cfa_info;
+	uint32_t xcfa_type;
+	uint32_t reserved[5];
 } __attribute__((packed));
 
 /**
@@ -857,57 +1292,5 @@ struct cam_flash_query_cap_info {
 	__u32    max_duration_flash[CAM_FLASH_MAX_LED_TRIGGERS];
 	__u32    max_current_torch[CAM_FLASH_MAX_LED_TRIGGERS];
 } __attribute__ ((packed));
-
-/**
- * struct cam_flash_query_cap_v2  :  capabilities info for flash
- *
- * @version             :  Version to indicate the change
- * @slot_info           :  Indicates about the slotId or cell Index
- * @max_current_flash   :  max supported current for flash
- * @max_duration_flash  :  max flash turn on duration
- * @max_current_torch   :  max supported current for torch
- * @flash_type          :  Flag to indicate flash type (i2c/pmic)
- * @num_valid_params    :  Number of valid params to pass
- * @param_mask          :  Param mask for the params passed
- * @params              :  Array to contain future parameters
- *
- */
-struct cam_flash_query_cap_info_v2 {
-	__u32    version;
-	__u32    slot_info;
-	__u32    max_current_flash[CAM_FLASH_MAX_LED_TRIGGERS];
-	__u32    max_duration_flash[CAM_FLASH_MAX_LED_TRIGGERS];
-	__u32    max_current_torch[CAM_FLASH_MAX_LED_TRIGGERS];
-	__u32    flash_type;
-	__u32    num_valid_params;
-	__u32    param_mask;
-	__u32    params[3];
-} __attribute__ ((packed));
-
-/**
- * struct cam_cmd_sensor_res_info - Contains sensor res info
- *
- * res_index is the key property, it specifies the
- * combinations of other properties enclosed in this
- * structure.
- *
- * @version           :Version to indicate the change
- * @res_index         : Sensor resolution index
- * @num_batched_frames: Number of batched frames
- * @num_valid_params  : Number of valid params
- * @valid_param_mask  : Valid param mask
- * @params            : params
- */
-struct cam_sensor_res_info {
-	__u32 version;
-	__u16 res_index;
-	__u16 num_batched_frames;
-	__u32 num_valid_params;
-	__u32 valid_param_mask;
-	__u16 params[4];
-} __attribute__((packed));
-
-#define VIDIOC_MSM_CCI_CFG \
-	_IOWR('V', BASE_VIDIOC_PRIVATE + 23, struct cam_cci_ctrl)
 
 #endif

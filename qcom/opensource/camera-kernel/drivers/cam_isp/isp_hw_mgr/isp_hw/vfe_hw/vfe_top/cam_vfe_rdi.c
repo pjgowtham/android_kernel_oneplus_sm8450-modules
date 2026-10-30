@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -14,6 +15,7 @@
 #include "cam_cdm_util.h"
 #include "cam_irq_controller.h"
 #include "cam_tasklet_util.h"
+#include "cam_mem_mgr_api.h"
 
 struct cam_vfe_mux_rdi_data {
 	void __iomem                                *mem_base;
@@ -76,79 +78,13 @@ static int cam_vfe_rdi_put_evt_payload(
 		return -EINVAL;
 	}
 
+	CAM_COMMON_SANITIZE_LIST_ENTRY((*evt_payload), struct cam_vfe_top_irq_evt_payload);
 	spin_lock_irqsave(&rdi_priv->spin_lock, flags);
 	list_add_tail(&(*evt_payload)->list, &rdi_priv->free_payload_list);
 	*evt_payload = NULL;
 	spin_unlock_irqrestore(&rdi_priv->spin_lock, flags);
 
 	CAM_DBG(CAM_ISP, "Done");
-	return 0;
-}
-
-static int cam_vfe_rdi_cpas_reg_dump(
-struct cam_vfe_mux_rdi_data *rdi_priv)
-{
-	int rc = 0;
-	struct cam_vfe_soc_private *soc_private =
-		rdi_priv->soc_info->soc_private;
-	uint32_t  val;
-
-	if (soc_private->cpas_version == CAM_CPAS_TITAN_175_V120 ||
-		soc_private->cpas_version == CAM_CPAS_TITAN_175_V130 ||
-		soc_private->cpas_version == CAM_CPAS_TITAN_165_V100) {
-		rc = cam_cpas_reg_read(soc_private->cpas_handle,
-				CAM_CPAS_REG_CAMNOC, 0x3A20, true, &val);
-		if (rc) {
-			CAM_ERR(CAM_ISP,
-				"IFE0_nRDI_MAXWR_LOW read failed rc=%d",
-				rc);
-			return rc;
-		}
-		CAM_INFO(CAM_ISP, "IFE0_nRDI_MAXWR_LOW offset 0x3A20 val 0x%x",
-			val);
-
-		rc = cam_cpas_reg_read(soc_private->cpas_handle,
-				CAM_CPAS_REG_CAMNOC, 0x5420, true, &val);
-		if (rc) {
-			CAM_ERR(CAM_ISP,
-				"IFE1_nRDI_MAXWR_LOW read failed rc=%d",
-				rc);
-			return rc;
-		}
-		CAM_INFO(CAM_ISP, "IFE1_nRDI_MAXWR_LOW offset 0x5420 val 0x%x",
-			val);
-
-		rc = cam_cpas_reg_read(soc_private->cpas_handle,
-				CAM_CPAS_REG_CAMNOC, 0x3620, true, &val);
-		if (rc) {
-			CAM_ERR(CAM_ISP,
-				"IFE0123_RDI_WR_MAXWR_LOW read failed rc=%d",
-				rc);
-			return rc;
-		}
-		CAM_INFO(CAM_ISP,
-			"IFE0123_RDI_WR_MAXWR_LOW offset 0x3620 val 0x%x", val);
-
-	} else if (soc_private->cpas_version < CAM_CPAS_TITAN_175_V120) {
-		rc = cam_cpas_reg_read(soc_private->cpas_handle,
-				CAM_CPAS_REG_CAMNOC, 0x420, true, &val);
-		if (rc) {
-			CAM_ERR(CAM_ISP, "IFE02_MAXWR_LOW read failed rc=%d",
-				rc);
-			return rc;
-		}
-		CAM_INFO(CAM_ISP, "IFE02_MAXWR_LOW offset 0x420 val 0x%x", val);
-
-		rc = cam_cpas_reg_read(soc_private->cpas_handle,
-				CAM_CPAS_REG_CAMNOC, 0x820, true, &val);
-		if (rc) {
-			CAM_ERR(CAM_ISP, "IFE13_MAXWR_LOW read failed rc=%d",
-				rc);
-			return rc;
-		}
-		CAM_INFO(CAM_ISP, "IFE13_MAXWR_LOW offset 0x820 val 0x%x", val);
-	}
-
 	return 0;
 }
 
@@ -273,10 +209,10 @@ int cam_vfe_rdi_ver2_acquire_resource(
 	rdi_data     = (struct cam_vfe_mux_rdi_data *)rdi_res->res_priv;
 	acquire_data = (struct cam_vfe_acquire_args *)acquire_param;
 
-	rdi_data->event_cb    = acquire_data->event_cb;
-	rdi_data->priv        = acquire_data->priv;
-	rdi_data->sync_mode   = acquire_data->vfe_in.sync_mode;
-	rdi_res->rdi_only_ctx = 0;
+	rdi_data->event_cb          = acquire_data->event_cb;
+	rdi_data->priv              = acquire_data->priv;
+	rdi_data->sync_mode         = acquire_data->vfe_in.sync_mode;
+	rdi_res->is_rdi_primary_res = false;
 
 	return 0;
 }
@@ -330,7 +266,7 @@ static int cam_vfe_rdi_resource_start(
 		}
 	}
 
-	if (!rdi_res->rdi_only_ctx)
+	if (!rdi_res->is_rdi_primary_res)
 		goto end;
 
 	rdi_irq_mask[0] =
@@ -535,15 +471,15 @@ static int cam_vfe_rdi_handle_irq_bottom_half(void *handler_priv,
 	if (irq_rdi_status) {
 		ktime_get_boottime_ts64(&ts);
 		CAM_INFO(CAM_ISP,
-			"current monotonic time stamp seconds %lld:%lld",
+			"current monotonic timestamp:[%lld.%09lld]",
 			ts.tv_sec, ts.tv_nsec);
 
-		cam_vfe_rdi_cpas_reg_dump(rdi_priv);
+		cam_cpas_dump_camnoc_buff_fill_info(soc_private->cpas_handle);
 
 		CAM_INFO(CAM_ISP, "ife_clk_src:%lld",
 			soc_private->ife_clk_src);
 		CAM_INFO(CAM_ISP,
-			"ERROR time %lld:%lld SOF %lld:%lld",
+			"ERROR timestamp:[%lld.%09lld] SOF timestamp:[%lld.%09lld]",
 			rdi_priv->error_ts.tv_sec,
 			rdi_priv->error_ts.tv_nsec,
 			rdi_priv->sof_ts.tv_sec,
@@ -572,7 +508,7 @@ static int cam_vfe_rdi_handle_irq_bottom_half(void *handler_priv,
 			rdi_priv->event_cb(rdi_priv->priv,
 			CAM_ISP_HW_EVENT_ERROR,
 			(void *)&evt_info);
-		cam_cpas_log_votes();
+		cam_cpas_log_votes(false);
 	}
 end:
 	cam_vfe_rdi_put_evt_payload(rdi_priv, &payload);
@@ -591,7 +527,7 @@ int cam_vfe_rdi_ver2_init(
 	struct cam_vfe_rdi_ver2_hw_info *rdi_info = rdi_hw_info;
 	int                              i = 0;
 
-	rdi_priv = kzalloc(sizeof(struct cam_vfe_mux_rdi_data),
+	rdi_priv = CAM_MEM_ZALLOC(sizeof(struct cam_vfe_mux_rdi_data),
 			GFP_KERNEL);
 	if (!rdi_priv) {
 		CAM_DBG(CAM_ISP, "Error! Failed to alloc for rdi_priv");
@@ -648,7 +584,7 @@ int cam_vfe_rdi_ver2_init(
 
 	return 0;
 err_init:
-	kfree(rdi_priv);
+	CAM_MEM_FREE(rdi_priv);
 	return -EINVAL;
 }
 
@@ -657,6 +593,11 @@ int cam_vfe_rdi_ver2_deinit(
 {
 	struct cam_vfe_mux_rdi_data *rdi_priv = rdi_node->res_priv;
 	int                          i = 0;
+
+	if (!rdi_priv) {
+		CAM_ERR(CAM_ISP, "Error! rdi_priv NULL");
+		return -ENODEV;
+	}
 
 	INIT_LIST_HEAD(&rdi_priv->free_payload_list);
 	for (i = 0; i < CAM_VFE_RDI_EVT_MAX; i++)
@@ -670,11 +611,7 @@ int cam_vfe_rdi_ver2_deinit(
 
 	rdi_node->res_priv = NULL;
 
-	if (!rdi_priv) {
-		CAM_ERR(CAM_ISP, "Error! rdi_priv NULL");
-		return -ENODEV;
-	}
-	kfree(rdi_priv);
+	CAM_MEM_FREE(rdi_priv);
 
 	return 0;
 }

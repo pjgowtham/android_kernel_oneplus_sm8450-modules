@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_TFE_HW_MGR_H_
@@ -32,7 +32,7 @@
  * @camif_debug:               enable sensor diagnosis status
  * @enable_reg_dump:           enable reg dump on error;
  * @per_req_reg_dump:          Enable per request reg dump
- *
+ * @enable_cdm_cmd_check:      Enable invalid command check in cmd_buf
  */
 struct cam_tfe_hw_mgr_debug {
 	struct dentry  *dentry;
@@ -42,6 +42,34 @@ struct cam_tfe_hw_mgr_debug {
 	uint32_t       camif_debug;
 	uint32_t       enable_reg_dump;
 	uint32_t       per_req_reg_dump;
+	bool           enable_cdm_cmd_check;
+};
+
+/**
+ * struct cam_tfe_hw_comp_record
+ *
+ * @brief:              Structure record the res id reserved on a comp group
+ *
+ * @num_res:            Number of valid resource IDs in this record
+ * @res_id:             Resource IDs to report buf dones
+ *
+ */
+struct cam_tfe_hw_comp_record {
+	uint32_t num_res;
+	uint32_t res_id[CAM_NUM_OUT_PER_COMP_IRQ_MAX];
+};
+
+/**
+ * struct cam_tfe_comp_record_query
+ *
+ * @brief:              Structure record the bus comp group pointer information
+ * @tfe_bus_comp_grp:   Tfe bus comp group pointer
+ * @reserved:           used to make parent compatible with struct cam_isp_comp_record_query
+ *
+ */
+struct cam_tfe_comp_record_query {
+	struct cam_tfe_hw_comp_record        *tfe_bus_comp_grp;
+	void *reserved;
 };
 
 /**
@@ -67,6 +95,7 @@ struct cam_tfe_cmd_buf_desc_addr_len {
 	uintptr_t cpu_addr;
 	size_t    buf_size;
 };
+
 
 /**
  * struct cam_tfe_hw_mgr_ctx - TFE HW manager Context object
@@ -98,8 +127,6 @@ struct cam_tfe_cmd_buf_desc_addr_len {
  * @is_rdi_only_context       flag to specify the context has only rdi resource
  * @reg_dump_buf_desc:        cmd buffer descriptors for reg dump
  * @num_reg_dump_buf:         count of descriptors in reg_dump_buf_desc
- * @reg_dump_cmd_buf_addr_len	store cpu addr and size of
- *                          reg dump descriptors for flush/error cases
  * @applied_req_id:           last request id to be applied
  * @last_dump_flush_req_id    last req id for which reg dump on flush was called
  * @last_dump_err_req_id      last req id for which reg dump on error was called
@@ -111,6 +138,7 @@ struct cam_tfe_cmd_buf_desc_addr_len {
  *                              dual TFE
  * @packet                     CSL packet from user mode driver
  * @bw_config_version          BW Config version
+ * @tfe_bus_comp_grp          pointer to tfe comp group info
  * @cdm_userdata               CDM user data
  * @skip_reg_dump_buf_put     Set if put_cpu_buf for reg dump buf is already called
  */
@@ -157,8 +185,8 @@ struct cam_tfe_hw_mgr_ctx {
 	uint32_t                        dual_tfe_irq_mismatch_cnt;
 	struct cam_packet              *packet;
 	uint32_t                        bw_config_version;
+	struct cam_tfe_hw_comp_record  *tfe_bus_comp_grp;
 	struct cam_tfe_cdm_user_data    cdm_userdata;
-	struct cam_isp_hw_comp_record  *tfe_bus_comp_grp;
 	bool                            skip_reg_dump_buf_put;
 };
 

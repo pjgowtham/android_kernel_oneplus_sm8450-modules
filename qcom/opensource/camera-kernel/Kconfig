@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
-
 config SPECTRA_ISP
 	bool "enable camera ISP module"
 	help
@@ -24,20 +22,6 @@ config SPECTRA_JPEG
 	  This module interact with jpeg HW for
 	  snapshot processing.
 
-config SPECTRA_FD
-	bool "enable camera FD module"
-	help
-	  This is enabling camera Face Detection module.
-	  FD module files will be included to enable the driver.
-	  This module interacts with FD HW for face detection.
-
-config SPECTRA_LRME
-	bool "enable camera LRME module"
-	help
-	  This is enabling camera LRME module.
-	  LRME (Low Resolution Motion Estimation) module will be functional.
-	  This module is used for motion estimation processing.
-
 config SPECTRA_SENSOR
 	bool "enable camera sensor module"
 	help
@@ -46,34 +30,37 @@ config SPECTRA_SENSOR
 	  eeprom, flash, csiphy all other module will be included
 	  to make the sensor functional.
 
-config SPECTRA_CUSTOM
-	bool "enable camera CUSTOM module"
+config SPECTRA_USE_CLK_CRM_API
+	bool "enable camera cesta clk feature"
 	help
-	  This is enabling camera CUSTOM module.
-	  Custom module for platform-specific customizations.
-	  This enables custom hardware manager and CSID.
+	  This is enabling camera cesta feature.
+	  kernel clk driver api will cache the clk value
+	  send by camera hw and apply to CRM hw.
+	  CRM hw will consolidate and apply the clk to camera HW.
 
-config SPECTRA_OPE
-	bool "enable camera OPE module"
+config SPECTRA_USE_RPMH_DRV_API
+	bool "enable camera new ICC BW api"
 	help
-	  This is enabling camera OPE module.
-	  OPE (Offline Processing Engine) module will be functional.
-	  This module is used for offline image processing.
+	  This is helping to set BW through kernel icc driver.
+	  Kernel icc driver do caching the bw information.
+	  icc driver will update the bw information RPMH,
+	  to apply proper bw voting for camera to mmnoc
 
-config SPECTRA_CRE
-	bool "enable camera CRE module"
+config SPECTRA_LLCC_STALING
+	bool "enable camera new LLCC staling feature"
 	help
-	  This option enables camera CRE module
-	  compilation. Camera CRE module will be functional.
-	  This enables CRE driver code files
-	  which interacts with CRE HW.
+	  This will enable to call LLCC driver cache notification API
+	  and increment count API.
+	  Which will enable LLCC staling feature,based on counter
+	  invalidate the cache slice.
 
-config SPECTRA_TFE
-	bool "enable camera TFE module"
+config TARGET_SYNX_ENABLE
+	bool "enable HW synx"
 	help
-	  This is enabling camera TFE module.
-	  TFE (Thin Front End) module will be functional.
-	  This module handles TFE hardware operations.
+	  This is enabling HW syx feature.
+	  synx hw signaling external to camera,
+	  like EVA and other.
+	  This is to avoid sw signaling latency.
 
 config MSM_MMRM
 	bool "enable MSM MMRM"
@@ -83,36 +70,55 @@ config MSM_MMRM
 	  mmrm knows about all clients' clock rates.
 	  MMRM can decide whether new peak power usage is within allowed value
 
-config MSM_GLOBAL_SYNX
-	bool "enabling camera synxv1 module"
-	help
-	  This is enabling camera synx v1 module
-	  that allows the usage of synx V1 APIs
-	  and global synchronization across cores.
-	  Synx V1 code only compiles if this is enabled.
-
 config INTERCONNECT_QCOM
 	bool "enabling icc bus driver"
 	help
-	  This is to access icc driver api.
-	  To cache AB and IB vote will
-	  use ICC kernel driver API.
-	  So that ICC driver can consolidate the vote
+		This is to access icc driver api.
+		To cache AB and IB vote will
+		use ICC kernel driver API.
+		So that ICC driver can consolidate the vote
 
-config QCOM_CX_IPEAK
-	bool "enable CX IPEAK support"
+config DOMAIN_ID_SECURE_CAMERA
+	bool "enable domain ID based secure camera flow"
 	help
-	  This config enables CX IPEAK support.
-	  CX IPEAK is used for current peak management.
+		This is to enable domain ID based secure
+		camera flow on the hardware platforms with
+		domain ID based security architecture.
+		VC based security can be achieved with this.
 
-config QCOM_BUS_SCALING
-	bool "enable bus scaling support"
+config DYNAMIC_FD_PORT_CONFIG
+	bool "enable dynamic FD port config feature"
 	help
-	  This config enables bus scaling support.
-	  Bus scaling is used for bandwidth management.
+		This config enables dynamic FD port config
+		feature that allows the userspace to configure
+		the FD port to secure or non-secure based on
+		the FD solution in use in secure camera use cases.
 
-config CAM_PRESIL
-	bool "enable camera presil support"
+config SECURE_CAMERA_25
+	bool "enable secure camera 2.5"
 	help
-	  This config enables camera presil support.
-	  Presil is used for pre-silicon validation.
+		This config enables 2.5 secure camera
+		feature that allows the usage of non contiguous
+		buffers for the secure camera images by
+		lending the buffers to a trusted virtual machine.
+
+config SPECTRA_OPLUS
+	bool "enable oplus camera src files"
+	help
+		This config enables oplus camera src files
+
+config SPECTRA_SECURE_DYN_PORT_CFG
+	bool "enable dynamic port config feature"
+	help
+		This config enables dynamic port config
+		feature that allows the userspace to configure
+		the output port(s) of a device to secure or
+		non-secure based the usecase requirements.
+
+config SPECTRA_SECURE_CAMNOC_REG_UPDATE
+	bool "enable secure camnoc reg update feature"
+	help
+		This config enables secure reg update
+		feature that allows the HLOS to configure
+		camnoc registers through HYP to avoid
+		potential security issues.

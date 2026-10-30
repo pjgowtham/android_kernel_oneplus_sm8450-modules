@@ -1,12 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CPASTOP_V680_100_H_
 #define _CPASTOP_V680_100_H_
-
-#define TEST_IRQ_ENABLE 0
 
 static struct cam_camnoc_irq_sbm cam_cpas_v680_100_irq_sbm = {
 	.sbm_enable = {
@@ -14,13 +13,10 @@ static struct cam_camnoc_irq_sbm cam_cpas_v680_100_irq_sbm = {
 		.enable = true,
 		.offset = 0x2240, /* CAM_NOC_SBM_FAULTINEN0_LOW */
 		.value = 0x2 |    /* SBM_FAULTINEN0_LOW_PORT1_MASK */
-			0x04 |     /* SBM_FAULTINEN0_LOW_PORT2_MASK */
-			0x08 |     /* SBM_FAULTINEN0_LOW_PORT3_MASK */
+			0x04 |    /* SBM_FAULTINEN0_LOW_PORT2_MASK */
+			0x08 |    /* SBM_FAULTINEN0_LOW_PORT3_MASK */
 			0x10 |    /* SBM_FAULTINEN0_LOW_PORT4_MASK */
-			0x20 |    /* SBM_FAULTINEN0_LOW_PORT5_MASK */
-			(TEST_IRQ_ENABLE ?
-			0x80 :    /* SBM_FAULTINEN0_LOW_PORT7_MASK */
-			0x0),
+			0x20,     /* SBM_FAULTINEN0_LOW_PORT5_MASK */
 	},
 	.sbm_status = {
 		.access_type = CAM_REG_TYPE_READ,
@@ -31,7 +27,7 @@ static struct cam_camnoc_irq_sbm cam_cpas_v680_100_irq_sbm = {
 		.access_type = CAM_REG_TYPE_WRITE,
 		.enable = true,
 		.offset = 0x2280, /* CAM_NOC_SBM_FLAGOUTCLR0_LOW */
-		.value = TEST_IRQ_ENABLE ? 0x5 : 0x1,
+		.value = 0x1,
 	}
 };
 
@@ -198,7 +194,7 @@ static struct cam_camnoc_irq_err
 	},
 	{
 		.irq_type = CAM_CAMNOC_HW_IRQ_CAMNOC_TEST,
-		.enable = TEST_IRQ_ENABLE ? true : false,
+		.enable = false,
 		.sbm_port = 0x80, /* SBM_FAULTINSTATUS0_LOW_PORT7_MASK */
 		.err_enable = {
 			.access_type = CAM_REG_TYPE_READ_WRITE,
@@ -1285,11 +1281,25 @@ static struct cam_camnoc_info cam680_cpas100_camnoc_info = {
 	.irq_err_size = ARRAY_SIZE(cam_cpas_v680_100_irq_err),
 	.err_logger = &cam680_cpas100_err_logger_offsets,
 	.errata_wa_list = &cam680_cpas100_errata_wa_list,
+	.test_irq_info = {
+		.sbm_enable_mask = 0x80,
+		.sbm_clear_mask = 0x4,
+	}
 };
 
 static struct cam_cpas_camnoc_qchannel cam680_cpas100_qchannel_info = {
 	.qchannel_ctrl   = 0x5C,
 	.qchannel_status = 0x60,
 };
+
+static struct cam_cpas_info cam680_cpas100_cpas_info = {
+	.hw_caps_info = {
+		.num_caps_registers = 1,
+		.hw_caps_offsets = {0x8},
+	},
+	.qchannel_info = {&cam680_cpas100_qchannel_info},
+	.num_qchannel = 1,
+};
+
 #endif /* _CPASTOP_V680_100_H_ */
 

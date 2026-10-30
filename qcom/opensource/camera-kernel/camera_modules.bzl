@@ -1,32 +1,49 @@
 load("//build/kernel/kleaf:kernel.bzl", "ddk_module")
 load("//build/bazel_common_rules/dist:dist.bzl", "copy_to_dist_dir")
-load("//vendor/qcom/kernel:target_variants.bzl", "get_all_la_variants")
+load("//msm-kernel:target_variants.bzl", "get_all_variants")
 load(":project_defconfig.bzl", "get_project_defconfig")
 
 def _define_module(target, variant):
     tv = "{}_{}".format(target, variant)
     deps = [
         ":camera_headers",
-        "//vendor/qcom/kernel:all_headers",
+        ":camera_banner",
+        "//msm-kernel:all_headers",
     ]
 
     # Generate the defconfig file dynamically
     native.genrule(
         name = "{}_defconfig_generated".format(tv),
         srcs = [
+            # Use the base target/variant defconfig to start
+            # and concatenate and project-specific config
+            #"{}_defconfig".format(tv),
             get_project_defconfig(target, variant),
         ],
         outs = ["{}_defconfig.generated".format(tv)],
         cmd = "cat $(SRCS) > $@",
     )
 
-    if target == "waipio":
+    if target == "pineapple":
         deps.extend([
-            "//vendor/qcom/sm8450-modules/qcom/opensource/mmrm-driver:{}_mmrm_driver".format(tv),
-            "//vendor/qcom/sm8450-modules/qcom/opensource/synx-kernel-v1:synx_headers",
-            "//vendor/qcom/sm8450-modules/qcom/opensource/synx-kernel-v1:{}_modules".format(tv),
+            "//vendor/qcom/opensource/synx-kernel:synx_headers",
+            "//vendor/qcom/opensource/synx-kernel:{}_modules".format(tv),
+            "//vendor/qcom/opensource/securemsm-kernel:smcinvoke_kernel_headers",
+            "//vendor/qcom/opensource/securemsm-kernel:smmu_proxy_headers",
+            "//vendor/qcom/opensource/securemsm-kernel:{}_smcinvoke_dlkm".format(tv),
+            "//vendor/qcom/opensource/securemsm-kernel:{}_smmu_proxy_dlkm".format(tv),
+            "//vendor/qcom/opensource/mmrm-driver:{}_mmrm_driver".format(tv),
         ])
-
+    if target == "sun":
+        deps.extend([
+            "//vendor/qcom/opensource/synx-kernel:synx_headers",
+            "//vendor/qcom/opensource/synx-kernel:{}_modules".format(tv),
+            "//vendor/qcom/opensource/securemsm-kernel:smcinvoke_kernel_headers",
+            "//vendor/qcom/opensource/securemsm-kernel:smmu_proxy_headers",
+            "//vendor/qcom/opensource/securemsm-kernel:{}_smcinvoke_dlkm".format(tv),
+            "//vendor/qcom/opensource/securemsm-kernel:{}_smmu_proxy_dlkm".format(tv),
+            "//vendor/qcom/opensource/mmrm-driver:{}_mmrm_driver".format(tv),
+        ])
     ddk_module(
         name = "{}_camera".format(tv),
         out = "camera.ko",
@@ -51,6 +68,7 @@ def _define_module(target, variant):
             "drivers/cam_smmu/cam_smmu_api.c",
             "drivers/cam_sync/cam_sync.c",
             "drivers/cam_sync/cam_sync_util.c",
+            "drivers/cam_sync/cam_sync_dma_fence.c",
             "drivers/cam_cpas/cpas_top/cam_cpastop_hw.c",
             "drivers/cam_cpas/camss_top/cam_camsstop_hw.c",
             "drivers/cam_cpas/cam_cpas_soc.c",
@@ -62,23 +80,19 @@ def _define_module(target, variant):
             "drivers/cam_cdm/cam_cdm_core_common.c",
             "drivers/cam_cdm/cam_cdm_virtual_core.c",
             "drivers/cam_cdm/cam_cdm_hw_core.c",
+            "drivers/cam_utils/cam_soc_icc.c",
+            "drivers/cam_vmrm/cam_vmrm_interface.c",
             "drivers/camera_main.c",
         ],
         conditional_srcs = {
+            "CONFIG_TARGET_SYNX_ENABLE": {
+                True: ["drivers/cam_sync/cam_sync_synx.c"],
+            },
             "CONFIG_QCOM_CX_IPEAK": {
                 True: ["drivers/cam_utils/cam_cx_ipeak.c"],
             },
-            "CONFIG_QCOM_BUS_SCALING": {
-                True: ["drivers/cam_utils/cam_soc_bus.c"],
-            },
             "CONFIG_INTERCONNECT_QCOM": {
                 True: ["drivers/cam_utils/cam_soc_icc.c"],
-            },
-            "CONFIG_CAM_PRESIL": {
-                False: [
-                    "drivers/cam_presil/stub/cam_presil_hw_access_stub.c",
-                    "drivers/cam_utils/cam_io_util.c",
-                ],
             },
             "CONFIG_SPECTRA_ISP": {
                 True: [
@@ -130,19 +144,22 @@ def _define_module(target, variant):
                     "drivers/cam_icp/icp_hw/ipe_hw/ipe_dev.c",
                     "drivers/cam_icp/icp_hw/ipe_hw/ipe_core.c",
                     "drivers/cam_icp/icp_hw/ipe_hw/ipe_soc.c",
-                    "drivers/cam_icp/icp_hw/a5_hw/a5_dev.c",
-                    "drivers/cam_icp/icp_hw/a5_hw/a5_core.c",
-                    "drivers/cam_icp/icp_hw/a5_hw/a5_soc.c",
-                    "drivers/cam_icp/icp_hw/lx7_hw/lx7_dev.c",
-                    "drivers/cam_icp/icp_hw/lx7_hw/lx7_core.c",
-                    "drivers/cam_icp/icp_hw/lx7_hw/lx7_soc.c",
+                    "drivers/cam_icp/icp_hw/icp_proc/icp_v1_hw/cam_icp_v1_dev.c",
+                    "drivers/cam_icp/icp_hw/icp_proc/icp_v1_hw/cam_icp_v1_core.c",
+                    "drivers/cam_icp/icp_hw/icp_proc/icp_v2_hw/cam_icp_v2_dev.c",
+                    "drivers/cam_icp/icp_hw/icp_proc/icp_v2_hw/cam_icp_v2_core.c",
+                    "drivers/cam_icp/icp_hw/icp_proc/icp_common/cam_icp_proc_common.c",
+                    "drivers/cam_icp/icp_hw/icp_proc/icp_common/cam_icp_soc_common.c",
+                    "drivers/cam_icp/icp_hw/icp_proc/cam_icp_proc.c",
                     "drivers/cam_icp/icp_hw/bps_hw/bps_dev.c",
                     "drivers/cam_icp/icp_hw/bps_hw/bps_core.c",
                     "drivers/cam_icp/icp_hw/bps_hw/bps_soc.c",
+                    "drivers/cam_icp/icp_hw/ofe_hw/ofe_dev.c",
+                    "drivers/cam_icp/icp_hw/ofe_hw/ofe_core.c",
+                    "drivers/cam_icp/icp_hw/ofe_hw/ofe_soc.c",
                     "drivers/cam_icp/cam_icp_subdev.c",
                     "drivers/cam_icp/cam_icp_context.c",
                     "drivers/cam_icp/hfi.c",
-                    "drivers/cam_icp/utils/cam_icp_utils.c",
                 ],
             },
             "CONFIG_SPECTRA_JPEG": {
@@ -158,26 +175,6 @@ def _define_module(target, variant):
                     "drivers/cam_jpeg/cam_jpeg_context.c",
                 ],
             },
-            "CONFIG_SPECTRA_FD": {
-                True: [
-                    "drivers/cam_fd/fd_hw_mgr/fd_hw/cam_fd_hw_dev.c",
-                    "drivers/cam_fd/fd_hw_mgr/fd_hw/cam_fd_hw_core.c",
-                    "drivers/cam_fd/fd_hw_mgr/fd_hw/cam_fd_hw_soc.c",
-                    "drivers/cam_fd/fd_hw_mgr/cam_fd_hw_mgr.c",
-                    "drivers/cam_fd/cam_fd_dev.c",
-                    "drivers/cam_fd/cam_fd_context.c",
-                ],
-            },
-            "CONFIG_SPECTRA_LRME": {
-                True: [
-                    "drivers/cam_lrme/lrme_hw_mgr/lrme_hw/cam_lrme_hw_dev.c",
-                    "drivers/cam_lrme/lrme_hw_mgr/lrme_hw/cam_lrme_hw_core.c",
-                    "drivers/cam_lrme/lrme_hw_mgr/lrme_hw/cam_lrme_hw_soc.c",
-                    "drivers/cam_lrme/lrme_hw_mgr/cam_lrme_hw_mgr.c",
-                    "drivers/cam_lrme/cam_lrme_dev.c",
-                    "drivers/cam_lrme/cam_lrme_context.c",
-                ],
-            },
             "CONFIG_SPECTRA_SENSOR": {
                 True: [
                     "drivers/cam_sensor_module/cam_actuator/cam_actuator_dev.c",
@@ -189,9 +186,11 @@ def _define_module(target, variant):
                     "drivers/cam_sensor_module/cam_tpg/cam_tpg_dev.c",
                     "drivers/cam_sensor_module/cam_tpg/cam_tpg_core.c",
                     "drivers/cam_sensor_module/cam_tpg/tpg_hw/tpg_hw.c",
+                    "drivers/cam_sensor_module/cam_tpg/tpg_hw/tpg_hw_common.c",
                     "drivers/cam_sensor_module/cam_tpg/tpg_hw/tpg_hw_v_1_0/tpg_hw_v_1_0.c",
                     "drivers/cam_sensor_module/cam_tpg/tpg_hw/tpg_hw_v_1_2/tpg_hw_v_1_2.c",
                     "drivers/cam_sensor_module/cam_tpg/tpg_hw/tpg_hw_v_1_3/tpg_hw_v_1_3.c",
+                    "drivers/cam_sensor_module/cam_tpg/tpg_hw/tpg_hw_v_1_4/tpg_hw_v_1_4.c",
                     "drivers/cam_sensor_module/cam_csiphy/cam_csiphy_soc.c",
                     "drivers/cam_sensor_module/cam_csiphy/cam_csiphy_dev.c",
                     "drivers/cam_sensor_module/cam_csiphy/cam_csiphy_core.c",
@@ -207,12 +206,14 @@ def _define_module(target, variant):
                     "drivers/cam_sensor_module/cam_sensor_io/cam_sensor_io.c",
                     "drivers/cam_sensor_module/cam_sensor_io/cam_sensor_cci_i2c.c",
                     "drivers/cam_sensor_module/cam_sensor_io/cam_sensor_qup_i2c.c",
+                    "drivers/cam_sensor_module/cam_sensor_io/cam_sensor_qup_i3c.c",
                     "drivers/cam_sensor_module/cam_sensor_io/cam_sensor_spi.c",
                     "drivers/cam_sensor_module/cam_sensor_utils/cam_sensor_util.c",
                     "drivers/cam_sensor_module/cam_res_mgr/cam_res_mgr.c",
                     "drivers/cam_sensor_module/cam_flash/cam_flash_dev.c",
                     "drivers/cam_sensor_module/cam_flash/cam_flash_core.c",
                     "drivers/cam_sensor_module/cam_flash/cam_flash_soc.c",
+                    "drivers/cam_sensor_module/cam_sensor_module_debug.c",
                 ],
             },
             "CONFIG_SPECTRA_CUSTOM": {
@@ -226,54 +227,42 @@ def _define_module(target, variant):
                     "drivers/cam_cust/cam_custom_context.c",
                 ],
             },
-            "CONFIG_SPECTRA_OPE": {
-                True: [
-                    "drivers/cam_ope/cam_ope_subdev.c",
-                    "drivers/cam_ope/cam_ope_context.c",
-                    "drivers/cam_ope/ope_hw_mgr/cam_ope_hw_mgr.c",
-                    "drivers/cam_ope/ope_hw_mgr/ope_hw/ope_dev.c",
-                    "drivers/cam_ope/ope_hw_mgr/ope_hw/ope_soc.c",
-                    "drivers/cam_ope/ope_hw_mgr/ope_hw/ope_core.c",
-                    "drivers/cam_ope/ope_hw_mgr/ope_hw/top/ope_top.c",
-                    "drivers/cam_ope/ope_hw_mgr/ope_hw/bus_rd/ope_bus_rd.c",
-                    "drivers/cam_ope/ope_hw_mgr/ope_hw/bus_wr/ope_bus_wr.c",
+            "CONFIG_QCOM_BUS_SCALING": {
+                True: ["drivers/cam_utils/cam_soc_bus.c"],
+            },
+            "CONFIG_CAM_PRESIL": {
+                # Sources need to be available to specify
+                # True: [
+                #     "drivers/cam_presil/presil/cam_presil_io_util.c",
+                #     "drivers/cam_presil/presil/cam_presil_hw_access.c",
+                #     "drivers/cam_presil/presil_framework_dev/cam_presil_framework_dev.c",
+                # ],
+                False: [
+                    "drivers/cam_presil/stub/cam_presil_hw_access_stub.c",
+                    "drivers/cam_utils/cam_io_util.c",
                 ],
             },
-            "CONFIG_SPECTRA_CRE": {
-                True: [
-                    "drivers/cam_cre/cam_cre_hw_mgr/cre_hw/cre_core.c",
-                    "drivers/cam_cre/cam_cre_hw_mgr/cre_hw/cre_soc.c",
-                    "drivers/cam_cre/cam_cre_hw_mgr/cre_hw/cre_dev.c",
-                    "drivers/cam_cre/cam_cre_hw_mgr/cre_hw/top/cre_top.c",
-                    "drivers/cam_cre/cam_cre_hw_mgr/cre_hw/bus_rd/cre_bus_rd.c",
-                    "drivers/cam_cre/cam_cre_hw_mgr/cre_hw/bus_wr/cre_bus_wr.c",
-                    "drivers/cam_cre/cam_cre_hw_mgr/cam_cre_hw_mgr.c",
-                    "drivers/cam_cre/cam_cre_dev.c",
-                    "drivers/cam_cre/cam_cre_context.c",
-                ],
+            "CONFIG_SPECTRA_VMRM": {
+                True: ["drivers/cam_vmrm/qrtr/cam_qrtr_comms.c"],
             },
-            "CONFIG_SPECTRA_TFE": {
+            "CONFIG_SPECTRA_OPLUS": {
                 True: [
-                    "drivers/cam_isp/isp_hw_mgr/isp_hw/ppi_hw/cam_csid_ppi_core.c",
-                    "drivers/cam_isp/isp_hw_mgr/isp_hw/ppi_hw/cam_csid_ppi_dev.c",
-                    "drivers/cam_isp/isp_hw_mgr/isp_hw/ppi_hw/cam_csid_ppi100.c",
-                    "drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_soc.c",
-                    "drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_dev.c",
-                    "drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_core.c",
-                    "drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_bus.c",
-                    "drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe.c",
-                    "drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_csid_hw/cam_tfe_csid_dev.c",
-                    "drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_csid_hw/cam_tfe_csid_soc.c",
-                    "drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_csid_hw/cam_tfe_csid_core.c",
-                    "drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_csid_hw/cam_tfe_csid.c",
-                    "drivers/cam_isp/isp_hw_mgr/cam_tfe_hw_mgr.c",
+                    "drivers/oplus/cam_sensor_module/cam_module_utils/cam_kevent_fb_custom.c",
+                    "drivers/oplus/cam_sensor_module/cam_module_utils/cam_trace_custom.c",
+                    "drivers/oplus/cam_sensor_module/cam_link/oplus_cam_eeprom.c",
+                    "drivers/oplus/cam_sensor_module/cam_link/oplus_cam_sensor.c",
+                    "drivers/oplus/cam_sensor_module/cam_link/oplus_cam_ois.c",
+                    "drivers/oplus/cam_sensor_module/cam_link/oplus_cam_actuator.c",
+                    "drivers/oplus/cam_sensor_module/cam_link/oplus_cam_insensor_eeprom.c",
                 ],
             },
         },
+        local_defines = ["OPLUS_FEATURE_CAMERA_COMMON", "FEATURE_ENABLE=1"],
+        copts = ["-include", "$(location :camera_banner)"],
         deps = deps,
         kconfig = "Kconfig",
         defconfig = "{}_defconfig_generated".format(tv),
-        kernel_build = "//vendor/qcom/kernel:{}".format(tv),
+        kernel_build = "//msm-kernel:{}".format(tv),
     )
 
     copy_to_dist_dir(
@@ -287,5 +276,5 @@ def _define_module(target, variant):
     )
 
 def define_camera_module():
-    for (t, v) in get_all_la_variants():
+    for (t, v) in get_all_variants():
         _define_module(t, v)

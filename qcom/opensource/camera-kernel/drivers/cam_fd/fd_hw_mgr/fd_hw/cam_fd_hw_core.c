@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "cam_fd_hw_core.h"
 #include "cam_fd_hw_soc.h"
 #include "cam_trace.h"
 #include "cam_common_util.h"
+#include "cam_mem_mgr_api.h"
 
 #define CAM_FD_REG_VAL_PAIR_SIZE 256
 
@@ -24,8 +25,13 @@ static uint32_t cam_fd_cdm_write_reg_val_pair(uint32_t *buffer,
 }
 
 static void cam_fd_hw_util_cdm_callback(uint32_t handle, void *userdata,
-	enum cam_cdm_cb_status status, uint64_t cookie)
+	enum cam_cdm_cb_status status, void *cookie_arg)
 {
+	uint64_t cookie = 0;
+
+	if (status != CAM_CDM_CB_STATUS_PAGEFAULT)
+		cookie = *(uint64_t *) cookie_arg;
+
 	trace_cam_cdm_cb("FD", status);
 	CAM_DBG(CAM_FD, "CDM hdl=%x, udata=%pK, status=%d, cookie=%llu",
 		handle, userdata, status, cookie);
@@ -362,6 +368,13 @@ static int cam_fd_hw_util_processcmd_prestart(struct cam_hw_info *fd_hw,
 	mem_base = CAM_SOC_GET_REG_MAP_CAM_BASE(soc_info,
 		((struct cam_fd_soc_private *)soc_info->soc_private)->
 		regbase_index[CAM_FD_REG_CORE]);
+
+	if (mem_base == -1) {
+		CAM_ERR(CAM_FD, "failed to get mem_base, index: %d num_reg_map: %u",
+			((struct cam_fd_soc_private *)soc_info->soc_private)->
+			regbase_index[CAM_FD_REG_CORE], soc_info->num_reg_map);
+		return -EINVAL;
+	}
 
 	ctx_hw_private->cdm_ops->cdm_write_changebase(cmd_buf_addr, mem_base);
 	cmd_buf_addr += size;
@@ -1109,21 +1122,21 @@ int cam_fd_hw_reserve(void *hw_priv, void *hw_reserve_args, uint32_t arg_size)
 		return -EINVAL;
 	}
 
-	cdm_cmd = kzalloc(((sizeof(struct cam_cdm_bl_request)) +
+	cdm_cmd = CAM_MEM_ZALLOC(((sizeof(struct cam_cdm_bl_request)) +
 			((CAM_FD_MAX_HW_ENTRIES - 1) *
 			sizeof(struct cam_cdm_bl_cmd))), GFP_KERNEL);
 	if (!cdm_cmd)
 		return -ENOMEM;
 
-	ctx_hw_private = kzalloc(sizeof(struct cam_fd_ctx_hw_private),
+	ctx_hw_private = CAM_MEM_ZALLOC(sizeof(struct cam_fd_ctx_hw_private),
 		GFP_KERNEL);
 	if (!ctx_hw_private) {
-		kfree(cdm_cmd);
+		CAM_MEM_FREE(cdm_cmd);
 		return -ENOMEM;
 	}
 
 	memset(&cdm_acquire, 0, sizeof(cdm_acquire));
-	strlcpy(cdm_acquire.identifier, "fd", sizeof("fd"));
+	strscpy(cdm_acquire.identifier, "fd", sizeof("fd"));
 	cdm_acquire.cell_index = fd_hw->soc_info.index;
 	cdm_acquire.handle = 0;
 	cdm_acquire.userdata = ctx_hw_private;
@@ -1155,8 +1168,8 @@ int cam_fd_hw_reserve(void *hw_priv, void *hw_reserve_args, uint32_t arg_size)
 
 	return 0;
 error:
-	kfree(ctx_hw_private);
-	kfree(cdm_cmd);
+	CAM_MEM_FREE(ctx_hw_private);
+	CAM_MEM_FREE(cdm_cmd);
 	return rc;
 }
 
@@ -1187,8 +1200,8 @@ int cam_fd_hw_release(void *hw_priv, void *hw_release_args, uint32_t arg_size)
 		CAM_ERR(CAM_FD, "Release cdm handle failed, handle=0x%x, rc=%d",
 			ctx_hw_private->cdm_handle, rc);
 
-	kfree(ctx_hw_private->cdm_cmd);
-	kfree(ctx_hw_private);
+	CAM_MEM_FREE(ctx_hw_private->cdm_cmd);
+	CAM_MEM_FREE(ctx_hw_private);
 	release_args->ctx_hw_private = NULL;
 
 	return 0;

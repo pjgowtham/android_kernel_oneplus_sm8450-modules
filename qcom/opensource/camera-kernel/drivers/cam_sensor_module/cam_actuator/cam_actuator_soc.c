@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/of.h>
@@ -25,6 +26,9 @@ int32_t cam_actuator_parse_dt(struct cam_actuator_ctrl_t *a_ctrl,
 
 	/* Initialize mutex */
 	mutex_init(&(a_ctrl->actuator_mutex));
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	mutex_init(&(a_ctrl->actuator_ioctl_mutex));
+#endif
 
 	rc = cam_soc_util_get_dt_properties(soc_info);
 	if (rc < 0) {
@@ -33,6 +37,14 @@ int32_t cam_actuator_parse_dt(struct cam_actuator_ctrl_t *a_ctrl,
 	}
 
 	of_node = soc_info->dev->of_node;
+
+	rc = of_property_read_bool(of_node, "i3c-target");
+	if (rc) {
+		a_ctrl->is_i3c_device = true;
+		a_ctrl->io_master_info.master_type = I3C_MASTER;
+	}
+
+	CAM_DBG(CAM_SENSOR, "I3C Target: %s", CAM_BOOL_TO_YESNO(a_ctrl->is_i3c_device));
 
 	if (a_ctrl->io_master_info.master_type == CCI_MASTER) {
 		rc = of_property_read_u32(of_node, "cci-master",
@@ -56,6 +68,19 @@ int32_t cam_actuator_parse_dt(struct cam_actuator_ctrl_t *a_ctrl,
 		CAM_DBG(CAM_ACTUATOR, "cci-device %d", a_ctrl->cci_num);
 	}
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	rc = of_property_read_u32(of_node, "is_af_ignore_init_error", &a_ctrl->is_af_ignore_init_error);
+	if (rc)
+	{
+		a_ctrl->is_af_ignore_init_error = 0;
+		CAM_INFO(CAM_ACTUATOR, "get failed for is_af_ignore_init_error = %d",a_ctrl->is_af_ignore_init_error);
+	}
+	else
+	{
+		CAM_INFO(CAM_ACTUATOR, "read is_af_ignore_init_error success, value:%d", a_ctrl->is_af_ignore_init_error);
+	}
+#endif
+
 	/* Initialize regulators to default parameters */
 	for (i = 0; i < soc_info->num_rgltr; i++) {
 		soc_info->rgltr[i] = devm_regulator_get(soc_info->dev,
@@ -70,6 +95,9 @@ int32_t cam_actuator_parse_dt(struct cam_actuator_ctrl_t *a_ctrl,
 		CAM_DBG(CAM_ACTUATOR, "get for regulator %s",
 			soc_info->rgltr_name[i]);
 	}
+
+	cam_sensor_utils_parse_pm_ctrl_flag(of_node, &(a_ctrl->io_master_info));
+
 	if (!soc_info->gpio_data) {
 		CAM_DBG(CAM_ACTUATOR, "No GPIO found");
 		rc = 0;

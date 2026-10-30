@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_IRQ_CONTROLLER_H_
@@ -38,8 +39,6 @@ enum cam_irq_event_group {
 	CAM_IRQ_EVT_GROUP_2,
 };
 
-#define CAM_IRQ_MAX_DEPENDENTS 2
-
 /*
  * struct cam_irq_register_set:
  * @Brief:                  Structure containing offsets of IRQ related
@@ -48,11 +47,19 @@ enum cam_irq_event_group {
  * @mask_reg_offset:        Offset of IRQ MASK register
  * @clear_reg_offset:       Offset of IRQ CLEAR register
  * @status_reg_offset:      Offset of IRQ STATUS register
+ * @set_reg_offset:         Offset of IRQ SET register
+ * @test_set_val:           Value to write to IRQ SET register to trigger IRQ
+ * @test_sub_val:           Value to write to IRQ MASK register to receive test IRQ
+ * @force_rd_mask:          Mask value for bits to be read in hw errata cases
  */
 struct cam_irq_register_set {
 	uint32_t                       mask_reg_offset;
 	uint32_t                       clear_reg_offset;
 	uint32_t                       status_reg_offset;
+	uint32_t                       set_reg_offset;
+	uint32_t                       test_set_val;
+	uint32_t                       test_sub_val;
+	uint32_t                       force_rd_mask;
 };
 
 /*
@@ -62,19 +69,22 @@ struct cam_irq_register_set {
  * @num_registers:          Number of sets(mask/clear/status) of IRQ registers
  * @irq_reg_set:            Array of Register Set Offsets.
  *                          Length of array = num_registers
- * @global_clear_offset:    Offset of Global IRQ Clear register. This register
+ * @global_irq_cmd_offset:  Offset of Global IRQ Clear register. This register
  *                          contains the BIT that needs to be set for the CLEAR
  *                          to take effect
  * @global_clear_bitmask:   Bitmask needed to be used in Global Clear register
  *                          for Clear IRQ cmd to take effect
+ * @global_set_bitmask:     Bitmask needed to be used in Global IRQ command register
+ *                          for Set IRQ cmd to take effect
  * @clear_all_bitmask:      Bitmask that specifies which bits should be written
  *                          to clear register when it is to be cleared forcefully
  */
 struct cam_irq_controller_reg_info {
 	uint32_t                      num_registers;
 	struct cam_irq_register_set  *irq_reg_set;
-	uint32_t                      global_clear_offset;
+	uint32_t                      global_irq_cmd_offset;
 	uint32_t                      global_clear_bitmask;
+	uint32_t                      global_set_bitmask;
 	uint32_t                      clear_all_bitmask;
 };
 
@@ -90,12 +100,15 @@ struct cam_irq_controller_reg_info {
  *                          Length of array = num_registers
  * @evt_payload_priv:       Private payload pointer which can be set by Top
  *                          Half handler for use in Bottom Half.
+ * @is_comp_irq:            Indicates if the interrupt is originating from a
+ *                          composite IRQ bit.
  */
 struct cam_irq_th_payload {
 	void       *handler_priv;
 	uint32_t    num_registers;
 	uint32_t   *evt_status_arr;
 	void       *evt_payload_priv;
+	bool        is_comp_irq;
 };
 
 /*
@@ -111,6 +124,7 @@ static inline void cam_irq_th_payload_init(
 	struct cam_irq_th_payload *th_payload) {
 	th_payload->handler_priv = NULL;
 	th_payload->evt_payload_priv = NULL;
+	th_payload->is_comp_irq = false;
 }
 
 typedef int (*CAM_IRQ_HANDLER_TOP_HALF)(uint32_t evt_id,
@@ -193,6 +207,7 @@ int cam_irq_controller_subscribe_irq(void *irq_controller,
  * cam_irq_controller_unsubscribe_irq()
  *
  * @brief:               Unsubscribe to IRQ events previously subscribed to.
+ *                       Masks out the correspondings events from source
  *
  * @irq_controller:      Pointer to IRQ Controller that controls this event IRQ
  * @handle:              Handle returned on successful subscribe used to
@@ -202,6 +217,21 @@ int cam_irq_controller_subscribe_irq(void *irq_controller,
  *                       Negative: Failure
  */
 int cam_irq_controller_unsubscribe_irq(void *irq_controller,
+	uint32_t handle);
+
+/*
+ * cam_irq_controller_unsubscribe_irq_evt()
+ *
+ * @brief:               Unsubscribe to IRQ event payloads previously subscribed to
+ *
+ * @irq_controller:      Pointer to IRQ Controller that controls this event IRQ
+ * @handle:              Handle returned on successful subscribe used to
+ *                       identify the handler object
+ *
+ * @return:              0: Success
+ *                       Negative: Failure
+ */
+int cam_irq_controller_unsubscribe_irq_evt(void *irq_controller,
 	uint32_t handle);
 
 /*
@@ -320,7 +350,7 @@ int cam_irq_controller_register_dependent(void *primary_controller, void *second
 	uint32_t *mask);
 
 /**
- * cam_irq_controller_register_dependent
+ * cam_irq_controller_unregister_dependent
  * @brief:                 Unregister previously registered dependent IRQ controller
  *
  * @primary_controller:    Controller whose top half will invoke handle_irq function of secondary
@@ -332,5 +362,24 @@ int cam_irq_controller_register_dependent(void *primary_controller, void *second
  *                         Negative: failed to unregister dependent
  */
 int cam_irq_controller_unregister_dependent(void *primary_controller, void *secondary_controller);
+
+/**
+ * cam_irq_controller_test_irq_line()
+ * @brief: Test IRQ line corresponding to IRQ controller
+ *
+ * @irq_controller: IRQ controller under test
+ * @fmt:            Format of the debug message to be printed
+ * @args:           Arguments for the format specifiers corresponding to @fmt
+ *
+ * @return:         0: success, negative: failure
+ */
+#ifdef CONFIG_CAM_TEST_IRQ_LINE
+int cam_irq_controller_test_irq_line(void *irq_controller, const char *fmt, ...);
+#else
+static inline int cam_irq_controller_test_irq_line(void *irq_controller, const char *fmt, ...)
+{
+	return -EPERM;
+}
+#endif
 
 #endif /* _CAM_IRQ_CONTROLLER_H_ */

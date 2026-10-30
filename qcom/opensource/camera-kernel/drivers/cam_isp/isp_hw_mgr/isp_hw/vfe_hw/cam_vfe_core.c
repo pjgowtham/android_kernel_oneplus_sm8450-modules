@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/delay.h>
@@ -211,7 +211,7 @@ int cam_vfe_deinit_hw(void *hw_priv, void *deinit_hw_args, uint32_t arg_size)
 	rc = cam_vfe_reset(hw_priv, &reset_core_args, sizeof(uint32_t));
 
 	/* Turn OFF Regulators, Clocks and other SOC resources */
-	CAM_DBG(CAM_ISP, "Disable SOC resource");
+	CAM_DBG(CAM_ISP, "Disable SOC resource, rc: %d", rc);
 	rc = cam_vfe_disable_soc_resources(soc_info);
 	if (rc)
 		CAM_ERR(CAM_ISP, "Disable SOC failed");
@@ -382,7 +382,6 @@ int cam_vfe_start(void *hw_priv, void *start_args, uint32_t arg_size)
 	struct cam_vfe_hw_core_info       *core_info = NULL;
 	struct cam_hw_info                *vfe_hw  = hw_priv;
 	struct cam_isp_resource_node      *isp_res;
-	struct cam_hw_soc_info            *soc_info = NULL;
 	int                                rc = 0;
 
 	if (!hw_priv || !start_args ||
@@ -391,7 +390,6 @@ int cam_vfe_start(void *hw_priv, void *start_args, uint32_t arg_size)
 		return -EINVAL;
 	}
 
-	soc_info = &vfe_hw->soc_info;
 	core_info = (struct cam_vfe_hw_core_info *)vfe_hw->core_info;
 	isp_res = (struct cam_isp_resource_node  *)start_args;
 	core_info->tasklet_info = isp_res->tasklet_info;
@@ -488,7 +486,6 @@ int cam_vfe_process_cmd(void *hw_priv, uint32_t cmd_type,
 	struct cam_hw_info                *vfe_hw = hw_priv;
 	struct cam_hw_soc_info            *soc_info = NULL;
 	struct cam_vfe_hw_core_info       *core_info = NULL;
-	struct cam_vfe_hw_info            *hw_info = NULL;
 	int rc = 0;
 
 	if (!hw_priv) {
@@ -498,7 +495,6 @@ int cam_vfe_process_cmd(void *hw_priv, uint32_t cmd_type,
 
 	soc_info = &vfe_hw->soc_info;
 	core_info = (struct cam_vfe_hw_core_info *)vfe_hw->core_info;
-	hw_info = core_info->vfe_hw_info;
 
 	switch (cmd_type) {
 	case CAM_ISP_HW_CMD_GET_CHANGE_BASE:
@@ -519,6 +515,9 @@ int cam_vfe_process_cmd(void *hw_priv, uint32_t cmd_type,
 	case CAM_ISP_HW_CMD_APPLY_CLK_BW_UPDATE:
 	case CAM_ISP_HW_CMD_INIT_CONFIG_UPDATE:
 	case CAM_ISP_HW_CMD_RDI_LCR_CFG:
+	case CAM_ISP_HW_CMD_GET_SET_PRIM_SOF_TS_ADDR:
+	case CAM_ISP_HW_CMD_FCG_CONFIG:
+	case CAM_ISP_HW_CMD_SOF_IRQ_DEBUG:
 		rc = core_info->vfe_top->hw_ops.process_cmd(
 			core_info->vfe_top->top_priv, cmd_type, cmd_args,
 			arg_size);
@@ -531,15 +530,20 @@ int cam_vfe_process_cmd(void *hw_priv, uint32_t cmd_type,
 	case CAM_ISP_HW_CMD_UBWC_UPDATE_V2:
 	case CAM_ISP_HW_CMD_WM_CONFIG_UPDATE:
 	case CAM_ISP_HW_CMD_GET_WM_SECURE_MODE:
+	case CAM_ISP_HW_CMD_GET_LAST_CONSUMED_ADDR:
 	case CAM_ISP_HW_CMD_UNMASK_BUS_WR_IRQ:
 	case CAM_ISP_HW_CMD_DUMP_BUS_INFO:
 	case CAM_ISP_HW_CMD_GET_RES_FOR_MID:
-	case CAM_ISP_HW_CMD_QUERY_BUS_CAP:
-	case CAM_ISP_HW_CMD_IFE_BUS_DEBUG_CFG:
 	case CAM_ISP_HW_CMD_WM_BW_LIMIT_CONFIG:
-	case CAM_ISP_HW_BUS_MINI_DUMP:
+	case CAM_ISP_HW_IFE_BUS_MINI_DUMP:
 	case CAM_ISP_HW_CMD_BUF_UPDATE:
 	case CAM_ISP_HW_USER_DUMP:
+	case CAM_ISP_HW_CMD_MC_CTXT_SEL:
+	case CAM_ISP_HW_CMD_IRQ_INJECTION:
+	case CAM_ISP_HW_CMD_DUMP_IRQ_DESCRIPTION:
+	case CAM_ISP_HW_CMD_UBWC_UPDATE_V3:
+	case CAM_ISP_HW_CMD_WM_CONFIG_UPDATE_V2:
+	case CAM_ISP_HW_CMD_READ_RST_PERF_CNTRS:
 		rc = core_info->vfe_bus->hw_ops.process_cmd(
 			core_info->vfe_bus->bus_priv, cmd_type, cmd_args,
 			arg_size);
@@ -547,7 +551,6 @@ int cam_vfe_process_cmd(void *hw_priv, uint32_t cmd_type,
 	case CAM_ISP_HW_CMD_GET_HFR_UPDATE_RM:
 	case CAM_ISP_HW_CMD_GET_BUF_UPDATE_RM:
 	case CAM_ISP_HW_CMD_FE_UPDATE_BUS_RD:
-	case CAM_ISP_HW_CMD_GET_RM_SECURE_MODE:
 		if (core_info->vfe_rd_bus)
 			rc = core_info->vfe_rd_bus->hw_ops.process_cmd(
 				core_info->vfe_rd_bus->bus_priv, cmd_type,
@@ -556,6 +559,17 @@ int cam_vfe_process_cmd(void *hw_priv, uint32_t cmd_type,
 	case CAM_ISP_HW_CMD_QUERY_REGSPACE_DATA:
 		*((struct cam_hw_soc_info **)cmd_args) = soc_info;
 		rc = 0;
+		break;
+	case CAM_ISP_HW_CMD_QUERY_CAP:
+	case CAM_ISP_HW_CMD_IFE_DEBUG_CFG:
+		/* forward to bus and top */
+		core_info->vfe_bus->hw_ops.process_cmd(
+			core_info->vfe_bus->bus_priv, cmd_type, cmd_args,
+			arg_size);
+
+		core_info->vfe_top->hw_ops.process_cmd(
+			core_info->vfe_top->top_priv, cmd_type, cmd_args,
+			arg_size);
 		break;
 	default:
 		CAM_ERR(CAM_ISP, "Invalid cmd type:%d", cmd_type);
@@ -580,6 +594,40 @@ irqreturn_t cam_vfe_irq(int irq_num, void *data)
 		core_info->vfe_irq_controller, CAM_IRQ_EVT_GROUP_0);
 }
 
+int cam_vfe_test_irq_line(void *hw_priv)
+{
+	struct cam_hw_info *vfe_hw = hw_priv;
+	void *vfe_irq_ctrl;
+	int rc = 0, local_ret;
+
+	if (!hw_priv) {
+		CAM_ERR(CAM_ISP, "invalid argument");
+		return -EINVAL;
+	}
+
+	vfe_irq_ctrl = ((struct cam_vfe_hw_core_info *)vfe_hw->core_info)->vfe_irq_controller;
+	local_ret = cam_vfe_init_hw(vfe_hw, NULL, 0);
+	if (local_ret) {
+		CAM_ERR(CAM_ISP, "VFE:%d failed to init hw", vfe_hw->soc_info.index);
+		return local_ret;
+	}
+
+	local_ret = cam_irq_controller_test_irq_line(vfe_irq_ctrl, "VFE:%d",
+		vfe_hw->soc_info.index);
+	if (local_ret) {
+		CAM_ERR(CAM_ISP, "VFE:%d IRQ line test failed", vfe_hw->soc_info.index);
+		rc = local_ret;
+	}
+
+	local_ret = cam_vfe_deinit_hw(vfe_hw, NULL, 0);
+	if (local_ret) {
+		CAM_ERR(CAM_ISP, "VFE:%d failed to deinit hw", vfe_hw->soc_info.index);
+		return local_ret;
+	}
+
+	return rc;
+}
+
 int cam_vfe_core_init(struct cam_vfe_hw_core_info  *core_info,
 	struct cam_hw_soc_info                     *soc_info,
 	struct cam_hw_intf                         *hw_intf,
@@ -596,6 +644,9 @@ int cam_vfe_core_init(struct cam_vfe_hw_core_info  *core_info,
 		return -ENODEV;
 	}
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	CAM_DBG(CAM_ISP, "[QC DBG] top version %x, num_registers %d", vfe_hw_info->top_version, vfe_hw_info->irq_hw_info->top_irq_reg->num_registers);
+#endif
 	rc = cam_irq_controller_init(drv_name,
 		CAM_SOC_GET_REG_MAP_START(soc_info, VFE_CORE_BASE_IDX),
 		vfe_hw_info->irq_hw_info->top_irq_reg,

@@ -104,7 +104,7 @@ struct cam_tfe_hw_tfe_out_acquire_args {
 	uint32_t                                  is_master;
 	struct cam_cdm_utils_ops                 *cdm_ops;
 	void                                     *ctx;
-	uint32_t                                  comp_grp_id;
+	uint32_t                                 comp_grp_id;
 };
 
 /*
@@ -224,6 +224,7 @@ struct cam_tfe_bw_control_args {
  * @error_type:              Identify different errors
  * @enable_reg_dump:         enable register dump on error
  * @ts:                      Timestamp
+ * @last_consumed_addr:      Last consumed addr for resource
  */
 struct cam_tfe_irq_evt_payload {
 	struct list_head           list;
@@ -240,16 +241,8 @@ struct cam_tfe_irq_evt_payload {
 	uint32_t                   error_type;
 	bool                       enable_reg_dump;
 	struct cam_isp_timestamp   ts;
+	uint32_t                   last_consumed_addr;
 };
-
-/*
- * cam_tfe_get_num_tfe_hws()
- *
- * @brief:         Gets number of TFEs
- *
- * @num_tfes:      Fills number of TFES in the address passed
- */
-void cam_tfe_get_num_tfe_hws(uint32_t *num_tfes);
 
 /*
  * cam_tfe_hw_init()

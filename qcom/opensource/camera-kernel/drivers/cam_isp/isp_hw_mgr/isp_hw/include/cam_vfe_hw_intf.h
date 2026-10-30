@@ -1,14 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_VFE_HW_INTF_H_
 #define _CAM_VFE_HW_INTF_H_
 
 #include "cam_isp_hw.h"
-#include "cam_ife_csid_hw_intf.h"
 #include "cam_ife_csid_hw_intf.h"
 #include "cam_cpas_api.h"
 
@@ -23,7 +22,14 @@
 #define VFE_VBIF_BASE_IDX             1
 #define VFE_BUS_BASE_IDX              1
 
-#define CAM_VFE_MAX_UBWC_PORTS        4
+#define CAM_VFE_MAX_UBWC_PORTS        12
+
+#define CAM_VFE_PERF_CNT_MAX          8
+
+/* Common capabilities for VFE */
+#define CAM_VFE_COMMON_CAP_SKIP_CORE_CFG BIT(0)
+#define CAM_VFE_COMMON_CAP_CORE_MUX_CFG  BIT(1)
+#define CAM_VFE_COMMON_CAP_DEBUG_ERR_VEC BIT(2)
 
 enum cam_isp_hw_vfe_in_mux {
 	CAM_ISP_HW_VFE_IN_CAMIF       = 0,
@@ -33,8 +39,9 @@ enum cam_isp_hw_vfe_in_mux {
 	CAM_ISP_HW_VFE_IN_RDI1        = 4,
 	CAM_ISP_HW_VFE_IN_RDI2        = 5,
 	CAM_ISP_HW_VFE_IN_RDI3        = 6,
-	CAM_ISP_HW_VFE_IN_PDLIB       = 7,
-	CAM_ISP_HW_VFE_IN_LCR         = 8,
+	CAM_ISP_HW_VFE_IN_RDI4        = 7,
+	CAM_ISP_HW_VFE_IN_PDLIB       = 8,
+	CAM_ISP_HW_VFE_IN_LCR         = 9,
 	CAM_ISP_HW_VFE_IN_MAX,
 };
 
@@ -55,6 +62,10 @@ enum cam_vfe_hw_irq_status {
 	CAM_VFE_IRQ_STATUS_P2I_ERROR            = 2,
 	CAM_VFE_IRQ_STATUS_VIOLATION            = 3,
 	CAM_VFE_IRQ_STATUS_MAX,
+};
+
+enum cam_vfe_irq_err_mask {
+	CAM_VFE_IRQ_ERR_MASK_HWPD_VIOLATION     = 0x00000001,
 };
 
 enum cam_vfe_hw_irq_regs {
@@ -145,6 +156,8 @@ struct cam_vfe_hw_vfe_bus_rd_acquire_args {
  * @disable_ubwc_comp:       Disable UBWC compression
  * @use_wm_pack:             Use WM Packing
  * @comp_grp_id:             VFE bus comp group id
+ * @use_hw_ctxt:             Use HW context id info
+ *
  */
 struct cam_vfe_hw_vfe_out_acquire_args {
 	struct cam_isp_resource_node         *rsrc_node;
@@ -158,6 +171,7 @@ struct cam_vfe_hw_vfe_out_acquire_args {
 	bool                                  disable_ubwc_comp;
 	bool                                  use_wm_pack;
 	uint32_t                              comp_grp_id;
+	bool                                  use_hw_ctxt;
 };
 
 /*
@@ -169,6 +183,8 @@ struct cam_vfe_hw_vfe_out_acquire_args {
  *                           else CAM_ISP_HW_VFE_IN_MAX
  * @dual_hw_idx:             Slave core for this master core if dual vfe case
  * @is_dual:                 flag to indicate if dual vfe case
+ * @hw_ctxt_mask:            Mask to indicate destination hw contexts acquired corresponding to
+ *                           a particular CSID IPP path
  * @cdm_ops:                 CDM operations
  * @sync_mode:               In case of Dual VFE, this is Master or Slave.
  *                           (Default is Master in case of Single VFE)
@@ -182,6 +198,7 @@ struct cam_vfe_hw_vfe_in_acquire_args {
 	uint32_t                              res_id;
 	uint32_t                              dual_hw_idx;
 	uint32_t                              is_dual;
+	uint32_t                              hw_ctxt_mask;
 	void                                 *cdm_ops;
 	enum cam_isp_hw_sync_mode             sync_mode;
 	struct cam_isp_in_port_generic_info  *in_port;
@@ -200,6 +217,7 @@ struct cam_vfe_hw_vfe_in_acquire_args {
  * @priv:                    Context data
  * @event_cb:                Callback function to hw mgr in case of hw events
  * @buf_done_controller:     Buf done controller for isp
+ * @mc_comp_buf_done_controller: Hw context composite buf done controller for isp
  * @vfe_out:                 Acquire args for VFE_OUT
  * @vfe_bus_rd               Acquire args for VFE_BUS_READ
  * @vfe_in:                  Acquire args for VFE_IN
@@ -210,6 +228,7 @@ struct cam_vfe_acquire_args {
 	void                                *priv;
 	cam_hw_mgr_event_cb_func             event_cb;
 	void                                *buf_done_controller;
+	void                                *mc_comp_buf_done_controller;
 	union {
 		struct cam_vfe_hw_vfe_out_acquire_args     vfe_out;
 		struct cam_vfe_hw_vfe_bus_rd_acquire_args  vfe_bus_rd;
@@ -222,10 +241,12 @@ struct cam_vfe_acquire_args {
  *
  * @node_res:                Resource to get the time stamp
  * @clk_rate:                Clock rate requested
+ * @vote_level:              DRV vote level corresponding to requested rate
  */
 struct cam_vfe_clock_update_args {
 	struct cam_isp_resource_node      *node_res;
 	uint64_t                           clk_rate;
+	uint32_t                           vote_level;
 };
 
 /*
@@ -312,6 +333,8 @@ struct cam_vfe_top_irq_evt_payload {
  * @error_type:              Identify different errors
  * @ts:                      Timestamp
  * @last_consumed_addr:      Last consumed addr for resource
+ * @is_hw_ctxt_comp_done:    Indicates if the buf done is hw context composited
+ * @is_hw_ctxt_comp_done:    Indicates if the irq is for an early done
  */
 struct cam_vfe_bus_irq_evt_payload {
 	struct list_head            list;
@@ -324,6 +347,8 @@ struct cam_vfe_bus_irq_evt_payload {
 	uint32_t                    irq_reg_val[CAM_IFE_BUS_IRQ_REGISTERS_MAX];
 	struct cam_isp_timestamp    ts;
 	uint32_t                    last_consumed_addr;
+	bool                        is_hw_ctxt_comp_done;
+	bool                        is_early_done;
 };
 
 /**
@@ -345,6 +370,7 @@ struct cam_vfe_bus_irq_evt_payload {
  * @lossy_threshold1            UBWC lossy threshold 1
  * @lossy_var_offset            UBWC offset variance threshold
  * @bandwidth limit             UBWC bandwidth limit
+ * @hw_ctx_id_mask:             hw context id mask in case of multi context
  */
 struct cam_vfe_generic_ubwc_plane_config {
 	uint32_t                port_type;
@@ -364,6 +390,7 @@ struct cam_vfe_generic_ubwc_plane_config {
 	uint32_t                lossy_threshold_1;
 	uint32_t                lossy_var_offset;
 	uint32_t                bandwidth_limit;
+	uint32_t                hw_ctx_id_mask;
 };
 
 /**
@@ -376,6 +403,37 @@ struct cam_vfe_generic_ubwc_config {
 	uint32_t   api_version;
 	struct cam_vfe_generic_ubwc_plane_config
 		ubwc_plane_cfg[CAM_PACKET_MAX_PLANES - 1];
+};
+
+
+/*
+ * struct cam_vfe_generic_debug_config:
+ *
+ * @diag_config                 : VFE diag cfg register configuration
+ * @num_counters                : Number of perf counters configured
+ * @vfe_perf_counter_val        : VFE perf counter values
+ * @vfe_bus_wr_perf_counter_val : VFE wr perf counter values
+ * @disable_ife_mmu_prefetch    : Disable IFE mmu prefetch
+ * @enable_ife_frame_irqs       : Enable IFE frame timing IRQs
+ */
+struct cam_vfe_generic_debug_config {
+	uint64_t  diag_config;
+	uint32_t  num_counters;
+	uint32_t  vfe_perf_counter_val[CAM_VFE_PERF_CNT_MAX];
+	uint32_t  vfe_bus_wr_perf_counter_val[CAM_VFE_PERF_CNT_MAX];
+	bool      disable_ife_mmu_prefetch;
+	bool      enable_ife_frame_irqs;
+};
+
+/*
+ * struct cam_vfe_enable_sof_irq_args:
+ *
+ * @enable_sof_irq_debug: Enable IFE/TFE SOF IRQ debug
+ * @res                 : Resource node
+ */
+struct cam_vfe_enable_sof_irq_args {
+	struct cam_isp_resource_node *res;
+	bool                          enable_sof_irq_debug;
 };
 
 /*

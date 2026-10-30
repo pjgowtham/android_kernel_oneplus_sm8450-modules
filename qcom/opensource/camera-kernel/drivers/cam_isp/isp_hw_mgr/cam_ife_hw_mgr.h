@@ -14,6 +14,7 @@
 #include "cam_ife_csid_hw_intf.h"
 #include "cam_tasklet_util.h"
 #include "cam_cdm_intf_api.h"
+#include "cam_cpas_api.h"
 
 /*
  * enum cam_ife_ctx_master_type - HW master type
@@ -30,7 +31,6 @@ enum cam_ife_ctx_master_type {
 
 /* IFE resource constants */
 #define CAM_IFE_HW_IN_RES_MAX            (CAM_ISP_IFE_IN_RES_MAX & 0xFF)
-#define CAM_SFE_HW_OUT_RES_MAX           (CAM_ISP_SFE_OUT_RES_MAX & 0xFF)
 #define CAM_IFE_HW_RES_POOL_MAX          64
 
 /* IFE_HW_MGR ctx config */
@@ -38,50 +38,97 @@ enum cam_ife_ctx_master_type {
 #define CAM_IFE_CTX_CFG_SW_SYNC_ON        BIT(1)
 #define CAM_IFE_CTX_CFG_DYNAMIC_SWITCH_ON BIT(2)
 
+/* Maximum set for irq injection*/
+#define MAX_INJECT_SET 10
+
+/* IFE CSID non recovery errors */
+#define CAM_ISP_NON_RECOVERABLE_CSID_ERRORS          \
+	(CAM_ISP_HW_ERROR_CSID_LANE_FIFO_OVERFLOW    |   \
+	 CAM_ISP_HW_ERROR_CSID_PKT_HDR_CORRUPTED     |   \
+	 CAM_ISP_HW_ERROR_CSID_MISSING_PKT_HDR_DATA  |   \
+	 CAM_ISP_HW_ERROR_CSID_FATAL                 |   \
+	 CAM_ISP_HW_ERROR_CSID_UNBOUNDED_FRAME       |   \
+	 CAM_ISP_HW_ERROR_CSID_MISSING_EOT           |   \
+	 CAM_ISP_HW_ERROR_CSID_ILLEGAL_DT_SWITCH)
+
+/* IFE CSID recovery errors */
+#define CAM_ISP_RECOVERABLE_CSID_ERRORS              \
+	(CAM_ISP_HW_ERROR_CSID_SENSOR_SWITCH_ERROR   |   \
+	 CAM_ISP_HW_ERROR_CSID_SENSOR_FRAME_DROP     |   \
+	 CAM_ISP_HW_ERROR_CSID_PKT_PAYLOAD_CORRUPTED)
+
+/* Maximum DRV request depth */
+#define MAX_DRV_REQUEST_DEPTH  8
+
+/* Global Counter has frequency 19.2 Mhz */
+#define GC_FREQUENCY_IN_KHZ  19200
+
+/* Trigger single out of sync debugfs */
+#define CAM_IFE_CTX_TRIGGER_SINGLE_OUT_OF_SYNC_CFG 1
+
 /**
  * struct cam_ife_hw_mgr_debug - contain the debug information
  *
  * @dentry:                    Debugfs entry
  * @csid_debug:                csid debug information
+ * @rx_capture_debug:          rx capture debug info
  * @enable_recovery:           enable recovery
  * @camif_debug:               camif debug info
  * @enable_csid_recovery:      enable csid recovery
  * @sfe_debug:                 sfe debug config
  * @sfe_sensor_diag_cfg:       sfe sensor diag config
+ * @csid_test_bus:             csid test bus config
  * @sfe_cache_debug:           sfe cache debug info
+ * @perf_cnt_res_id:           res_id for WM on which perf cnt is enabled
+ * @ife_perf_counter_val:      ife perf counter values
+ * @sfe_perf_counter_val:      sfe perf counter values
+ * @csid_domain_id_value:      Value of domain id to set on CSID
+ * @csid_out_of_sync_simul:    Controls out of sync simulation
  * @enable_req_dump:           Enable request dump on HW errors
  * @per_req_reg_dump:          Enable per request reg dump
  * @disable_ubwc_comp:         Disable UBWC compression
  * @disable_ife_mmu_prefetch:  Disable MMU prefetch for IFE bus WR
- *
+ * @enable_ife_frame_irqs:     Enable Frame timing IRQs for IFE/MCTFE
+ * @rx_capture_debug_set:      If rx capture debug is set by user
+ * @disable_isp_drv:           Disable ISP DRV config
+ * @enable_presil_reg_dump:    Enable per req regdump in presil
+ * @enable_cdm_cmd_check:      Enable invalid command check in cmd_buf
+ * @enable_csid_set_domain_id: Enable CSID force set per path domain id
+ * @per_req_wait_cdm:          Enable per req wait cdm
+ * @enable_cdr_sweep_debug:    Enable sending some CSID reg values as part
+ *                             of CSIPHY CDR tuning
  */
 struct cam_ife_hw_mgr_debug {
 	struct dentry  *dentry;
 	uint64_t       csid_debug;
+	uint32_t       rx_capture_debug;
 	uint32_t       enable_recovery;
-	uint32_t       camif_debug;
+	uint64_t       camif_debug;
 	uint32_t       enable_csid_recovery;
 	uint32_t       sfe_debug;
 	uint32_t       sfe_sensor_diag_cfg;
+	uint32_t       csid_test_bus;
 	uint32_t       sfe_cache_debug[CAM_SFE_HW_NUM_MAX];
+	uint32_t       perf_cnt_res_id;
+	uint32_t      *ife_perf_counter_val;
+	uint32_t      *sfe_perf_counter_val;
+	uint32_t       csid_domain_id_value;
+	uint32_t       csid_out_of_sync_simul;
+	uint32_t      *ife_bus_wr_perf_counter_val;
+	uint32_t      *sfe_bus_wr_perf_counter_val;
 	bool           enable_req_dump;
 	bool           per_req_reg_dump;
 	bool           disable_ubwc_comp;
 	bool           disable_ife_mmu_prefetch;
-};
-
-/**
- * struct cam_cmd_buf_desc_addr_len
- *
- * brief:                       structure to store cpu addr and size of
- *                              reg dump descriptors
- * @cpu_addr:                   cpu addr of buffer
- * @size:                       size of the buffer
- */
-
-struct cam_cmd_buf_desc_addr_len {
-	uintptr_t cpu_addr;
-	size_t    buf_size;
+	bool           enable_ife_frame_irqs;
+	bool           rx_capture_debug_set;
+	bool           disable_isp_drv;
+	bool           enable_presil_reg_dump;
+	bool           enable_cdm_cmd_check;
+	bool           enable_csid_set_domain_id;
+	bool           per_req_wait_cdm;
+	bool           enable_cdr_sweep_debug;
+	bool           enable_sfe_wr_perf_cntr;
 };
 
 /**
@@ -175,28 +222,31 @@ struct cam_ife_hw_mgr_ctx_scratch_buf_info {
 /**
  * struct cam_ife_hw_mgr_ctx_flags - IFE HW mgr ctx flags
  *
- * @ctx_in_use:          flag to tell whether context is active
- * @init_done:           indicate whether init hw is done
- * @is_fe_enabled:       indicate whether fetch engine\read path is enabled
- * @is_dual:             indicate whether context is in dual VFE mode
- * @is_offline:          indicate whether context is for offline IFE
- * @dsp_enabled:         indicate whether dsp is enabled in this context
- * @internal_cdm:        indicate whether context uses internal CDM
- * @pf_mid_found:        in page fault, mid found for this ctx.
- * @need_csid_top_cfg:   Flag to indicate if CSID top cfg is needed.
- * @is_rdi_only_context: flag to specify the context has only rdi resource
- * @is_lite_context:     flag to specify the context has only uses lite
- *                       resources
- * @is_sfe_shdr:         indicate if stream is for SFE sHDR
- * @is_sfe_fs:           indicate if stream is for inline SFE FS
- * @dump_on_flush:       Set if reg dump triggered on flush
- * @dump_on_error:       Set if reg dump triggered on error
- * @custom_aeb_mode:     Set if custom AEB stream
- * @rdi_lcr_en:          To indicate if RDI LCR is enabled
- * @sys_cache_usage:     Per context sys cache usage
- *                       The corresponding index will be set
- *                       for the cache type
- * @skip_reg_dump_buf_put:    Set if put_cpu_buf for reg dump buf is already called
+ * @ctx_in_use:            Flag to tell whether context is active
+ * @init_done:             Indicate whether init hw is done
+ * @is_fe_enabled:         Indicate whether fetch engine\read path is enabled
+ * @is_dual:               Indicate whether context is in dual VFE mode
+ * @is_offline:            Indicate whether context is for offline IFE
+ * @dsp_enabled:           Indicate whether dsp is enabled in this context
+ * @internal_cdm:          Indicate whether context uses internal CDM
+ * @pf_mid_found:          In page fault, mid found for this ctx.
+ * @need_csid_top_cfg:     Flag to indicate if CSID top cfg is needed.
+ * @is_rdi_only_context:   Flag to specify the context has only rdi resource
+ * @is_lite_context:       Flag to specify the context has only uses lite
+ *                         resources
+ * @is_sfe_shdr:           Indicate if stream is for SFE sHDR
+ * @is_sfe_fs:             Indicate if stream is for inline SFE FS
+ * @dump_on_flush:         Set if reg dump triggered on flush
+ * @dump_on_error:         Set if reg dump triggered on error
+ * @custom_aeb_mode:       Set if custom AEB stream
+ * @rdi_lcr_en:            To indicate if RDI LCR is enabled
+ * @sys_cache_usage:       Per context sys cache usage
+ *                         The corresponding index will be set
+ *                         for the cache type
+ * @rdi_pd_context:        Flag to specify the context has
+ *                         only rdi and PD resource without PIX port.
+ * @dynamic_drv_supported: Indicate if the dynamic drv is supported
+ * @skip_reg_dump_buf_put: Set if put_cpu_buf for reg dump buf is already called
  *
  */
 struct cam_ife_hw_mgr_ctx_flags {
@@ -217,7 +267,9 @@ struct cam_ife_hw_mgr_ctx_flags {
 	bool   dump_on_error;
 	bool   is_aeb_mode;
 	bool   rdi_lcr_en;
-	bool   sys_cache_usage[CAM_LLCC_MAX];
+	bool   sys_cache_usage[CAM_LLCC_LARGE_4 + 1];
+	bool   rdi_pd_context;
+	bool   dynamic_drv_supported;
 	bool   skip_reg_dump_buf_put;
 };
 
@@ -230,6 +282,50 @@ struct cam_ife_hw_mgr_ctx_flags {
 struct cam_ife_cdm_user_data {
 	struct cam_isp_prepare_hw_update_data    *hw_update_data;
 	uint64_t                                  request_id;
+};
+
+/**
+ * struct cam_isp_context_comp_record:
+ *
+ * @brief:              Structure record the res id reserved on a comp group
+ *
+ * @num_res:            Number of valid resource IDs in this record
+ * @res_id:             Resource IDs to report buf dones
+ * @hw_ctxt_id:         Hw ctxt id corresponding to the res_id entry
+ *
+ */
+struct cam_isp_context_comp_record {
+	uint32_t num_res;
+	uint32_t res_id[CAM_NUM_OUT_PER_COMP_IRQ_MAX];
+	uint32_t hw_ctxt_id[CAM_NUM_OUT_PER_COMP_IRQ_MAX];
+};
+
+/**
+ * struct cam_isp_comp_record_query:
+ *
+ * @brief:              Structure record the bus comp group pointer information
+ *
+ * @vfe_bus_comp_grp:   Vfe bus comp group pointer
+ * @vfe_bus_comp_grp:   Sfe bus comp group pointer
+ *
+ */
+struct cam_isp_comp_record_query {
+	struct cam_isp_context_comp_record        *vfe_bus_comp_grp;
+	struct cam_isp_context_comp_record        *sfe_bus_comp_grp;
+};
+
+/**
+ * struct cam_cmd_buf_desc_addr_len
+ *
+ * brief:                       structure to store cpu addr and size of
+ *                              reg dump descriptors
+ * @cpu_addr:                   cpu addr of buffer
+ * @size:                       size of the buffer
+ */
+
+struct cam_cmd_buf_desc_addr_len {
+	uintptr_t cpu_addr;
+	size_t    buf_size;
 };
 
 /**
@@ -247,6 +343,8 @@ struct cam_ife_cdm_user_data {
  * @res_list_ife_in_rd      IFE/SFE input resource list for read path
  * @res_list_ife_out:       IFE output resoruces array
  * @res_list_sfe_out:       SFE output resources array
+ * @vfe_out_map:            Map for VFE out ports
+ * @sfe_out_map:            Map for SFE out ports
  * @num_acq_vfe_out:        Number of acquired VFE out resources
  * @num_acq_sfe_out:        Number of acquired SFE out resources
  * @free_res_list:          Free resources list for the branch node
@@ -257,6 +355,7 @@ struct cam_ife_cdm_user_data {
  *                          instance associated with this context.
  * @num_base                number of valid base data in the base array
  * @cdm_handle              cdm hw acquire handle
+ * @cdm_hw_idx:             Physical CDM in use
  * @cdm_ops                 cdm util operation pointer for building
  *                          cdm commands
  * @cdm_cmd                 cdm base and length request pointer
@@ -272,14 +371,13 @@ struct cam_ife_cdm_user_data {
  * @config_done_complete    indicator for configuration complete
  * @reg_dump_buf_desc:      cmd buffer descriptors for reg dump
  * @num_reg_dump_buf:       Count of descriptors in reg_dump_buf_desc
- * @reg_dump_cmd_buf_addr_len	store cpu addr and size of
- *                          reg dump descriptors for flush/error cases
  * @applied_req_id:         Last request id to be applied
  * @ctx_type                Type of IFE ctx [CUSTOM/SFE etc.]
  * @ctx_config              ife ctx config  [bit field]
  * @ts                      captured timestamp when the ctx is acquired
  * @hw_enabled              Array to indicate active HW
  * @buf_done_controller     Buf done controller.
+ * @mc_comp_buf_done_controller: Buf done controller for hw context composite buf dones
  * @scratch_buf_info        Scratch buf [SFE/IFE] info pertaining to this stream
  * @flags                   Flags pertainting to this ctx
  * @bw_config_version       BW Config version
@@ -287,27 +385,37 @@ struct cam_ife_cdm_user_data {
  * @current_mup:            Current MUP val, scratch will then apply the same as previously
  *                          applied request
  * @curr_num_exp:           Current num of exposures
- *
+ * @try_recovery_cnt:       Retry count for overflow recovery
+ * @recovery_req_id:        The request id on which overflow recovery happens
+ * @drv_path_idle_en:       Path idle enable value for DRV
+ * @major_version:          Major version for acquire
+ * @vfe_bus_comp_grp:       VFE composite group placeholder
+ * @sfe_bus_comp_grp:       SFE composite group placeholder
+ * @cdm_done_ts:            CDM callback done timestamp
+ * @is_hw_ctx_acq:          If acquire for ife ctx is having hw ctx acquired
+ * @acq_hw_ctxt_src_dst_map: Src to dst hw ctxt map for acquired pixel paths
+ * @pri_rdi_out_res:         Primary RDI res for RDI only cases
+ * @drv_info:                Array to include the per request drv info
+ * @is_init_drv_cfg_received: Indicate if init drv config has received
  */
 struct cam_ife_hw_mgr_ctx {
-	struct list_head                          list;
-	struct cam_isp_hw_mgr_ctx                 common;
-
-	uint32_t                                  ctx_index;
-	uint32_t                                  left_hw_idx;
-	uint32_t                                  right_hw_idx;
-	struct cam_ife_hw_mgr                    *hw_mgr;
-
+	struct list_head                           list;
+	struct cam_isp_hw_mgr_ctx                  common;
+	uint32_t                                   ctx_index;
+	uint32_t                                   left_hw_idx;
+	uint32_t                                   right_hw_idx;
+	struct cam_ife_hw_mgr                     *hw_mgr;
 	struct cam_isp_hw_mgr_res                  res_list_ife_in;
 	struct list_head                           res_list_ife_csid;
 	struct list_head                           res_list_ife_src;
 	struct list_head                           res_list_sfe_src;
 	struct list_head                           res_list_ife_in_rd;
 	struct cam_isp_hw_mgr_res                 *res_list_ife_out;
-	struct cam_isp_hw_mgr_res                  res_list_sfe_out[
-							CAM_SFE_HW_OUT_RES_MAX];
+	struct cam_isp_hw_mgr_res                 *res_list_sfe_out;
 	struct list_head                           free_res_list;
 	struct cam_isp_hw_mgr_res                  res_pool[CAM_IFE_HW_RES_POOL_MAX];
+	uint8_t                                   *vfe_out_map;
+	uint8_t                                   *sfe_out_map;
 	uint32_t                                   num_acq_vfe_out;
 	uint32_t                                   num_acq_sfe_out;
 
@@ -317,6 +425,7 @@ struct cam_ife_hw_mgr_ctx {
 								CAM_SFE_HW_NUM_MAX];
 	uint32_t                                   num_base;
 	uint32_t                                   cdm_handle;
+	int32_t                                    cdm_hw_idx;
 	struct cam_cdm_utils_ops                  *cdm_ops;
 	struct cam_cdm_bl_request                 *cdm_cmd;
 	enum cam_cdm_id                            cdm_id;
@@ -330,14 +439,15 @@ struct cam_ife_hw_mgr_ctx {
 	uint32_t                                   hw_version;
 	struct cam_cmd_buf_desc                    reg_dump_buf_desc[
 						CAM_REG_DUMP_MAX_BUF_ENTRIES];
+	uint32_t                                   num_reg_dump_buf;
 	struct cam_cmd_buf_desc_addr_len           reg_dump_cmd_buf_addr_len[
 						CAM_REG_DUMP_MAX_BUF_ENTRIES];
-	uint32_t                                   num_reg_dump_buf;
 	uint64_t                                   applied_req_id;
 	enum cam_ife_ctx_master_type               ctx_type;
 	uint32_t                                   ctx_config;
 	struct timespec64                          ts;
 	void                                      *buf_done_controller;
+	void                                      *mc_comp_buf_done_controller;
 	struct cam_ife_hw_mgr_ctx_scratch_buf_info scratch_buf_info;
 	struct cam_ife_hw_mgr_ctx_flags            flags;
 	struct cam_ife_hw_mgr_ctx_pf_info          pf_info;
@@ -346,34 +456,139 @@ struct cam_ife_hw_mgr_ctx {
 	atomic_t                                   recovery_id;
 	uint32_t                                   current_mup;
 	uint32_t                                   curr_num_exp;
-	struct cam_isp_hw_comp_record             *vfe_bus_comp_grp;
-	struct cam_isp_hw_comp_record             *sfe_bus_comp_grp;
+	uint32_t                                   try_recovery_cnt;
+	uint64_t                                   recovery_req_id;
+	uint32_t                                   drv_path_idle_en;
+	uint32_t                                   major_version;
+	struct cam_isp_context_comp_record        *vfe_bus_comp_grp;
+	struct cam_isp_context_comp_record        *sfe_bus_comp_grp;
+	struct timespec64                          cdm_done_ts;
+	bool                                       is_hw_ctx_acq;
+	uint32_t                                   acq_hw_ctxt_src_dst_map[CAM_ISP_MULTI_CTXT_MAX];
+	uint32_t                                   pri_rdi_out_res;
+	struct cam_isp_hw_per_req_info             per_req_info[MAX_DRV_REQUEST_DEPTH];
+	uint8_t                                    wr_per_req_index;
+	bool                                       is_init_drv_cfg_received;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	uint64_t                                   rdi0_sof_timestamp;
+	uint64_t                                   rdi0_eof_timestamp;
+	uint64_t                                   rdi1_sof_timestamp;
+	uint64_t                                   active_frame_duration;
+	uint64_t                                   sof_to_sof;
+	uint32_t                                   error_cnt_after_recovery;
+#endif
+
 };
 
 /**
- * struct cam_isp_bus_hw_caps - BUS capabilities
+ * struct cam_isp_fcg_caps - IFE/SFE/MC_TFE FCG capabilities
+ *
+ * @max_ife_fcg_ch_ctx:      Maximum number of IFE FCG channels/TFE FCG contexts
+ * @max_sfe_fcg_ch_ctx:      Maximum number of SFE FCG channels
+ * @max_ife_fcg_predictions: Maximum number of IFE FCG predictions
+ * @max_sfe_fcg_predictions: Maximum number of SFE FCG predictions
+ * @ife_fcg_supported:       Indicate whether FCG is supported by IFE hw
+ * @sfe_fcg_supported:       Indicate whether FCG is supported by SFE hw
+ */
+struct cam_isp_fcg_caps {
+	uint32_t     max_ife_fcg_ch_ctx;
+	uint32_t     max_sfe_fcg_ch_ctx;
+	uint32_t     max_ife_fcg_predictions;
+	uint32_t     max_sfe_fcg_predictions;
+	bool         ife_fcg_supported;
+	bool         sfe_fcg_supported;
+};
+
+/**
+ * struct cam_isp_ife_sfe_hw_caps - IFE/SFE hw capabilities
  *
  * @max_vfe_out_res_type  :  max ife out res type value from hw
  * @max_sfe_out_res_type  :  max sfe out res type value from hw
+ * @num_ife_perf_counters :  max ife perf counters supported
+ * @num_sfe_perf_counters :  max sfe perf counters supported
+ * @max_dt_supported      :  max DT CSID can decode
  * @support_consumed_addr :  indicate whether hw supports last consumed address
  */
-struct cam_isp_bus_hw_caps {
-	uint32_t     max_vfe_out_res_type;
-	uint32_t     max_sfe_out_res_type;
-	bool         support_consumed_addr;
+struct cam_isp_ife_sfe_hw_caps {
+	struct cam_isp_fcg_caps fcg_caps;
+	uint32_t                max_vfe_out_res_type;
+	uint32_t                max_sfe_out_res_type;
+	uint32_t                num_ife_perf_counters;
+	uint32_t                num_sfe_perf_counters;
+	uint32_t                num_ife_bus_wr_perf_counters;
+	uint32_t                num_sfe_bus_wr_perf_counters;
+	uint32_t                max_dt_supported;
+	bool                    support_consumed_addr;
+	struct cam_isp_hw_regiter_dump_data skip_regdump_data;
 };
 
 /*
  * struct cam_isp_sys_cache_info:
  *
- * @Brief:                   ISP Bus sys cache info
+ * @Brief:                   ISP Bus sys cache info. Placeholder for all cache ids and their
+ *                           types
  *
  * @type:                    Cache type
  * @scid:                    Cache slice ID
+ * @llcc_staling_support     to check llcc sys cache stalling mode supported or not
  */
 struct cam_isp_sys_cache_info {
-	enum cam_sys_cache_config_types type;
+	uint32_t                        type;
 	int32_t                         scid;
+	bool            llcc_staling_support;
+};
+
+/*
+ * struct cam_isp_sfe_cache_info:
+ *
+ * @Brief:                   SFE cache info. Placeholder for:
+ *                           1. Supported cache IDs which are populated during
+ *                           probe based on large and small.
+ *                           2. keeps track for the current cache id used for a
+ *                           particular exposure type
+ *                           3. keeps track of acvitated exposures.
+ *                           Based on this data, we can toggle the SCIDs for a particular
+ *                           hw whenever there is a hw halt. Also we don't change
+ *                           the SCID in case of dynamic exposure switches.
+ *
+ * @supported_scid_idx:      Bit mask for IDs supported for each exposure type
+ * @curr_idx:                Index of Cache ID in use for each exposure
+ * @activated:               Maintains if the cache is activated for a particular exposure
+ */
+struct cam_isp_sfe_cache_info {
+	int      supported_scid_idx;
+	int      curr_idx[CAM_ISP_EXPOSURE_MAX];
+	bool     activated[CAM_ISP_EXPOSURE_MAX];
+};
+
+/*
+ * struct cam_isp_irq_inject_irq_desc: Structure to hold IRQ description
+ *
+ * @bitmask : Bitmask of the IRQ
+ * @desc    : String to describe the IRQ bit
+ */
+struct cam_isp_irq_inject_irq_desc {
+	uint32_t    bitmask;
+	char       *desc;
+};
+
+/*
+ * enum cam_isp_irq_inject_common_param_pos - Irq injection param
+ *
+ * HW_TYPE         : hw to inject IRQ
+ * HW_IDX          : index of the selected hw
+ * RES_ID          : register to set irq
+ * IRQ_MASK        : IRQ to be triggered
+ * INJECT_REQ      : req to trigger the IRQ
+ * INJECT_PARAM_MAX: max allowed num of injected param
+ */
+enum cam_isp_irq_inject_common_param_pos {
+	HW_TYPE,
+	HW_IDX,
+	REG_UNIT,
+	IRQ_MASK,
+	INJECT_REQ,
+	INJECT_PARAM_MAX
 };
 
 /**
@@ -394,12 +609,20 @@ struct cam_isp_sys_cache_info {
  * @work q                 work queue for IFE hw manager
  * @debug_cfg              debug configuration
  * @ctx_lock               context lock
- * @isp_bus_caps           Capability of underlying SFE/IFE bus HW
- * @path_port_map          Mapping of outport to IFE mux
- * @csid_camif_irq_support CSID camif IRQ support
  * @hw_pid_support         hw pid support for this target
- * @csid_rup_en            Reg update at CSID side
+ * @csid_aup_rup_en        Reg update at CSID side
  * @csid_global_reset_en   CSID global reset enable
+ * @csid_camif_irq_support CSID camif IRQ support
+ * @cam_ddr_drv_support    DDR DRV support
+ * @cam_clk_drv_support    CLK DRV support
+ * @isp_caps               Capability of underlying SFE/IFE HW
+ * @path_port_map          Mapping of outport to IFE mux
+ * @num_caches_found       Number of caches supported
+ * @sys_cache_info         Sys cache info
+ * @sfe_cache_info         SFE Cache Info
+ * @isp_device_type:       If device supports single-context(ife) or multi-
+ *                         context(mc_tfe)
+ * @irq_inject_param       Param for isp irq injection
  */
 struct cam_ife_hw_mgr {
 	struct cam_isp_hw_mgr          mgr_common;
@@ -420,14 +643,21 @@ struct cam_ife_hw_mgr {
 	struct cam_req_mgr_core_workq   *workq;
 	struct cam_ife_hw_mgr_debug      debug_cfg;
 	spinlock_t                       ctx_lock;
-	struct cam_isp_bus_hw_caps       isp_bus_caps;
+	struct cam_isp_ife_sfe_hw_caps   isp_caps;
 	struct cam_isp_hw_path_port_map  path_port_map;
-	struct cam_isp_sys_cache_info    sys_cache_info[CAM_LLCC_MAX];
+
 	uint32_t                         num_caches_found;
-	bool                             csid_camif_irq_support;
+	struct cam_isp_sys_cache_info    sys_cache_info[CAM_LLCC_LARGE_4 + 1];
+	struct cam_isp_sfe_cache_info    sfe_cache_info[CAM_SFE_HW_NUM_MAX];
+	uint32_t                         isp_device_type;
+
+	struct cam_isp_irq_inject_param  irq_inject_param[MAX_INJECT_SET];
 	bool                             hw_pid_support;
-	bool                             csid_rup_en;
+	bool                             csid_aup_rup_en;
 	bool                             csid_global_reset_en;
+	bool                             csid_camif_irq_support;
+	bool                             cam_ddr_drv_support;
+	bool                             cam_clk_drv_support;
 };
 
 /**
@@ -455,6 +685,7 @@ struct cam_ife_hw_event_recovery_data {
  * @pf_info:                Page Fault Info
  * @csid_md:                CSID mini dump data
  * @vfe_md:                 VFE mini dump data
+ * @sfe_md:                 SFE mini dump data
  * @flags:                  Flags pertainting to this ctx
  * @ctx_priv:               Array of the hardware contexts that are affected
  * @last_cdm_done_req:      Last cdm done request
@@ -476,6 +707,7 @@ struct cam_ife_hw_mini_dump_ctx {
 	struct cam_ife_hw_mgr_ctx_pf_info     pf_info;
 	void                                 *csid_md[CAM_IFE_HW_NUM_MAX];
 	void                                 *vfe_md[CAM_IFE_HW_NUM_MAX];
+	void                                 *sfe_md[CAM_SFE_HW_NUM_MAX];
 	struct cam_ife_hw_mgr_ctx_flags       flags;
 	void                                 *ctx_priv;
 	uint64_t                              last_cdm_done_req;
@@ -511,9 +743,12 @@ struct cam_ife_hw_mini_dump_data {
  *
  * @hw_mgr_intf:        IFE hardware manager object returned
  * @iommu_hdl:          Iommu handle to be returned
+ * @isp_device_type:    If device supports single-context(ife) or multi-
+ *                      context(mc_tfe)
  *
  */
-int cam_ife_hw_mgr_init(struct cam_hw_mgr_intf *hw_mgr_intf, int *iommu_hdl);
+int cam_ife_hw_mgr_init(struct cam_hw_mgr_intf *hw_mgr_intf, int *iommu_hdl,
+	uint32_t isp_device_type);
 void cam_ife_hw_mgr_deinit(void);
 
 #endif /* _CAM_IFE_HW_MGR_H_ */

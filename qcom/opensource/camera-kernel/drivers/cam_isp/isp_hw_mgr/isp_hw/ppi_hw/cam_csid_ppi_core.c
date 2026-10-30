@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/iopoll.h>
@@ -76,7 +77,7 @@ static int cam_csid_ppi_enable_hw(struct cam_csid_ppi_hw  *ppi_hw)
 	}
 
 	for (i = 0; i < soc_info->num_clk; i++) {
-		rc = cam_soc_util_clk_enable(soc_info, false, i, -1, NULL);
+		rc = cam_soc_util_clk_enable(soc_info, CAM_CLK_SW_CLIENT_IDX, false, i, -1);
 		if (rc)
 			goto clk_disable;
 	}
@@ -106,7 +107,7 @@ static int cam_csid_ppi_enable_hw(struct cam_csid_ppi_hw  *ppi_hw)
 	return 0;
 clk_disable:
 	for (--i; i >= 0; i--)
-		cam_soc_util_clk_disable(soc_info, false, i);
+		cam_soc_util_clk_disable(soc_info, CAM_CLK_SW_CLIENT_IDX, false, i);
 	ppi_hw->hw_info->open_count--;
 	return rc;
 }
@@ -152,7 +153,7 @@ static int cam_csid_ppi_disable_hw(struct cam_csid_ppi_hw *ppi_hw)
 	ppi_hw->device_enabled = 0;
 
 	for (i = 0; i < soc_info->num_clk; i++)
-		cam_soc_util_clk_disable(soc_info, false, i);
+		cam_soc_util_clk_disable(soc_info, CAM_CLK_SW_CLIENT_IDX, false, i);
 
 	return rc;
 }
@@ -275,9 +276,10 @@ err:
 }
 
 int cam_csid_ppi_init_soc_resources(struct cam_hw_soc_info *soc_info,
-	irq_handler_t ppi_irq_handler, void *irq_data)
+	irq_handler_t ppi_irq_handler, void *data)
 {
-	int rc = 0;
+	int rc = 0, i;
+	void *irq_data[CAM_SOC_MAX_IRQ_LINES_PER_DEV] = {0};
 
 	rc = cam_soc_util_get_dt_properties(soc_info);
 	if (rc) {
@@ -285,8 +287,10 @@ int cam_csid_ppi_init_soc_resources(struct cam_hw_soc_info *soc_info,
 		goto end;
 	}
 
-	rc = cam_soc_util_request_platform_resource(soc_info, ppi_irq_handler,
-		irq_data);
+	for (i = 0; i < soc_info->irq_count; i++)
+		irq_data[i] = data;
+
+	rc = cam_soc_util_request_platform_resource(soc_info, ppi_irq_handler, &(irq_data[0]));
 	if (rc) {
 		CAM_ERR(CAM_ISP,
 			"PPI: Error Request platform resources failed rc=%d",

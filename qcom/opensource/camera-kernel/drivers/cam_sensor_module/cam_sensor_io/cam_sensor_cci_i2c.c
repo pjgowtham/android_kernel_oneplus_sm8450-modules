@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2018, 2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "cam_sensor_cmn_header.h"
@@ -10,7 +11,8 @@
 int32_t cam_cci_i2c_read(struct cam_sensor_cci_client *cci_client,
 	uint32_t addr, uint32_t *data,
 	enum camera_sensor_i2c_type addr_type,
-	enum camera_sensor_i2c_type data_type)
+	enum camera_sensor_i2c_type data_type,
+	bool is_probing)
 {
 	int32_t rc = -EINVAL;
 	unsigned char buf[CAMERA_SENSOR_I2C_TYPE_DWORD];
@@ -22,6 +24,7 @@ int32_t cam_cci_i2c_read(struct cam_sensor_cci_client *cci_client,
 		|| data_type >= CAMERA_SENSOR_I2C_TYPE_MAX)
 		return rc;
 
+	cci_ctrl.is_probing = is_probing;
 	cci_ctrl.cmd = MSM_CCI_I2C_READ;
 	cci_ctrl.cci_info = cci_client;
 	cci_ctrl.cfg.cci_i2c_read_cfg.addr = addr;
@@ -32,7 +35,10 @@ int32_t cam_cci_i2c_read(struct cam_sensor_cci_client *cci_client,
 	rc = v4l2_subdev_call(cci_client->cci_subdev,
 		core, ioctl, VIDIOC_MSM_CCI_CFG, &cci_ctrl);
 	if (rc < 0) {
-		CAM_ERR(CAM_SENSOR, "rc = %d", rc);
+		if (is_probing)
+			CAM_INFO(CAM_SENSOR_IO, "rc = %d", rc);
+		else
+			CAM_ERR(CAM_SENSOR_IO, "rc = %d", rc);
 		return rc;
 	}
 
@@ -64,12 +70,12 @@ int32_t cam_camera_cci_i2c_read_seq(struct cam_sensor_cci_client *cci_client,
 	if ((addr_type >= CAMERA_SENSOR_I2C_TYPE_MAX)
 		|| (data_type >= CAMERA_SENSOR_I2C_TYPE_MAX)
 		|| (num_byte > I2C_REG_DATA_MAX)) {
-		CAM_ERR(CAM_SENSOR, "addr_type %d num_byte %d", addr_type,
+		CAM_ERR(CAM_SENSOR_IO, "addr_type %d num_byte %d", addr_type,
 			num_byte);
 		return rc;
 	}
 
-	buf = kzalloc(num_byte, GFP_KERNEL);
+	buf = CAM_MEM_ZALLOC(num_byte, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -83,13 +89,19 @@ int32_t cam_camera_cci_i2c_read_seq(struct cam_sensor_cci_client *cci_client,
 	cci_ctrl.status = -EFAULT;
 	rc = v4l2_subdev_call(cci_client->cci_subdev,
 		core, ioctl, VIDIOC_MSM_CCI_CFG, &cci_ctrl);
+	if (rc < 0) {
+		CAM_ERR(CAM_SENSOR_IO, "CCI config failed rc = %d", rc);
+		goto end;
+	}
 	rc = cci_ctrl.status;
-	CAM_DBG(CAM_SENSOR, "addr = 0x%x, rc = %d", addr, rc);
+	CAM_DBG(CAM_SENSOR_IO, "addr = 0x%x, rc = %d", addr, rc);
 	for (i = 0; i < num_byte; i++) {
 		data[i] = buf[i];
-		CAM_DBG(CAM_SENSOR, "Byte %d: Data: 0x%x\n", i, data[i]);
+		CAM_DBG(CAM_SENSOR_IO, "Byte %d: Data: 0x%x\n", i, data[i]);
 	}
-	kfree(buf);
+
+end:
+	CAM_MEM_FREE(buf);
 	return rc;
 }
 
@@ -120,7 +132,7 @@ static int32_t cam_cci_i2c_write_table_cmd(
 	rc = v4l2_subdev_call(client->cci_client->cci_subdev,
 		core, ioctl, VIDIOC_MSM_CCI_CFG, &cci_ctrl);
 	if (rc < 0) {
-		CAM_ERR(CAM_SENSOR, "Failed rc = %d", rc);
+		CAM_ERR(CAM_SENSOR_IO, "Failed rc = %d", rc);
 		return rc;
 	}
 	rc = cci_ctrl.status;
@@ -168,14 +180,19 @@ static int32_t cam_cci_i2c_compare(struct cam_sensor_cci_client *client,
 	uint32_t reg_data = 0;
 
 	rc = cam_cci_i2c_read(client, addr, &reg_data,
-		addr_type, data_type);
+		addr_type, data_type, false);
 	if (rc < 0)
 		return rc;
 
 	reg_data = reg_data & 0xFFFF;
 	if (data == (reg_data & ~data_mask))
 		return I2C_COMPARE_MATCH;
-	return I2C_COMPARE_MISMATCH;
+	else {
+		CAM_WARN(CAM_SENSOR_IO,
+			"mismatch: reg_data 0x%x: data: 0x%x, data_mask: 0x%x",
+			reg_data, data, data_mask);
+		return I2C_COMPARE_MISMATCH;
+	}
 }
 
 int32_t cam_cci_i2c_poll(struct cam_sensor_cci_client *client,
@@ -187,11 +204,11 @@ int32_t cam_cci_i2c_poll(struct cam_sensor_cci_client *client,
 	int32_t rc = -EINVAL;
 	int32_t i = 0;
 
-	CAM_DBG(CAM_SENSOR, "addr: 0x%x data: 0x%x dt: %d",
+	CAM_DBG(CAM_SENSOR_IO, "addr: 0x%x data: 0x%x dt: %d",
 		addr, data, data_type);
 
 	if (delay_ms > MAX_POLL_DELAY_MS) {
-		CAM_ERR(CAM_SENSOR, "invalid delay = %d max_delay = %d",
+		CAM_ERR(CAM_SENSOR_IO, "invalid delay = %d max_delay = %d",
 			delay_ms, MAX_POLL_DELAY_MS);
 		return -EINVAL;
 	}
@@ -206,10 +223,10 @@ int32_t cam_cci_i2c_poll(struct cam_sensor_cci_client *client,
 
 	/* If rc is 1 then read is successful but poll is failure */
 	if (rc == 1)
-		CAM_ERR(CAM_SENSOR, "poll failed rc=%d(non-fatal)",	rc);
+		CAM_ERR(CAM_SENSOR_IO, "poll failed rc=%d(non-fatal)",	rc);
 
 	if (rc < 0)
-		CAM_ERR(CAM_SENSOR, "poll failed rc=%d", rc);
+		CAM_ERR(CAM_SENSOR_IO, "poll failed rc=%d", rc);
 
 	return rc;
 }
@@ -225,7 +242,7 @@ int32_t cam_sensor_cci_i2c_util(struct cam_sensor_cci_client *cci_client,
 	rc = v4l2_subdev_call(cci_client->cci_subdev,
 		core, ioctl, VIDIOC_MSM_CCI_CFG, &cci_ctrl);
 	if (rc < 0) {
-		CAM_ERR(CAM_SENSOR, "Failed rc = %d", rc);
+		CAM_ERR(CAM_SENSOR_IO, "Failed rc = %d", rc);
 		return rc;
 	}
 	return cci_ctrl.status;

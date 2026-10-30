@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __UAPI_CAM_DEFS_H__
@@ -29,6 +29,12 @@
 #define CAM_ACQUIRE_HW                      (CAM_COMMON_OPCODE_BASE_v2 + 0x1)
 #define CAM_RELEASE_HW                      (CAM_COMMON_OPCODE_BASE_v2 + 0x2)
 #define CAM_DUMP_REQ                        (CAM_COMMON_OPCODE_BASE_v2 + 0x3)
+#define CAM_QUERY_CAP_V3                    (CAM_COMMON_OPCODE_BASE_v2 + 0x4)
+#define CAM_SYNX_TEST_TRIGGER               (CAM_COMMON_OPCODE_BASE_v2 + 0x5)
+#define CAM_CUSTOM_DEV_CONFIG               (CAM_COMMON_OPCODE_BASE_v2 + 0x6)
+#define CAM_QUERY_CAP_GENERIC_BLOB          (CAM_COMMON_OPCODE_BASE_v2 + 0x7)
+#define CAM_ACQUIRE_DEV_V2                  (CAM_COMMON_OPCODE_BASE_v2 + 0x8)
+#define CAM_QUERY_HW_DEV_INFO               (CAM_COMMON_OPCODE_BASE_v2 + 0x9)
 
 #define CAM_EXT_OPCODE_BASE                     0x200
 #define CAM_CONFIG_DEV_EXTERNAL                 (CAM_EXT_OPCODE_BASE + 0x1)
@@ -62,6 +68,9 @@
 #define CAM_MAX_ACQ_RES    5
 #define CAM_MAX_HW_SPLIT   3
 
+/* camera blob handle op codes */
+#define CAM_COMMON_QUERY_BLOB_BASE 0x0
+#define CAM_COMMON_QUERY_BLOB_END  0x32
 
 /**
  * enum flush_type_t - Identifies the various flush types
@@ -91,6 +100,20 @@ struct cam_control {
 	__u32        size;
 	__u32        handle_type;
 	__u32        reserved;
+	__u64        handle;
+};
+
+/**
+ * struct cam_custom_cmd - Structure used by ioctl control for camera
+ *                         devices to send custom commands.
+ *
+ * @cmd_type:           Command type
+ * @size:               Size of the data
+ * @handle:             Pointer to the command data
+ */
+struct cam_custom_cmd {
+	__u32        cmd_type;
+	__u32        size;
 	__u64        handle;
 };
 
@@ -181,6 +204,12 @@ struct cam_iommu_handle {
 #define CAM_FORMAT_ARGB_16                      48
 #define CAM_FORMAT_PLAIN16_10_LSB               49
 #define CAM_FORMAT_YUV422_10                    50
+#define CAM_FORMAT_GBR_UBWC_TP10                51
+#define CAM_FORMAT_GBR_TP10                     52
+#define CAM_FORMAT_UBWC_P016                    53
+#define CAM_FORMAT_BAYER_UBWC_TP10              54
+
+/* This macro is deprecated and no longer needed */
 #define CAM_FORMAT_MAX                          51
 
 /* Pixel Patterns */
@@ -249,6 +278,7 @@ struct cam_iommu_handle {
 /* Register dump read type */
 #define CAM_REG_DUMP_READ_TYPE_CONT_RANGE       1
 #define CAM_REG_DUMP_READ_TYPE_DMI              2
+#define CAM_REG_DUMP_READ_TYPE_CTXT             3
 
 /* Max number of config writes to read from DMI */
 #define CAM_REG_DUMP_DMI_CONFIG_MAX             5
@@ -256,6 +286,10 @@ struct cam_iommu_handle {
 
 /* constants */
 #define CAM_PACKET_MAX_PLANES                   3
+
+/* synx test cmd types */
+#define CAM_SYNX_TEST_CMD_TYPE_CORE_CTRL       1
+#define CAM_SYNX_TEST_CMD_TYPE_SYNX_CMD        2
 
 /**
  * struct cam_plane_cfg - Plane configuration info
@@ -361,6 +395,60 @@ struct cam_ubwc_plane_cfg_v2 {
 	__u32                bandwidth_limit;
 	__u32                reserved[3];
 };
+
+/**
+ * struct cam_ubwc_plane_cfg_v3 - UBWC Plane configuration info
+ *
+ * @port_type:                  Port Type
+ * @meta_stride:                UBWC metadata stride
+ * @meta_size:                  UBWC metadata plane size
+ * @meta_offset:                UBWC metadata offset
+ * @packer_config:              UBWC packer config
+ * @mode_config:                UBWC mode config
+ * @static ctrl:                UBWC static ctrl
+ * @ctrl_2:                     UBWC ctrl 2
+ * @tile_config:                UBWC tile config
+ * @h_init:                     UBWC horizontal initial coordinate in pixels
+ * @v_init:                     UBWC vertical initial coordinate in lines
+ * @stats_ctrl_2:               UBWC stats control
+ * @lossy_threshold0            UBWC lossy threshold 0
+ * @lossy_threshold1            UBWC lossy threshold 1
+ * @lossy_var_offset            UBWC offset variance thrshold
+ * @bandwidth_limit:            BW counter limit
+ *                              BW limiter config skipped if value is 0xFFFF or more
+ *                              If skipped here, use generic BW limiter blob to
+ *                              configure the appropriate value.
+ * @hw_ctx_id_mask:             hw context id mask in case of multi context
+ *                              definitions for valid values defined in cam_isp.h
+ * @num_valid_params:           Number of valid params, to accommodate future changes
+ * @param_mask:                 Indicate params supported, to accommodate future changes
+ * @params:                     Indicate params supported, to accommodate future changes
+ */
+struct cam_ubwc_plane_cfg_v3 {
+	__u32                port_type;
+	__u32                meta_stride;
+	__u32                meta_size;
+	__u32                meta_offset;
+	__u32                packer_config;
+	__u32                mode_config_0;
+	__u32                mode_config_1;
+	__u32                tile_config;
+	__u32                h_init;
+	__u32                v_init;
+	__u32                static_ctrl;
+	__u32                ctrl_2;
+	__u32                stats_ctrl_2;
+	__u32                lossy_threshold_0;
+	__u32                lossy_threshold_1;
+	__u32                lossy_var_offset;
+	__u32                bandwidth_limit;
+	__u32                hw_ctx_id_mask;
+	__u32                num_valid_params;
+	__u32                param_mask;
+	__u32                params[6];
+
+};
+
 /**
  * struct cam_cmd_buf_desc - Command buffer descriptor
  *
@@ -411,6 +499,7 @@ struct cam_cmd_buf_desc {
  * @framedrop_pattern:          Framedrop pattern
  * @framedrop_period:           Framedrop period
  * @flag:                       Flags for extra information
+ *                              for acquired version 3--> corresponds to context_id
  * @direction:                  Buffer direction: input or output
  * @padding:                    Padding for the structure
  *
@@ -500,7 +589,7 @@ struct cam_packet {
 	__u32                        kmd_cmd_buf_index;
 	__u32                        kmd_cmd_buf_offset;
 	union {
-		__u64                        payload[1];
+		__u64                    payload[1];
 		__DECLARE_FLEX_ARRAY(__u64, payload_flex);
 	};
 
@@ -560,6 +649,9 @@ struct cam_query_cap_cmd {
 	__u64        caps_handle;
 };
 
+#define CAM_ACQUIRE_DEV_STRUCT_VERSION_1           1
+#define CAM_ACQUIRE_DEV_STRUCT_VERSION_2           2
+
 /**
  * struct cam_acquire_dev_cmd - Control payload for acquire devices
  *
@@ -579,6 +671,40 @@ struct cam_acquire_dev_cmd {
 	__u32        handle_type;
 	__u32        num_resources;
 	__u64        resource_hdl;
+};
+
+/**
+ * struct cam_acquire_dev_cmd_v2 - Control payload for acquire devices
+ *
+  * @struct_version:     = CAM_ACQUIRE_DEV_STRUCT_VERSION_2 for this struct
+ *                      This value should be the first 32-bits in any structure
+ *                      related to this IOCTL. So that if the struct needs to
+ *                      change, we can first read the starting 32-bits, get the
+ *                      version number and then typecast the data to struct
+ *                      accordingly.
+ * @session_handle:     Session handle for the acquire command
+ * @dev_handle:         Device handle to be returned
+ * @handle_type:        Resource handle type:
+ *                      1 = user pointer, 2 = mem handle
+ * @num_resources:      Number of the resources to be acquired
+ * @resources_hdl:      Resource handle that refers to the actual
+ *                      resource array. Each item in this
+ *                      array is device specific resource structure
+ * @num_valid_params:     number of valid params
+ * @valid_param_mask:     valid param mask
+ * @params:               additional parameters for future usage
+ *
+ */
+struct cam_acquire_dev_cmd_v2 {
+	__u32        struct_version;
+	__s32        session_handle;
+	__s32        dev_handle;
+	__u32        handle_type;
+	__u32        num_resources;
+	__u64        resource_hdl;
+	__u32        num_valid_params;
+	__u32        valid_param_mask;
+	__u32        params[5];
 };
 
 /*
@@ -767,6 +893,31 @@ struct cam_ubwc_config_v2 {
 };
 
 /**
+ * struct cam_ubwc_config_v3 - UBWC Configuration Payload
+ *
+ * @api_version:         UBWC config api version
+ * @num_ports:           Number of ports to be configured, in case of MC,
+ *                       can have multiple entries for same out port
+ * @ubwc_plane_config:   Array of UBWC configurations per port
+ *                       Size [CAM_PACKET_MAX_PLANES - 1] per port
+ *                       as UBWC is supported on Y & C planes
+ *                       and therefore a max size of 2 planes
+ *
+ */
+struct cam_ubwc_config_v3 {
+	__u32   api_version;
+	__u32   num_ports;
+	union {
+		struct cam_ubwc_plane_cfg_v3 ubwc_plane_cfg[1][CAM_PACKET_MAX_PLANES - 1];
+		struct {
+			struct { } __empty_ubwc_plane_cfg_array_flex;
+			struct cam_ubwc_plane_cfg_v3
+				ubwc_plane_cfg_array_flex[][CAM_PACKET_MAX_PLANES - 1];
+		};
+	};
+};
+
+/**
  * struct cam_cmd_mem_region_info -
  *              Cmd buffer region info
  *
@@ -843,10 +994,15 @@ struct cam_dmi_read_desc {
 };
 
 /**
- * struct cam_reg_read_info - Register read info for both reg continuous read
- *                            or DMI read
+ * struct cam_reg_read_info - Register read info for  continuous read
+ *                            or DMI read or Context based reg read
  *
- * @type                 : Whether Register range read or DMI read
+ * @type                 : Whether Register range read or DMI read or Context based reg read
+ *                         For context-based reading, we have to select context ID for reading
+ *                         that particular context Registers.
+ *                         if the type will be TYPE_CTX, we will write the context id and
+ *                         read the context registers. it will be similar to dmi read.
+ * @reserved             : For acquired version 3, this corresponds to context_id
  * @reg_read             : Range of registers to read
  * @dmi_read             : DMI data to read
  */
@@ -932,5 +1088,78 @@ struct cam_dump_req_cmd {
 	__s32           link_hdl;
 	__s32           dev_handle;
 };
+
+/**
+ * struct cam_synx_test_cmd - Synx test cmds
+ *
+ * @version: Struct version
+ * @ip_mem_hdl: Input buf mem handle
+ *              corresponds to synx test inputs to the
+ *              fencing core
+ * @op_mem_hdl: Output buf mem handle
+ *              corresponds to synx output generated by
+ *              the fencing core
+ * @num_valid_params: Num valid params
+ * @valid_param_mask: Valid param mask
+ * @params: additional params
+ */
+struct cam_synx_test_cmd {
+	__u32 version;
+	__s32 ip_mem_hdl;
+	__s32 op_mem_hdl;
+	__u32 num_valid_params;
+	__u32 valid_param_mask;
+	__u32 params[5];
+};
+
+/**
+ * struct cam_synx_core_control - Synx core ctrl
+ *
+ * @version: Struct version
+ * @core_control: Set for resume, unset for collapse
+ * @num_valid_params: Num valid params
+ * @valid_param_mask: Valid param mask
+ * @params: additional params
+ */
+struct cam_synx_core_control {
+	__u32 version;
+	__u32 core_control;
+	__u32 num_valid_params;
+	__u32 valid_param_mask;
+	__u32 params[4];
+};
+
+
+/**
+ * struct cam_synx_test_params - Synx test params
+ *
+ * A test sequence could include creating and signaling
+ * synx handle between ICP <-> APPs. These test params
+ * would be cmds such as session initialize, synx create,
+ * synx async wait, synx signal and so on
+ *
+ * @version: Struct version
+ * @cmd_type: Type of test cmd - core control/synx cmd/...
+ * @num_valid_params: Num valid params
+ * @valid_param_mask: Valid param mask
+ * @params: additional params
+ * @test_cmd: Synx test cmd forwarded to the core
+ * @core_ctrl: Synx test cmd to control fencing core
+ */
+struct cam_synx_test_params {
+	__u32 version;
+	__u32 cmd_type;
+	__u32 num_valid_params;
+	__u32 valid_param_mask;
+	__u32 params[4];
+	union {
+		struct cam_synx_test_cmd test_cmd;
+		struct cam_synx_core_control core_ctrl;
+	} u;
+} __attribute__((__packed__));
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#include "oplus/media/oplus_cam_defs.h"
+#endif
 
 #endif /* __UAPI_CAM_DEFS_H__ */

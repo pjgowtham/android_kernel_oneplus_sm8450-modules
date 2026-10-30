@@ -25,7 +25,8 @@
 #define CAM_ISP_HW_IFE_LITE                     5
 #define CAM_ISP_HW_CSID_LITE                    6
 #define CAM_ISP_HW_SFE                          7
-#define CAM_ISP_HW_MAX                          8
+#define CAM_ISP_HW_MC_TFE                       8
+#define CAM_ISP_HW_MAX                          9
 
 /* Color Pattern */
 #define CAM_ISP_PATTERN_BAYER_RGRGRG            0
@@ -126,6 +127,7 @@
 #define CAM_ISP_GENERIC_BLOB_TYPE_FPS_CONFIG                17
 #define CAM_ISP_GENERIC_BLOB_TYPE_INIT_CONFIG               18
 #define CAM_ISP_GENERIC_BLOB_TYPE_RDI_LCR_CONFIG            19
+#define CAM_ISP_GENERIC_BLOB_TYPE_SFE_FCG_CFG               20
 #define CAM_ISP_GENERIC_BLOB_TYPE_SFE_CLOCK_CONFIG          21
 #define CAM_ISP_GENERIC_BLOB_TYPE_SFE_CORE_CONFIG           22
 #define CAM_ISP_GENERIC_BLOB_TYPE_SFE_OUT_CONFIG            23
@@ -133,8 +135,17 @@
 #define CAM_ISP_GENERIC_BLOB_TYPE_SFE_FE_CONFIG             25
 #define CAM_ISP_GENERIC_BLOB_TYPE_SFE_SCRATCH_BUF_CFG       26
 #define CAM_ISP_GENERIC_BLOB_TYPE_SFE_EXP_ORDER_CFG         27
+#define CAM_ISP_GENERIC_BLOB_TYPE_DRV_CONFIG                28
+#define CAM_ISP_GENERIC_BLOB_TYPE_BW_CONFIG_V3              29
+#define CAM_ISP_GENERIC_BLOB_TYPE_NFI_MODE_SWITCH           30
+#define CAM_ISP_GENERIC_BLOB_TYPE_IRQ_COMP_CFG              31
+#define CAM_ISP_GENERIC_BLOB_TYPE_VFE_OUT_CONFIG_V2         32
+#define CAM_ISP_GENERIC_BLOB_TYPE_IFE_FCG_CFG               33
+#define CAM_ISP_GENERIC_BLOB_TYPE_UBWC_CONFIG_V3            34
+#define CAM_ISP_GENERIC_BLOB_TYPE_EXP_ORDER_UPDATE          35
 
-#define CAM_ISP_VC_DT_CFG    4
+#define CAM_ISP_VC_DT_CFG                4
+#define CAM_ISP_INVALID_VC_VALUE         0xFFFF
 
 #define CAM_ISP_IFE0_HW          0x1
 #define CAM_ISP_IFE1_HW          0x2
@@ -146,6 +157,7 @@
 #define CAM_ISP_IFE2_HW          0x100
 #define CAM_ISP_SFE0_HW          0x1000
 #define CAM_ISP_SFE1_HW          0x2000
+#define CAM_ISP_SFE2_HW          0x4000
 
 #define CAM_ISP_PXL_PATH          0x1
 #define CAM_ISP_PPP_PATH          0x2
@@ -154,6 +166,16 @@
 #define CAM_ISP_RDI1_PATH         0x10
 #define CAM_ISP_RDI2_PATH         0x20
 #define CAM_ISP_RDI3_PATH         0x40
+#define CAM_ISP_RDI4_PATH         0x80
+#define CAM_ISP_PXL1_PATH         0x100
+#define CAM_ISP_PXL2_PATH         0x200
+
+/*
+ * Multi Context Mask
+ */
+#define  CAM_ISP_MULTI_CTXT0_MASK 0x1
+#define  CAM_ISP_MULTI_CTXT1_MASK 0x2
+#define  CAM_ISP_MULTI_CTXT2_MASK 0x4
 
 /* Per Path Usage Data */
 #define CAM_ISP_USAGE_INVALID     0
@@ -180,10 +202,26 @@
 #define CAM_ISP_SFE_FS_MODE_EN                 BIT(5)
 #define CAM_ISP_SFE_SHDR_MODE_EN               BIT(6)
 #define CAM_ISP_AEB_MODE_EN                    BIT(7)
+#define CAM_ISP_HDR_MODE_DYNAMIC_SWITCH_EN     BIT(8)
+#define CAM_ISP_NFI_BASED_MODE_SWITCH_EN       BIT(9)
 
 /* ISP core cfg flag params */
 #define CAM_ISP_PARAM_CORE_CFG_HDR_MUX_SEL BIT(0)
 #define CAM_ISP_PARAM_CORE_CFG_PP_FORMAT   BIT(16)
+
+/* Indicate which module is configured for FCG */
+#define CAM_ISP_FCG_ENABLE_PHASE         BIT(0)
+#define CAM_ISP_FCG_ENABLE_STATS         BIT(1)
+
+/*
+ * Indicate which channel is configured for FCG
+ * For SFE, channel 1/2 are used on demand
+ * For IFE, treat it as channel 0
+ * For TFE, use Multi Context Mask to indicate the path
+ */
+#define CAM_ISP_FCG_MASK_CH0                 0x1
+#define CAM_ISP_FCG_MASK_CH1                 0x2
+#define CAM_ISP_FCG_MASK_CH2                 0x4
 
 /**
  * Decode format1 Support for multi VCDT use case.
@@ -193,6 +231,95 @@
  */
 #define CAM_IFE_DECODE_FORMAT_MASK      0xFF
 #define CAM_IFE_DECODE_FORMAT_SHIFT_VAL 8
+
+/*
+ * to indicate if EPD mode is to be enabled for CSI2 RX
+ * in CSID. This reserves the input info param_mask for
+ * cam_isp_in_port_csid_info for acquire v3
+ *
+ */
+#define CAM_IFE_CSID_EPD_MODE_EN               BIT(0)
+
+/*
+ * to indicate if packing is to be done at Bus side.
+ * CSID gives the plain data and packed at bus.
+ * This mask reserves the param_mask for cam_isp_out_port_info_v3.
+ *
+ */
+#define CAM_IFE_USE_WM_PACK                  BIT(0)
+
+/*
+ * to indicate if RCS to be enabled.
+ */
+#define CAM_IFE_WM_RCS_EN                    BIT(1)
+
+/*
+ * to indicate if per port buffer alignment is enabled.
+ */
+#define CAM_IFE_WM_BUF_ALLIGN_EN             BIT(0)
+
+
+/*
+ * Indicates exposure orders within a frame time
+ */
+#define CAM_ISP_EXP_ORDER_LAST                1
+#define CAM_ISP_EXP_ORDER_LAST_1              2
+#define CAM_ISP_EXP_ORDER_LAST_2              3
+
+/**
+ * struct cam_isp_irq_comp_cfg - CSID composite config for MC-based TFE
+ *        Contains information regarding active contexts in CSID CAMIF
+ *        and active contexts in write engine TFE
+ *
+ * @ipp_src_ctxt_mask : Active paths in CSID CAMIF
+ * @ipp_dst_comp_mask : Active paths in TFE
+ * @num_valid_params  : Number of valid params
+ * @valid_param_mask  : Valid param mask
+ * @params            : params
+ */
+struct cam_isp_irq_comp_cfg {
+	__u32   ipp_src_ctxt_mask;
+	__u32   ipp_dst_comp_mask;
+	__u32   num_valid_params;
+	__u32   valid_param_mask;
+	__u32   params[4];
+} __attribute__((packed));
+
+/**
+ * Below macro definition is the param mask for
+ * cam_isp_drv_config.
+ *
+ * CAM_IFE_DRV_BLANKING_THRESHOLD : DRV decision logic uses this value to check
+ *                                  if current request can enable DRV, if the
+ *                                  vertical blanking is greater than this value,
+ *                                  then DRV can be enabled, otherwises, DRV will
+ *                                  be disabled. The unit of this value is millisecond.
+ */
+#define CAM_IFE_DRV_BLANKING_THRESHOLD       BIT(0)
+
+/**
+ * struct cam_isp_drv_config - CSID config for DRV
+ *        Enables DRV and provides worst case timeout value in INIT packet,
+ *        provides path_idle_en and timeout updates (if any) in UPDATE packet
+ *
+ * @drv_en            : Enables DRV block
+ * @timeout_val       : Timeout value from SOF to trigger vote up,
+ *                      given in number of Global Counter cycles.
+ * @path_idle_en      : Mask for paths to be considered for consolidated IDLE signal.
+ *                      When paths matching the mask go idle, BW is voted down.
+ * @num_valid_params  : Number of valid params
+ * @valid_param_mask  : Valid param mask
+ * @params            : params
+ */
+struct cam_isp_drv_config {
+	__u32    drv_en;
+	__u32    timeout_val;
+	__u32    path_idle_en;
+	__u32    num_valid_params;
+	__u32    valid_param_mask;
+	__u32    params[5];
+} __attribute__((packed));
+
 
 /* Query devices */
 /**
@@ -437,6 +564,97 @@ struct cam_isp_in_port_info_v2 {
 };
 
 /**
+ * struct cam_isp_in_port_phy_info - CSID in port PHY info
+ *
+ * @res_type:   input resource for the stream
+ * @lane_type:  Lane type--> C-Phy/ D-Phy
+ * @lane_num:   Number of lanes
+ * @lane_cfg:   Lane Configuraion
+ */
+struct cam_isp_in_port_phy_info {
+	__u32                           res_type;
+	__u32                           lane_type;
+	__u32                           lane_num;
+	__u32                           lane_cfg;
+};
+
+/**
+ * struct cam_isp_in_port_csid_info - CSID in port info
+ *
+ * @vc:                Virtual Channel for the incoming stream
+ * @dt:                Data type for the incoming stream
+ * @num_valid_vc_dt    Number of valid vc dt in case of multi vc dt on a single path
+ * @format:            Incoming format for this input
+ * @width:             Width of incoming stream
+ * @height:            Height of incoming stream
+ * @path_id:           CSID IPP Path to be acquired
+ * @param_mask:        Reserved field to add new features
+ * @params:            Reserved fields
+ */
+struct cam_isp_in_port_csid_info {
+	__u32                             vc[CAM_ISP_VC_DT_CFG];
+	__u32                             dt[CAM_ISP_VC_DT_CFG];
+	__u32                             num_valid_vc_dt;
+	__u32                             format;
+	__u32                             width;
+	__u32                             height;
+	__u32                             path_id;
+	__u32                             param_mask;
+	__u32                             params[7];
+};
+
+/**
+ * struct cam_isp_out_port_info_v3 - An output port resource info
+ *
+ * @res_type:                   output resource type defined in file
+ *                              cam_isp_vfe.h or cam_isp_ife.h
+ * @format:                     output format of the resource
+ * @width:                      output width in pixels
+ * @height:                     output height in lines
+ * @comp_grp_id:                composite group id for the resource.
+ * @split_point:                split point in pixels for the dual VFE.
+ * @secure_mode:                flag to tell if output should be run in secure
+ *                              mode or not. See cam_defs.h for definition
+ * @wm_mode:                    WM mode
+ * @context_id:                 Context ID in case of multi context
+ * @param_mask:                 Reserved field to add new features
+ * @params:                     Reserved fields
+ */
+struct cam_isp_out_port_info_v3 {
+	__u32                res_type;
+	__u32                format;
+	__u32                width;
+	__u32                height;
+	__u32                comp_grp_id;
+	__u32                split_point;
+	__u32                secure_mode;
+	__u32                wm_mode;
+	__u32                context_id;
+	__u32                param_mask;
+	__u32                params[6];
+};
+/**
+ * struct cam_isp_in_port_info_v3 - A resource bundle
+ *
+ * @csid_info:                resource id for the resource bundle
+ * @phy_info:                 length of the while resource blob
+ * @num_contexts              Num of contexts in case of multi context
+ * @feature_mask:             Feature mask to store bit fields for any specific use case
+ * @data:                     Pointer to out resource data
+ */
+struct cam_isp_in_port_info_v3 {
+	struct cam_isp_in_port_csid_info csid_info;
+	struct cam_isp_in_port_phy_info  phy_info;
+	__u32                            num_contexts;
+	__u32                            feature_mask;
+	__u32                            num_out_res;
+	union {
+		struct cam_isp_out_port_info_v3  data[1];
+		__DECLARE_FLEX_ARRAY(struct cam_isp_out_port_info_v3, data_flex);
+	};
+};
+
+/**
  * struct cam_isp_resource - A resource bundle
  *
  * @resoruce_id:                resource id for the resource bundle
@@ -646,6 +864,28 @@ struct cam_isp_bw_config_v2 {
 } __attribute__((packed));
 
 /**
+ * struct cam_isp_bw_config_v3 - Bandwidth configuration
+ *
+ * @usage_type:                 Usage type (Single/Dual)
+ * @num_paths:                  Number of axi data paths
+ * @num_valid_params:           Number of valid params
+ * @valid_param_mask:           Valid param mask
+ * @params:                     params
+ * @axi_path:                   Per path vote info v2
+ */
+struct cam_isp_bw_config_v3 {
+	__u32                                usage_type;
+	__u32                                num_paths;
+	__u32                                num_valid_params;
+	__u32                                valid_param_mask;
+	__u32                                params[4];
+	union {
+		struct cam_axi_per_path_bw_vote_v2   axi_path[1];
+		__DECLARE_FLEX_ARRAY(struct cam_axi_per_path_bw_vote_v2, axi_path_flex);
+	};
+} __attribute__((packed));
+
+/**
  * struct cam_fe_config - Fetch Engine configuration
  *
  * @version:                    fetch engine veriosn
@@ -817,6 +1057,95 @@ struct cam_isp_sfe_init_scratch_buf_config {
 };
 
 /**
+ * struct cam_isp_predict_fcg_config - FCG config in a single prediction
+ *
+ * @version:                    Version Info
+ * @phase_index_g:              Starting index of LUT for G channel in phase
+ * @phase_index_r:              Starting index of LUT for R channel in phase
+ * @phase_index_b:              Starting index of LUT for B channel in phase
+ * @stats_index_g:              Starting index of LUT for G channel in stats
+ * @stats_index_r:              Starting index of LUT for R channel in stats
+ * @stats_index_b:              Starting index of LUT for B channel in stats
+ * @num_valid_params:           Number of valid params being used
+ * @valid_param_mask:           Indicate the exact params being used
+ * @params:                     Params for future change
+ */
+struct cam_isp_predict_fcg_config {
+	__u32                                   version;
+	__u32                                   phase_index_g;
+	__u32                                   phase_index_r;
+	__u32                                   phase_index_b;
+	__u32                                   stats_index_g;
+	__u32                                   stats_index_r;
+	__u32                                   stats_index_b;
+	__u32                                   num_valid_params;
+	__u32                                   valid_param_mask;
+	__u32                                   params[5];
+};
+
+/**
+ * struct cam_isp_ch_ctx_fcg_config - FCG config in a single channel for SFE/IFE
+ *                                    or in a single context in TFE
+ *
+ * @version:                    Version Info
+ * @fcg_ch_ctx_id:              Index of the channel to be configured that FCG
+ *                              blocks reside on. If one wants to config FCG
+ *                              block for IFE/SFE, CAM_ISP_FCG_MASK_CH0/1/2 is
+ *                              used. If one wants to config FCG block for TFE,
+ *                              multi context mask is used.
+ * @fcg_enable_mask:            Indicate which module will be enabled for
+ *                              FCG. For example, if one wants to config
+ *                              SFE FCG STATS module, CAM_ISP_FCG_ENABLE_STATS
+ *                              will be set in mask
+ * @num_valid_params:           Number of valid params being used
+ * @valid_param_mask:           Indicate the exact params being used
+ * @params:                     Params for future change
+ * @predicted_fcg_configs:      Pointer to fcg config for each prediction of
+ *                              the channel in serial order
+ */
+struct cam_isp_ch_ctx_fcg_config {
+	__u32                                   version;
+	__u32                                   fcg_ch_ctx_id;
+	__u32                                   fcg_enable_mask;
+	__u32                                   num_valid_params;
+	__u32                                   valid_param_mask;
+	__u32                                   params[5];
+	union {
+		struct cam_isp_predict_fcg_config   predicted_fcg_configs[1];
+		__DECLARE_FLEX_ARRAY(struct cam_isp_predict_fcg_config, predicted_fcg_configs_flex);
+	};
+};
+
+/**
+ * struct cam_isp_generic_fcg_config - FCG config for a frame
+ *
+ * @version:                    Version info
+ * @size:                       Size for the whole FCG configurations
+ * @num_ch_ctx:                 Number of channels for fcg config in SFE/IFE
+ *                              or number of contexts in TFE
+ * @num_predictions:            Number of predictions for each channel
+ *                              in SFE/IFE or for each context in TFE
+ * @num_valid_params:           Number of valid params being used
+ * @valid_param_mask:           Indicate the exact params being used
+ * @params:                     Params for future change
+ * @ch_ctx_fcg_configs:         Pointer to fcg config for each channel in
+ *                              SFE/IFE or for each context in TFE
+ */
+struct cam_isp_generic_fcg_config {
+	__u32                                  version;
+	__u32                                  size;
+	__u32                                  num_ch_ctx;
+	__u32                                  num_predictions;
+	__u32                                  num_valid_params;
+	__u32                                  valid_params_mask;
+	__u32                                  params[4];
+	union {
+		struct cam_isp_ch_ctx_fcg_config   ch_ctx_fcg_configs[1];
+		__DECLARE_FLEX_ARRAY(struct cam_isp_ch_ctx_fcg_config, ch_ctx_fcg_configs_flex);
+	};
+};
+
+/**
  * struct cam_isp_tpg_core_config - TPG core registers configuration
  *
  * @version          : Version info
@@ -882,6 +1211,7 @@ struct cam_isp_acquire_hw_info {
  *                     after the last addr that was read from FIFO.
  * @packer_format    : Update packer format for Write master config
  * @reserved_3       : Reserved field for Write master config
+ *                     For acquired version 3-->corresponds to context_id_mask
  * @reserved_4       : Reserved field for Write master config
  */
 struct cam_isp_vfe_wm_config {
@@ -897,6 +1227,75 @@ struct cam_isp_vfe_wm_config {
 	__u32                      packer_format;
 	__u32                      reserved_3;
 	__u32                      reserved_4;
+};
+
+/**
+ * struct cam_isp_vfe_wm_config_v2  -  VFE write master config per port
+ *
+ * @version          : Version for this structure
+ * @port_type        : Unique ID of output port
+ * @wm_mode          : Write master mode
+ *                     0x0 - Line based mode
+ *                     0x1 - Frame based mode
+ *                     0x2 - Index based mode, valid for BAF only
+ * @h_init           : Horizontal starting coordinate in pixels. Must be a
+ *                     multiple of 3 for TP10 format
+ * @height           : Height in pixels
+ * @width            : Width in pixels
+ * @virtual_frame_en : Enabling virtual frame will prevent actual request from
+ *                     being sent to NOC
+ * @stride           : Write master stride
+ * @offset           : Write master offset
+ * @addr_reuse_en    : Enabling addr-reuse will write output to the same addr
+ *                     after the last addr that was read from FIFO.
+ * @packer_format    : Update packer format for Write master config
+ * @offset_in_bytes  : Offest in bytes
+ * @context_id_mask  : context id mask in case of multi context
+ * @use_pack         : Hint to use WM pack in case of per frame changes
+ * @enable           : Enable/Disable WM at run time
+ * @params           : Indicate params supported, to accommodate future changes
+ * @param_mask       : Indicate params supported, to accommodate future changes
+ */
+struct cam_isp_vfe_wm_config_v2 {
+	__u32                      version;
+	__u32                      port_type;
+	__u32                      wm_mode;
+	__u32                      h_init;
+	__u32                      height;
+	__u32                      width;
+	__u32                      virtual_frame_en;
+	__u32                      stride;
+	__u32                      offset;
+	__u32                      addr_reuse_en;
+	__u32                      packer_format;
+	__u32                      offset_in_bytes;
+	__u32                      context_id_mask;
+	__u32                      use_pack;
+	__u32                      enable;
+	__u32                      param_mask;
+	__u32                      params[5];
+};
+
+/**
+ * struct cam_isp_vfe_out_config_v2  -  VFE write master config
+ *
+ * @version        : Version for this structure
+ * @num_ports      : Number of ports
+ * @reserved       : Reserved field
+ * @params         : Indicate params supported, to accommodate future changes
+ * @param_mask     : Indicate params supported, to accommodate future changes
+ * @wm_config      : VFE out config
+ */
+struct cam_isp_vfe_out_config_v2 {
+	__u32                           version;
+	__u32                           num_ports;
+	__u32                           reserved;
+	__u32                           param_mask;
+	__u32                           params[5];
+	union {
+		struct cam_isp_vfe_wm_config_v2 wm_config[1];
+		__DECLARE_FLEX_ARRAY(struct cam_isp_vfe_wm_config_v2, wm_config_flex);
+	};
 };
 
 /**
@@ -926,6 +1325,33 @@ struct cam_isp_mode_switch_info{
 	__u32                                mup;
 	__u32                                num_expoures;
 	__u32                                reserved;
+} __attribute__((packed));
+
+/**
+ * struct cam_isp_nfi_mode_switch_info - New Frame ID (NFI) Based Switching Scheme info
+ *
+ * @version                 : Version info
+ * @mode_id                 : Mode ID value for the next frame
+ * @modeid_vc               : The VC with which the embedded packet with MODE ID comes with.
+ * @x_offset                : X offset of MODE ID location in horizontal
+ *                            direction within single EBD line packet, unit is byte.
+ * @y_offset                : Y offset of MODE ID location in vertical direction
+ *                            within EBD Lines, unit is line packet.
+ * @reg_length              : Number of bytes for each MODE ID
+ * @num_valid_params        : Number of valid params
+ * @param_mask              : Mask to indicate fields in params
+ * @params                  : Additional Params
+ */
+struct cam_isp_nfi_mode_switch_info {
+	__u32                                version;
+	__u32                                mode_id;
+	__u32                                modeid_vc;
+	__u32                                x_offset;
+	__u32                                y_offset;
+	__u32                                reg_length;
+	__u32                                num_valid_params;
+	__u32                                param_mask;
+	__u32                                params[4];
 } __attribute__((packed));
 
 /**
@@ -1061,6 +1487,72 @@ struct cam_isp_init_config {
 struct cam_isp_lcr_rdi_config {
 	__u32                                   res_id;
 	__u32                                   reserved[5];
+};
+
+/**
+ * struct cam_isp_per_path_exp_info - ISP per path exp order info
+ *
+ * This config will contain a map of input/output resource id
+ * to the exposure order. Additionally, hw context id is mapped
+ * for multi-context paths.
+ *
+ * @hw_type           : hw type for exp info
+ *                      Valid values are:
+ *                      CAM_ISP_HW_CSID,
+ *                      CAM_ISP_HW_VFE,
+ *                      CAM_ISP_HW_IFE,
+ *                      CAM_ISP_HW_ISPIF,
+ *                      CAM_ISP_HW_IFE_LITE,
+ *                      CAM_ISP_HW_CSID_LITE,
+ *                      CAM_ISP_HW_SFE,
+ *                      CAM_ISP_HW_MC_TFE
+ * @res_id            : Path or resource id
+ * @hw_ctxt_id        : HW context id if applicable
+ * @exp_order         : Exposure order for this path and hw context
+ *                      combination.
+ *                      Valid values are:
+ *                      CAM_ISP_EXP_ORDER_LAST,
+ *                      CAM_ISP_EXP_ORDER_LAST_1,
+ *                      or CAM_ISP_EXP_ORDER_LAST_2
+ * @num_valid_params  : Number of valid params being used
+ * @valid_param_mask  : Indicate the exact params being used
+ * @params            : Params for future change
+ */
+struct cam_isp_per_path_exp_info {
+	__u32         hw_type;
+	__u32         res_id;
+	__u32         hw_ctxt_id;
+	__u32         exp_order;
+	__u32         num_valid_params;
+	__u32         valid_params_mask;
+	__u32         params[6];
+};
+
+/**
+ * struct cam_isp_path_exp_order_update - ISP exp order update
+ *
+ * This config will contain number of processed and sensor out exposures
+ * applicable until updated. Also, this config contains an array
+ * of path to exposure order info map.
+ *
+ * @version           : Version info
+ * @num_process_exp   : Number of processed exposures
+ * @num_out_exp       : Number of sensor output exposures
+ * @num_path_exp_info : Number of per path exp info
+ * @num_valid_params  : Number of valid params being used
+ * @valid_param_mask  : Indicate the exact params being used
+ * @params            : Params for future change
+ * @exp_info          : Exposure info for each path
+ */
+struct cam_isp_path_exp_order_update {
+	__u32                                   version;
+	__u32                                   num_process_exp;
+	__u32                                   num_sensor_out_exp;
+	__u32                                   num_path_exp_info;
+	__u32                                   num_valid_params;
+	__u32                                   valid_params_mask;
+	__u32                                   params[4];
+	struct cam_isp_per_path_exp_info        exp_info[];
 };
 
 #define CAM_ISP_ACQUIRE_COMMON_VER0         0x1000

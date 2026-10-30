@@ -154,7 +154,7 @@ static int cam_fd_mgr_util_get_ctx(
 
 static int cam_fd_mgr_util_put_frame_req(
 	struct list_head *src_list,
-	struct cam_fd_mgr_frame_request **frame_req)
+	struct cam_fd_mgr_frame_request **frame_req, bool free_buffer)
 {
 	int rc = 0;
 	struct cam_fd_mgr_frame_request *req_ptr = NULL;
@@ -162,6 +162,9 @@ static int cam_fd_mgr_util_put_frame_req(
 	mutex_lock(&g_fd_hw_mgr.frame_req_mutex);
 	req_ptr = *frame_req;
 	if (req_ptr) {
+		if (free_buffer)
+			cam_mem_put_cpu_buf(frame_req->hw_update_entries[0]->handle);
+
 		list_del_init(&req_ptr->list);
 		list_add_tail(&req_ptr->list, src_list);
 	}
@@ -627,7 +630,8 @@ static int cam_fd_mgr_util_prepare_io_buf_info(int32_t iommu_hdl,
 			if (need_io_map) {
 				rc = cam_mem_get_io_buf(
 					io_cfg[i].mem_handle[plane],
-					iommu_hdl, &io_addr[plane], &size, NULL);
+					iommu_hdl, &io_addr[plane], &size, NULL,
+					prepare->buf_tracker);
 				if (rc) {
 					CAM_ERR(CAM_FD,
 						"Failed to get io buf %u %u %u %d",
@@ -656,6 +660,7 @@ static int cam_fd_mgr_util_prepare_io_buf_info(int32_t iommu_hdl,
 					&cpu_addr[plane], &size);
 				if (rc || ((io_addr[plane] & 0xFFFFFFFF)
 					!= io_addr[plane])) {
+					rc = -ENOSPC;
 					CAM_ERR(CAM_FD,
 						"Invalid cpu buf %d %d %d %d",
 						io_cfg[i].direction,
@@ -950,7 +955,7 @@ static int cam_fd_mgr_util_submit_frame(void *priv, void *data)
 
 	return rc;
 put_req_into_free_list:
-	cam_fd_mgr_util_put_frame_req(&hw_mgr->frame_free_list, &frame_req);
+	cam_fd_mgr_util_put_frame_req(&hw_mgr->frame_free_list, &frame_req, true);
 
 	return rc;
 }
@@ -1095,7 +1100,7 @@ notify_context:
 
 put_req_in_free_list:
 	rc = cam_fd_mgr_util_put_frame_req(&hw_mgr->frame_free_list,
-		&frame_req);
+		&frame_req, true);
 	if (rc) {
 		CAM_ERR(CAM_FD, "Failed in putting frame req in free list");
 		/* continue */
@@ -1150,6 +1155,13 @@ static int cam_fd_mgr_hw_get_caps(void *hw_mgr_priv, void *hw_get_caps_args)
 	struct cam_fd_query_cap_cmd query_fd;
 	void __user *caps_handle =
 		u64_to_user_ptr(query->caps_handle);
+
+	if (sizeof(struct cam_fd_query_cap_cmd) != query->size) {
+		CAM_ERR(CAM_FD,
+			"Input query cap size:%u does not match expected query cap size: %u",
+			query->size, sizeof(struct cam_fd_query_cap_cmd));
+		return -EFAULT;
+	}
 
 	if (copy_from_user(&query_fd, caps_handle,
 		sizeof(struct cam_fd_query_cap_cmd))) {
@@ -1444,7 +1456,7 @@ unlock_dev_flush_req:
 		flush_req = (struct cam_fd_mgr_frame_request *)
 			flush_args->flush_req_pending[i];
 		cam_fd_mgr_util_put_frame_req(&hw_mgr->frame_free_list,
-			&flush_req);
+			&flush_req, true);
 	}
 
 	return rc;
@@ -1529,7 +1541,7 @@ unlock_dev_flush_ctx:
 		CAM_DBG(CAM_FD, "flush pending req %llu",
 			flush_req->request_id);
 		cam_fd_mgr_util_put_frame_req(&hw_mgr->frame_free_list,
-			&flush_req);
+			&flush_req, true);
 	}
 
 	for (i = 0; i < flush_args->num_req_active; i++) {
@@ -1537,7 +1549,7 @@ unlock_dev_flush_ctx:
 			flush_args->flush_req_active[i];
 		CAM_DBG(CAM_FD, "flush active req %llu", flush_req->request_id);
 		cam_fd_mgr_util_put_frame_req(&hw_mgr->frame_free_list,
-			&flush_req);
+			&flush_req, true);
 	}
 
 	return rc;
@@ -1630,7 +1642,8 @@ hw_dump:
 	cur_ts = ktime_to_timespec64(cur_time);
 	req_ts = ktime_to_timespec64(frame_req->submit_timestamp);
 	if (diff < CAM_FD_RESPONSE_TIME_THRESHOLD) {
-		CAM_INFO(CAM_FD, "No Error req %lld %ld:%06ld %ld:%06ld",
+		CAM_INFO(CAM_FD,
+			"No Error req %lld req timestamp:[%lld.%06lld] curr timestamp:[%lld.%06lld]",
 			dump_args->request_id,
 			req_ts.tv_sec,
 			req_ts.tv_nsec/NSEC_PER_USEC,
@@ -1638,7 +1651,7 @@ hw_dump:
 			cur_ts.tv_nsec/NSEC_PER_USEC);
 		return 0;
 	}
-	CAM_INFO(CAM_FD, "Error req %lld %ld:%06ld %ld:%06ld",
+	CAM_INFO(CAM_FD, "Error req %lld req timestamp:[%lld.%06lld] curr timestamp:[%lld.%06lld]",
 		dump_args->request_id,
 		req_ts.tv_sec,
 		req_ts.tv_nsec/NSEC_PER_USEC,
@@ -1805,8 +1818,8 @@ static int cam_fd_mgr_hw_prepare_update(void *hw_mgr_priv,
 		kmd_buf.size, kmd_buf.used_bytes);
 
 	/* We do not expect any patching, but just do it anyway */
-	rc = cam_packet_util_process_patches(prepare->packet,
-		hw_mgr->device_iommu.non_secure, -1);
+	rc = cam_packet_util_process_patches(prepare->packet, prepare->buf_tracker,
+		hw_mgr->device_iommu.non_secure, -1, false);
 	if (rc) {
 		CAM_ERR(CAM_FD, "Patch FD packet failed, rc=%d", rc);
 		return rc;
@@ -1828,9 +1841,13 @@ static int cam_fd_mgr_hw_prepare_update(void *hw_mgr_priv,
 		hw_mgr->device_iommu.non_secure, prepare,
 		prestart_args.input_buf, prestart_args.output_buf,
 		CAM_FD_MAX_IO_BUFFERS);
+
 	if (rc) {
 		CAM_ERR(CAM_FD, "Error in prepare IO Buf %d", rc);
-		goto error;
+
+		if (rc == -ENOSPC)
+			goto error;
+		goto put_cpu_buf;
 	}
 
 	rc = cam_fd_mgr_util_prepare_hw_update_entries(hw_mgr, prepare,
@@ -1920,11 +1937,11 @@ static int cam_fd_mgr_hw_config(void *hw_mgr_priv, void *hw_config_args)
 	if (hw_ctx->priority == CAM_FD_PRIORITY_HIGH) {
 		CAM_DBG(CAM_FD, "Insert frame into prio0 queue");
 		rc = cam_fd_mgr_util_put_frame_req(
-			&hw_mgr->frame_pending_list_high, &frame_req);
+			&hw_mgr->frame_pending_list_high, &frame_req, false);
 	} else {
 		CAM_DBG(CAM_FD, "Insert frame into prio1 queue");
 		rc = cam_fd_mgr_util_put_frame_req(
-			&hw_mgr->frame_pending_list_normal, &frame_req);
+			&hw_mgr->frame_pending_list_normal, &frame_req, false);
 	}
 	if (rc) {
 		CAM_ERR(CAM_FD, "Failed in queuing frame req, rc=%d", rc);
@@ -1963,7 +1980,7 @@ remove_and_put_free_list:
 	mutex_unlock(&g_fd_hw_mgr.frame_req_mutex);
 put_free_list:
 	cam_fd_mgr_util_put_frame_req(&hw_mgr->frame_free_list,
-		&frame_req);
+		&frame_req, true);
 
 	return rc;
 }
@@ -2141,7 +2158,7 @@ int cam_fd_hw_mgr_init(struct device_node *of_node,
 		goto detach_smmu;
 	}
 
-	g_fd_hw_mgr.work_data = kcalloc(CAM_FD_WORKQ_NUM_TASK,
+	g_fd_hw_mgr.work_data = CAM_MEM_ZALLOC_ARRAY(CAM_FD_WORKQ_NUM_TASK,
 		sizeof(struct cam_fd_mgr_work_data), GFP_KERNEL);
 
 	for (i = 0; i < CAM_FD_WORKQ_NUM_TASK; i++)

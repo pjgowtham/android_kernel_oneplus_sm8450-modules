@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -12,6 +13,8 @@
 #include "cam_debug_util.h"
 #include "cam_sfe_soc.h"
 #include "cam_sfe_core.h"
+#include "cam_vmrm_interface.h"
+#include "cam_mem_mgr_api.h"
 
 struct cam_sfe_core_cfg {
 	uint32_t   mode_sel;
@@ -29,40 +32,45 @@ struct cam_sfe_top_common_data {
 	struct list_head                         free_payload_list;
 };
 
+struct cam_sfe_top_perf_counter_cfg {
+	uint32_t perf_counter_val;
+	bool     dump_counter;
+};
+
 struct cam_sfe_top_priv {
-	struct cam_sfe_top_common_data  common_data;
-	struct cam_isp_resource_node    in_rsrc[CAM_SFE_TOP_IN_PORT_MAX];
-	uint32_t                        num_in_ports;
-	unsigned long                   applied_clk_rate;
-	unsigned long                   req_clk_rate[CAM_SFE_TOP_IN_PORT_MAX];
-	uint32_t                        last_bw_counter;
-	uint32_t                        last_clk_counter;
-	uint64_t                        total_bw_applied;
-	struct cam_axi_vote             agg_incoming_vote;
-	struct cam_axi_vote             req_axi_vote[CAM_SFE_TOP_IN_PORT_MAX];
-	struct cam_axi_vote             last_bw_vote[CAM_DELAY_CLK_BW_REDUCTION_NUM_REQ];
-	uint64_t                        last_total_bw_vote[CAM_DELAY_CLK_BW_REDUCTION_NUM_REQ];
-	uint64_t                        last_clk_vote[CAM_DELAY_CLK_BW_REDUCTION_NUM_REQ];
-	enum cam_clk_bw_state           clk_state;
-	enum cam_clk_bw_state           bw_state;
-	enum cam_isp_bw_control_action  axi_vote_control[
-		CAM_SFE_TOP_IN_PORT_MAX];
-	struct cam_axi_vote             applied_axi_vote;
-	struct cam_sfe_core_cfg         core_cfg;
-	uint32_t                        sfe_debug_cfg;
-	uint32_t                        sensor_sel_diag_cfg;
-	uint32_t                        cc_testbus_sel_cfg;
-	int                             error_irq_handle;
-	uint16_t                        reserve_cnt;
-	uint16_t                        start_stop_cnt;
-	void                           *priv_per_stream;
-	spinlock_t                      spin_lock;
-	cam_hw_mgr_event_cb_func        event_cb;
-	struct cam_sfe_wr_client_desc  *wr_client_desc;
-	struct cam_sfe_top_hw_info     *hw_info;
-	uint32_t                        num_clc_module;
-	struct cam_sfe_top_debug_info  (*clc_dbg_mod_info)[CAM_SFE_TOP_DBG_REG_MAX][8];
-	bool                            skip_clk_data_rst;
+	struct cam_sfe_top_common_data      common_data;
+	struct cam_isp_resource_node        in_rsrc[CAM_SFE_TOP_IN_PORT_MAX];
+	uint32_t                            num_in_ports;
+	unsigned long                       applied_clk_rate;
+	unsigned long                       req_clk_rate[CAM_SFE_TOP_IN_PORT_MAX];
+	uint32_t                            last_bw_counter;
+	uint32_t                            last_clk_counter;
+	uint64_t                            total_bw_applied;
+	struct cam_axi_vote                 agg_incoming_vote;
+	struct cam_axi_vote                 req_axi_vote[CAM_SFE_TOP_IN_PORT_MAX];
+	struct cam_axi_vote                 last_bw_vote[CAM_DELAY_CLK_BW_REDUCTION_NUM_REQ];
+	uint64_t                            last_total_bw_vote[CAM_DELAY_CLK_BW_REDUCTION_NUM_REQ];
+	unsigned long                       last_clk_vote[CAM_DELAY_CLK_BW_REDUCTION_NUM_REQ];
+	enum cam_clk_bw_state               clk_state;
+	enum cam_clk_bw_state               bw_state;
+	enum cam_isp_bw_control_action      axi_vote_control[CAM_SFE_TOP_IN_PORT_MAX];
+	struct cam_axi_vote                 applied_axi_vote;
+	struct cam_sfe_core_cfg             core_cfg;
+	uint32_t                            sfe_debug_cfg;
+	uint32_t                            sensor_sel_diag_cfg;
+	struct cam_sfe_top_perf_counter_cfg perf_counters[CAM_SFE_PERF_COUNTER_MAX];
+	uint32_t                            cc_testbus_sel_cfg;
+	int                                 error_irq_handle;
+	uint16_t                            reserve_cnt;
+	uint16_t                            start_stop_cnt;
+	void                               *priv_per_stream;
+	spinlock_t                          spin_lock;
+	cam_hw_mgr_event_cb_func            event_cb;
+	struct cam_sfe_wr_client_desc      *wr_client_desc;
+	struct cam_sfe_top_hw_info         *hw_info;
+	uint32_t                            num_clc_module;
+	struct cam_sfe_top_debug_info     (*clc_dbg_mod_info)[CAM_SFE_TOP_DBG_REG_MAX][8];
+	bool                                skip_clk_data_rst;
 };
 
 struct cam_sfe_path_data {
@@ -107,6 +115,7 @@ static int cam_sfe_top_set_axi_bw_vote(
 	int rc = 0;
 	struct cam_hw_soc_info        *soc_info = NULL;
 	struct cam_sfe_soc_private    *soc_private = NULL;
+	int i, j;
 
 	soc_info = top_priv->common_data.soc_info;
 	soc_private = (struct cam_sfe_soc_private *)soc_info->soc_private;
@@ -124,37 +133,87 @@ static int cam_sfe_top_set_axi_bw_vote(
 		top_priv->total_bw_applied = total_bw_new_vote;
 	} else {
 		CAM_ERR(CAM_PERF, "BW request failed, rc=%d", rc);
+		for (i = 0; i < final_bw_vote->num_paths; i++) {
+			CAM_INFO(CAM_PERF,
+				"sfe[%d] : Applied BW Vote : [%s][%s][%s] [%llu %llu %llu]",
+				top_priv->common_data.hw_intf->hw_idx,
+				cam_cpas_axi_util_path_type_to_string(
+				final_bw_vote->axi_path[i].path_data_type),
+				cam_cpas_axi_util_trans_type_to_string(
+				final_bw_vote->axi_path[i].transac_type),
+				cam_cpas_axi_util_drv_vote_lvl_to_string(
+				final_bw_vote->axi_path[i].vote_level),
+				final_bw_vote->axi_path[i].camnoc_bw,
+				final_bw_vote->axi_path[i].mnoc_ab_bw,
+				final_bw_vote->axi_path[i].mnoc_ib_bw);
+		}
+
+		for (i = 0; i < CAM_DELAY_CLK_BW_REDUCTION_NUM_REQ; i++) {
+			for (j = 0; j < top_priv->last_bw_vote[i].num_paths; j++) {
+				CAM_INFO(CAM_PERF,
+					"sfe[%d] : History[%d] BW Vote : [%s][%s] [%s] [%llu %llu %llu]",
+					top_priv->common_data.hw_intf->hw_idx, i,
+					cam_cpas_axi_util_path_type_to_string(
+					top_priv->last_bw_vote[i].axi_path[j].path_data_type),
+					cam_cpas_axi_util_trans_type_to_string(
+					top_priv->last_bw_vote[i].axi_path[j].transac_type),
+					cam_cpas_axi_util_drv_vote_lvl_to_string(
+					top_priv->last_bw_vote[i].axi_path[j].vote_level),
+					top_priv->last_bw_vote[i].axi_path[j].camnoc_bw,
+					top_priv->last_bw_vote[i].axi_path[j].mnoc_ab_bw,
+					top_priv->last_bw_vote[i].axi_path[j].mnoc_ib_bw);
+			}
+		}
+
 	}
 
 	return rc;
 
 }
 
-static int cam_sfe_top_set_hw_clk_rate(
-	struct cam_sfe_top_priv *top_priv, uint64_t final_clk_rate, bool start_stop,
-	uint64_t request_id)
+static int cam_sfe_top_set_hw_clk_rate(struct cam_sfe_top_priv *top_priv,
+	unsigned long final_clk_rate, bool start_stop, uint64_t request_id, bool is_drv_config_en)
 {
 	struct cam_hw_soc_info        *soc_info = NULL;
 	struct cam_sfe_soc_private    *soc_private = NULL;
 	struct cam_ahb_vote            ahb_vote;
 	int rc = 0, clk_lvl = -1;
+	unsigned long cesta_clk_rate_high, cesta_clk_rate_low;
+	int cesta_client_idx = -1;
+	uint32_t lowest_clk_lvl;
 
 	soc_info = top_priv->common_data.soc_info;
 	soc_private = (struct cam_sfe_soc_private *)soc_info->soc_private;
 
-	CAM_DBG(CAM_PERF, "Applying SFE:%d Clock name=%s idx=%d clk=%llu req_id=%ld",
-		top_priv->common_data.hw_intf->hw_idx, soc_info->clk_name[soc_info->src_clk_idx],
-		soc_info->src_clk_idx, final_clk_rate, (start_stop ? -1 : request_id));
+	lowest_clk_lvl = soc_info->lowest_clk_level;
+	cesta_clk_rate_high = final_clk_rate;
+	cesta_clk_rate_low = final_clk_rate;
 
-	rc = cam_soc_util_set_src_clk_rate(soc_info, final_clk_rate);
+	if (soc_info->is_clk_drv_en) {
+		cesta_client_idx = top_priv->common_data.hw_intf->hw_idx;
+		if (is_drv_config_en)
+			cesta_clk_rate_low =
+				soc_info->clk_rate[lowest_clk_lvl][soc_info->src_clk_idx];
+		else
+			cesta_clk_rate_low = final_clk_rate;
+	}
+
+	CAM_DBG(CAM_PERF,
+		"Applying SFE:%d Clock name=%s idx=%d cesta_client_idx:%d req clk[high low]=[%lu %lu] req_id=%ld",
+		top_priv->common_data.hw_intf->hw_idx, soc_info->clk_name[soc_info->src_clk_idx],
+		soc_info->src_clk_idx, cesta_client_idx, cesta_clk_rate_high, cesta_clk_rate_low,
+		(start_stop ? -1 : request_id));
+
+	rc = cam_soc_util_set_src_clk_rate(soc_info, cesta_client_idx, cesta_clk_rate_high,
+		cesta_clk_rate_low);
 	if (!rc) {
-		top_priv->applied_clk_rate = final_clk_rate;
-		rc = cam_soc_util_get_clk_level(soc_info, final_clk_rate,
+		top_priv->applied_clk_rate = cesta_clk_rate_high;
+		rc = cam_soc_util_get_clk_level(soc_info, cesta_clk_rate_low,
 			soc_info->src_clk_idx, &clk_lvl);
 		if (rc) {
-			CAM_WARN(CAM_SFE,
-				"Failed to get clk level for %s with clk_rate %llu src_idx %d rc %d",
-				soc_info->dev_name, final_clk_rate,
+			CAM_WARN(CAM_ISP,
+				"Failed to get clk level for %s with clk_rate %lu src_idx %d rc %d",
+				soc_info->dev_name, cesta_clk_rate_high,
 				soc_info->src_clk_idx, rc);
 			rc = 0;
 			goto end;
@@ -164,8 +223,10 @@ static int cam_sfe_top_set_hw_clk_rate(
 		ahb_vote.vote.level = clk_lvl;
 		cam_cpas_update_ahb_vote(soc_private->cpas_handle, &ahb_vote);
 	} else {
-		CAM_ERR(CAM_PERF, "SFE:%d Set Clock rate failed, rc=%d",
-			top_priv->common_data.hw_intf->hw_idx, rc);
+		CAM_ERR(CAM_ISP,
+			"SFE:%d cesta_client_idx:%d Failed to set the req clk rate[high low]: [%llu %llu] rc:%d",
+			top_priv->common_data.hw_intf->hw_idx, cesta_client_idx,
+			cesta_clk_rate_high, cesta_clk_rate_low, rc);
 	}
 
 end:
@@ -205,7 +266,6 @@ static void cam_sfe_top_check_module_status(
 				i, log_buf);
 		len = 0;
 		found = false;
-		memset(log_buf, 0, sizeof(uint8_t)*1024);
 	}
 }
 
@@ -220,7 +280,7 @@ static void cam_sfe_top_print_cc_test_bus(
 	uint32_t dbg_testbus_reg = common_data->common_reg->top_debug_testbus_reg;
 	uint32_t size = 0, reg_val = 0, val = 0, i = 0;
 	size_t   len = 0;
-	uint8_t  log_buf[1024];
+	uint8_t  log_buf[1024] = {0};
 
 	reg_val =  cam_io_r(mem_base +
 		common_data->common_reg->top_debug[dbg_testbus_reg]);
@@ -231,7 +291,7 @@ static void cam_sfe_top_print_cc_test_bus(
 			size = top_priv->hw_info->test_bus_info[i].size;
 			testbus_info =
 				top_priv->hw_info->test_bus_info[i].testbus;
-		       break;
+			break;
 		}
 	}
 
@@ -255,6 +315,41 @@ static void cam_sfe_top_print_cc_test_bus(
 		reg_val, log_buf);
 }
 
+static void cam_sfe_top_dump_perf_counters(
+	const char *event,
+	const char *res_name,
+	struct cam_sfe_top_priv *top_priv)
+{
+	int i;
+	void __iomem                         *mem_base;
+	struct cam_sfe_top_common_data       *common_data;
+	struct cam_hw_soc_info               *soc_info;
+	struct cam_sfe_top_common_reg_offset *common_reg;
+
+	common_data = &top_priv->common_data;
+	common_reg = common_data->common_reg;
+	soc_info = common_data->soc_info;
+	mem_base = soc_info->reg_map[SFE_CORE_BASE_IDX].mem_base;
+
+	for (i = 0; i < top_priv->common_data.common_reg->num_perf_counters; i++) {
+		if (top_priv->perf_counters[i].dump_counter) {
+			CAM_INFO(CAM_SFE,
+				"SFE [%u] on %s %s counter: %d pixel_cnt: %d line_cnt: %d stall_cnt: %d always_cnt: %d status: 0x%x",
+				common_data->hw_intf->hw_idx, res_name, event, (i + 1),
+				cam_io_r_mb(mem_base +
+					common_reg->perf_count_reg[i].perf_pix_count),
+				cam_io_r_mb(mem_base +
+					common_reg->perf_count_reg[i].perf_line_count),
+				cam_io_r_mb(mem_base +
+					common_reg->perf_count_reg[i].perf_stall_count),
+				cam_io_r_mb(mem_base +
+					common_reg->perf_count_reg[i].perf_always_count),
+				cam_io_r_mb(mem_base +
+					common_reg->perf_count_reg[i].perf_count_status));
+		}
+	}
+}
+
 static void cam_sfe_top_print_debug_reg_info(
 	struct cam_sfe_top_priv *top_priv)
 {
@@ -269,7 +364,7 @@ static void cam_sfe_top_print_debug_reg_info(
 	soc_info = common_data->soc_info;
 	num_reg = common_data->common_reg->num_debug_registers;
 	mem_base = soc_info->reg_map[SFE_CORE_BASE_IDX].mem_base;
-	reg_val    = kcalloc(num_reg, sizeof(uint32_t), GFP_KERNEL);
+	reg_val    = CAM_MEM_ZALLOC_ARRAY(num_reg, sizeof(uint32_t), GFP_KERNEL);
 	if (!reg_val)
 		return;
 
@@ -290,7 +385,9 @@ static void cam_sfe_top_print_debug_reg_info(
 		top_priv->cc_testbus_sel_cfg)
 		cam_sfe_top_print_cc_test_bus(top_priv);
 
-	kfree(reg_val);
+	CAM_MEM_FREE(reg_val);
+
+	cam_sfe_top_dump_perf_counters("ERROR", "", top_priv);
 }
 
 static struct cam_axi_vote *cam_sfe_top_delay_bw_reduction(
@@ -302,14 +399,11 @@ static struct cam_axi_vote *cam_sfe_top_delay_bw_reduction(
 	uint64_t max_bw = 0;
 
 	for (i = 0; i < CAM_DELAY_CLK_BW_REDUCTION_NUM_REQ; i++) {
-		if (top_priv->last_total_bw_vote[i] > max_bw) {
+		if (top_priv->last_total_bw_vote[i] >= max_bw) {
 			vote_idx = i;
 			max_bw = top_priv->last_total_bw_vote[i];
 		}
 	}
-
-	if (vote_idx < 0)
-		return NULL;
 
 	*to_be_applied_bw = max_bw;
 
@@ -325,6 +419,13 @@ int cam_sfe_top_calc_axi_bw_vote(struct cam_sfe_top_priv *top_priv,
 	uint32_t num_paths = 0;
 	bool bw_unchanged = true;
 	struct cam_axi_vote *final_bw_vote = NULL;
+
+	if (top_priv->num_in_ports > CAM_SFE_TOP_IN_PORT_MAX) {
+		CAM_ERR(CAM_SFE, "Invalid number of ports %d, max %d",
+			top_priv->num_in_ports, CAM_SFE_TOP_IN_PORT_MAX);
+		rc = -EINVAL;
+		goto end;
+	}
 
 	memset(&top_priv->agg_incoming_vote, 0, sizeof(struct cam_axi_vote));
 	for (i = 0; i < top_priv->num_in_ports; i++) {
@@ -346,7 +447,7 @@ int cam_sfe_top_calc_axi_bw_vote(struct cam_sfe_top_priv *top_priv,
 				&top_priv->req_axi_vote[i].axi_path[0],
 				top_priv->req_axi_vote[i].num_paths *
 				sizeof(
-				struct cam_axi_per_path_bw_vote));
+				struct cam_cpas_axi_per_path_bw_vote));
 			num_paths += top_priv->req_axi_vote[i].num_paths;
 		}
 	}
@@ -355,13 +456,15 @@ int cam_sfe_top_calc_axi_bw_vote(struct cam_sfe_top_priv *top_priv,
 
 	for (i = 0; i < top_priv->agg_incoming_vote.num_paths; i++) {
 		CAM_DBG(CAM_PERF,
-			"sfe[%d] : New BW Vote : counter[%d] [%s][%s] [%llu %llu %llu]",
+			"sfe[%d] : New BW Vote : counter[%d] [%s][%s][%s] [%llu %llu %llu]",
 			top_priv->common_data.hw_intf->hw_idx,
 			top_priv->last_bw_counter,
 			cam_cpas_axi_util_path_type_to_string(
 			top_priv->agg_incoming_vote.axi_path[i].path_data_type),
 			cam_cpas_axi_util_trans_type_to_string(
 			top_priv->agg_incoming_vote.axi_path[i].transac_type),
+			cam_cpas_axi_util_drv_vote_lvl_to_string(
+			top_priv->agg_incoming_vote.axi_path[i].vote_level),
 			top_priv->agg_incoming_vote.axi_path[i].camnoc_bw,
 			top_priv->agg_incoming_vote.axi_path[i].mnoc_ab_bw,
 			top_priv->agg_incoming_vote.axi_path[i].mnoc_ib_bw);
@@ -405,26 +508,24 @@ int cam_sfe_top_calc_axi_bw_vote(struct cam_sfe_top_priv *top_priv,
 			CAM_DELAY_CLK_BW_REDUCTION_NUM_REQ;
 	} else {
 		/*
-		 * Find max bw request in last few frames. This will the bw
+		 * Find max bw request in last few frames. This will be the bw
 		 * that we want to vote to CPAS now.
 		 */
 		final_bw_vote = cam_sfe_top_delay_bw_reduction(top_priv, total_bw_new_vote);
-		if (!final_bw_vote) {
-			CAM_ERR(CAM_PERF, "to_be_applied_axi_vote is NULL, req_id:%llu",
-				request_id);
-			top_priv->bw_state = CAM_CLK_BW_STATE_UNCHANGED;
-			return 0;
-		}
+		if (*total_bw_new_vote == 0)
+			CAM_DBG(CAM_PERF, "to_be_applied_axi_vote is 0, req_id:%llu", request_id);
 	}
 
 	for (i = 0; i < final_bw_vote->num_paths; i++) {
 		CAM_DBG(CAM_PERF,
-			"sfe[%d] : Apply BW Vote : [%s][%s] [%llu %llu %llu]",
+			"sfe[%d] : Apply BW Vote : [%s][%s][%s] [%llu %llu %llu]",
 			top_priv->common_data.hw_intf->hw_idx,
 			cam_cpas_axi_util_path_type_to_string(
 			final_bw_vote->axi_path[i].path_data_type),
 			cam_cpas_axi_util_trans_type_to_string(
 			final_bw_vote->axi_path[i].transac_type),
+			cam_cpas_axi_util_drv_vote_lvl_to_string(
+			final_bw_vote->axi_path[i].vote_level),
 			final_bw_vote->axi_path[i].camnoc_bw,
 			final_bw_vote->axi_path[i].mnoc_ab_bw,
 			final_bw_vote->axi_path[i].mnoc_ib_bw);
@@ -442,11 +543,10 @@ int cam_sfe_top_calc_axi_bw_vote(struct cam_sfe_top_priv *top_priv,
 		top_priv->bw_state = CAM_CLK_BW_STATE_DECREASE;
 	}
 
-
 	CAM_DBG(CAM_PERF,
 		"sfe[%d] : Delayed update: applied_total=%lld new_total=%lld, start_stop=%d bw_state=%s req_id=%ld",
 		top_priv->common_data.hw_intf->hw_idx, top_priv->total_bw_applied,
-		total_bw_new_vote, start_stop,
+		*total_bw_new_vote, start_stop,
 		cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state),
 		(start_stop ? -1 : request_id));
 
@@ -462,7 +562,6 @@ int cam_sfe_top_bw_update(struct cam_sfe_soc_private *soc_private,
 {
 	struct cam_sfe_bw_update_args        *bw_update = NULL;
 	struct cam_isp_resource_node         *res = NULL;
-	struct cam_hw_info                   *hw_info = NULL;
 	int                                   rc = 0;
 	int                                   i;
 
@@ -472,13 +571,18 @@ int cam_sfe_top_bw_update(struct cam_sfe_soc_private *soc_private,
 	if (!res || !res->hw_intf || !res->hw_intf->hw_priv)
 		return -EINVAL;
 
-	hw_info = res->hw_intf->hw_priv;
 
 	if (res->res_type != CAM_ISP_RESOURCE_SFE_IN ||
 		res->res_id >= CAM_ISP_HW_SFE_IN_MAX) {
 		CAM_ERR(CAM_SFE, "SFE:%d Invalid res_type:%d res id%d",
 			res->hw_intf->hw_idx, res->res_type,
 			res->res_id);
+		return -EINVAL;
+	}
+
+	if (top_priv->num_in_ports > CAM_SFE_TOP_IN_PORT_MAX) {
+		CAM_ERR(CAM_SFE, "Invalid number of ports %d, max %d",
+			top_priv->num_in_ports, CAM_SFE_TOP_IN_PORT_MAX);
 		return -EINVAL;
 	}
 
@@ -519,6 +623,12 @@ int cam_sfe_top_bw_control(struct cam_sfe_soc_private *soc_private,
 		CAM_ERR(CAM_SFE, "SFE:%d Invalid res_type:%d res id%d",
 			res->hw_intf->hw_idx, res->res_type,
 			res->res_id);
+		return -EINVAL;
+	}
+
+	if (top_priv->num_in_ports > CAM_SFE_TOP_IN_PORT_MAX) {
+		CAM_ERR(CAM_SFE, "Invalid number of ports %d, max %d",
+			top_priv->num_in_ports, CAM_SFE_TOP_IN_PORT_MAX);
 		return -EINVAL;
 	}
 
@@ -566,7 +676,7 @@ static int cam_sfe_top_core_cfg(
 
 static inline void cam_sfe_top_delay_clk_reduction(
 	struct cam_sfe_top_priv *top_priv,
-	uint64_t *max_clk)
+	unsigned long *max_clk)
 {
 	int i;
 
@@ -578,10 +688,10 @@ static inline void cam_sfe_top_delay_clk_reduction(
 
 int cam_sfe_top_calc_hw_clk_rate(
 	struct cam_sfe_top_priv *top_priv, bool start_stop,
-	uint64_t                       *final_clk_rate, uint64_t request_id)
+	unsigned long *final_clk_rate, uint64_t request_id)
 {
 	int                            i, rc = 0;
-	uint64_t                       max_req_clk_rate = 0;
+	unsigned long                  max_req_clk_rate = 0;
 
 	for (i = 0; i < top_priv->num_in_ports; i++) {
 		if (top_priv->req_clk_rate[i] > max_req_clk_rate)
@@ -595,15 +705,13 @@ int cam_sfe_top_calc_hw_clk_rate(
 		memset(top_priv->last_clk_vote, 0, sizeof(uint64_t) *
 			CAM_DELAY_CLK_BW_REDUCTION_NUM_REQ);
 		top_priv->last_clk_counter = 0;
-		top_priv->last_clk_vote[top_priv->last_clk_counter] =
-			max_req_clk_rate;
+		top_priv->last_clk_vote[top_priv->last_clk_counter] = max_req_clk_rate;
 		top_priv->last_clk_counter = (top_priv->last_clk_counter + 1) %
 			CAM_DELAY_CLK_BW_REDUCTION_NUM_REQ;
 	} else {
-		top_priv->last_clk_vote[top_priv->last_clk_counter] =
-			max_req_clk_rate;
+		top_priv->last_clk_vote[top_priv->last_clk_counter] = max_req_clk_rate;
 		top_priv->last_clk_counter = (top_priv->last_clk_counter + 1) %
-			CAM_DELAY_CLK_BW_REDUCTION_NUM_REQ;
+				CAM_DELAY_CLK_BW_REDUCTION_NUM_REQ;
 
 		/* Find max clk request in last few requests */
 		cam_sfe_top_delay_clk_reduction(top_priv, final_clk_rate);
@@ -621,7 +729,7 @@ int cam_sfe_top_calc_hw_clk_rate(
 		top_priv->clk_state = CAM_CLK_BW_STATE_DECREASE;
 
 	CAM_DBG(CAM_PERF, "SFE:%d Clock state:%s hw_clk_rate:%llu req_id:%ld",
-		top_priv->common_data.hw_intf->hw_idx,
+			top_priv->common_data.hw_intf->hw_idx,
 		cam_sfe_top_clk_bw_state_to_string(top_priv->clk_state),
 		top_priv->applied_clk_rate, (start_stop ? -1 : request_id));
 
@@ -674,6 +782,11 @@ static int cam_sfe_top_get_base(
 	mem_base = CAM_SOC_GET_REG_MAP_CAM_BASE(
 		top_priv->common_data.soc_info,
 		SFE_CORE_BASE_IDX);
+	if (mem_base == -1) {
+		CAM_ERR(CAM_SFE, "failed to get mem_base, index: %d num_reg_map: %u",
+				SFE_CORE_BASE_IDX, top_priv->common_data.soc_info->num_reg_map);
+		return -EINVAL;
+	}
 
 	if (cdm_args->cdm_id == CAM_CDM_RT) {
 		if (!soc_private->rt_wrapper_base) {
@@ -699,7 +812,6 @@ static int cam_sfe_top_clock_update(
 {
 	struct cam_sfe_clock_update_args     *clk_update = NULL;
 	struct cam_isp_resource_node         *res = NULL;
-	struct cam_hw_info                   *hw_info = NULL;
 	int i;
 
 	if (arg_size != sizeof(struct cam_sfe_clock_update_args)) {
@@ -722,7 +834,6 @@ static int cam_sfe_top_clock_update(
 		return -EINVAL;
 	}
 
-	hw_info = res->hw_intf->hw_priv;
 
 	if (res->res_type != CAM_ISP_RESOURCE_SFE_IN ||
 		res->res_id >= CAM_ISP_HW_SFE_IN_MAX) {
@@ -747,42 +858,53 @@ static int cam_sfe_set_top_debug(
 	struct cam_sfe_top_priv *top_priv,
 	void *cmd_args)
 {
+	int i;
+	uint32_t max_counters = top_priv->common_data.common_reg->num_perf_counters;
 	struct cam_sfe_debug_cfg_params *debug_cfg;
 
 	debug_cfg = (struct cam_sfe_debug_cfg_params *)cmd_args;
 	if (!debug_cfg->cache_config) {
 		top_priv->sfe_debug_cfg = debug_cfg->u.dbg_cfg.sfe_debug_cfg;
 		top_priv->sensor_sel_diag_cfg = debug_cfg->u.dbg_cfg.sfe_sensor_sel;
+
+		if (debug_cfg->u.dbg_cfg.num_counters <= max_counters)
+			for (i = 0; i < max_counters; i++)
+				top_priv->perf_counters[i].perf_counter_val =
+					debug_cfg->u.dbg_cfg.sfe_perf_counter_val[i];
 	}
 
 	return 0;
 }
 
 static int cam_sfe_top_handle_overflow(
-	struct cam_sfe_top_priv *top_priv, uint32_t cmd_type)
+	struct cam_sfe_top_priv *top_priv, void *cmd_args)
 {
 	struct cam_sfe_top_common_data      *common_data;
 	struct cam_hw_soc_info              *soc_info;
-	uint32_t                             overflow_status, violation_status, tmp;
+	uint32_t                             bus_overflow_status, violation_status, tmp;
 	uint32_t                             i = 0;
+	struct cam_isp_hw_overflow_info     *overflow_info = NULL;
 
+	overflow_info = (struct cam_isp_hw_overflow_info *)cmd_args;
 	common_data = &top_priv->common_data;
 	soc_info = common_data->soc_info;
 
-	overflow_status = cam_io_r(soc_info->reg_map[SFE_CORE_BASE_IDX].mem_base +
+	bus_overflow_status = cam_io_r(soc_info->reg_map[SFE_CORE_BASE_IDX].mem_base +
 		top_priv->common_data.common_reg->bus_overflow_status);
 	violation_status = cam_io_r(soc_info->reg_map[SFE_CORE_BASE_IDX].mem_base +
 		top_priv->common_data.common_reg->ipp_violation_status);
 
 	CAM_ERR(CAM_ISP,
-		"SFE%d src_clk_rate:%luHz overflow:%s violation: %s",
-		soc_info->index, soc_info->applied_src_clk_rate,
-		CAM_BOOL_TO_YESNO(overflow_status), CAM_BOOL_TO_YESNO(violation_status));
+		"SFE%d src_clk_rate sw_client:%lu hw_client:[%lu %lu] bus_overflow_status:%s violation: %s",
+		soc_info->index, soc_info->applied_src_clk_rates.sw_client,
+		soc_info->applied_src_clk_rates.hw_client[soc_info->index].high,
+		soc_info->applied_src_clk_rates.hw_client[soc_info->index].low,
+		CAM_BOOL_TO_YESNO(bus_overflow_status), CAM_BOOL_TO_YESNO(violation_status));
 
-	tmp = overflow_status;
+	tmp = bus_overflow_status;
 	while (tmp) {
 		if (tmp & 0x1)
-			CAM_ERR(CAM_ISP, "SFE Overflow %s ",
+			CAM_ERR(CAM_ISP, "SFE Bus Overflow %s ",
 				top_priv->wr_client_desc[i].desc);
 		tmp = tmp >> 1;
 		i++;
@@ -792,8 +914,10 @@ static int cam_sfe_top_handle_overflow(
 		cam_sfe_top_print_ipp_violation_info(top_priv, violation_status);
 	cam_sfe_top_print_debug_reg_info(top_priv);
 
-	if (overflow_status)
-		cam_cpas_log_votes();
+	if (bus_overflow_status) {
+		cam_cpas_log_votes(false);
+		overflow_info->is_bus_overflow = true;
+	}
 
 	return 0;
 }
@@ -805,7 +929,7 @@ static int cam_sfe_top_apply_clk_bw_update(struct cam_sfe_top_priv *top_priv,
 	struct cam_hw_intf                   *hw_intf = NULL;
 	struct cam_axi_vote *to_be_applied_axi_vote = NULL;
 	struct cam_isp_apply_clk_bw_args *clk_bw_args = NULL;
-	uint64_t                              final_clk_rate = 0;
+	unsigned long                         final_clk_rate = 0;
 	uint64_t                              total_bw_new_vote = 0;
 	uint64_t                              request_id;
 	int rc = 0;
@@ -857,12 +981,16 @@ static int cam_sfe_top_apply_clk_bw_update(struct cam_sfe_top_priv *top_priv,
 	if ((!to_be_applied_axi_vote) && (top_priv->bw_state != CAM_CLK_BW_STATE_UNCHANGED)) {
 		CAM_ERR(CAM_PERF, "SFE:%d Invalid BW vote for state:%s", hw_intf->hw_idx,
 			cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state));
+		rc = -EINVAL;
+		goto end;
 	}
 
-	CAM_DBG(CAM_PERF, "SFE:%d APPLY CLK/BW req_id:%ld clk_state:%s bw_state:%s ",
+	CAM_DBG(CAM_PERF,
+		"SFE:%d APPLY CLK/BW req_id:%ld clk_state:%s bw_state:%s is_drv_config_en:%s",
 		hw_intf->hw_idx, request_id,
 		cam_sfe_top_clk_bw_state_to_string(top_priv->clk_state),
-		cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state));
+		cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state),
+		CAM_BOOL_TO_YESNO(clk_bw_args->is_drv_config_en));
 
 	/* Determine BW and clock voting sequence according to state */
 	if ((top_priv->clk_state == CAM_CLK_BW_STATE_UNCHANGED) &&
@@ -873,20 +1001,23 @@ static int cam_sfe_top_apply_clk_bw_update(struct cam_sfe_top_priv *top_priv,
 			total_bw_new_vote, false, request_id);
 		if (rc) {
 			CAM_ERR(CAM_SFE,
-				"SFE:%d Failed in voting final bw:%llu clk_state:%s bw_state:%s",
+				"SFE:%d Failed in voting final bw:%llu clk_state:%s bw_state:%s is_drv_config_en:%s",
 				hw_intf->hw_idx, total_bw_new_vote,
 				cam_sfe_top_clk_bw_state_to_string(top_priv->clk_state),
-				cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state));
+				cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state),
+				CAM_BOOL_TO_YESNO(clk_bw_args->is_drv_config_en));
 			goto end;
 		}
 	} else if (top_priv->bw_state == CAM_CLK_BW_STATE_UNCHANGED) {
-		rc = cam_sfe_top_set_hw_clk_rate(top_priv, final_clk_rate, false, request_id);
+		rc = cam_sfe_top_set_hw_clk_rate(top_priv, final_clk_rate, false, request_id,
+			clk_bw_args->is_drv_config_en);
 		if (rc) {
 			CAM_ERR(CAM_SFE,
-				"SFE:%d Failed in voting final clk:%llu clk_state:%s bw_state:%s",
+				"SFE:%d Failed in voting final clk:%lu clk_state:%s bw_state:%s is_drv_config_en:%s",
 				hw_intf->hw_idx, final_clk_rate,
 				cam_sfe_top_clk_bw_state_to_string(top_priv->clk_state),
-				cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state));
+				cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state),
+				CAM_BOOL_TO_YESNO(clk_bw_args->is_drv_config_en));
 			goto end;
 		}
 	} else if (top_priv->clk_state == CAM_CLK_BW_STATE_INCREASE) {
@@ -895,31 +1026,36 @@ static int cam_sfe_top_apply_clk_bw_update(struct cam_sfe_top_priv *top_priv,
 			total_bw_new_vote, false, request_id);
 		if (rc) {
 			CAM_ERR(CAM_SFE,
-				"SFE:%d Failed in voting final bw:%llu clk_state:%s bw_state:%s",
+				"SFE:%d Failed in voting final bw:%llu clk_state:%s bw_state:%s is_drv_config_en:%s",
 				hw_intf->hw_idx, total_bw_new_vote,
 				cam_sfe_top_clk_bw_state_to_string(top_priv->clk_state),
-				cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state));
+				cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state),
+				CAM_BOOL_TO_YESNO(clk_bw_args->is_drv_config_en));
 			goto end;
 		}
 
-		rc = cam_sfe_top_set_hw_clk_rate(top_priv, final_clk_rate, false, request_id);
+		rc = cam_sfe_top_set_hw_clk_rate(top_priv, final_clk_rate, false, request_id,
+			clk_bw_args->is_drv_config_en);
 		if (rc) {
 			CAM_ERR(CAM_SFE,
-				"SFE:%d Failed in voting final clk:%llu clk_state:%s bw_state:%s",
+				"SFE:%d Failed in voting final clk:%lu clk_state:%s bw_state:%s is_drv_config_en:%s",
 				hw_intf->hw_idx, final_clk_rate,
 				cam_sfe_top_clk_bw_state_to_string(top_priv->clk_state),
-				cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state));
+				cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state),
+				CAM_BOOL_TO_YESNO(clk_bw_args->is_drv_config_en));
 			goto end;
 		}
 	} else if (top_priv->clk_state == CAM_CLK_BW_STATE_DECREASE) {
 		/* Set Clock first, followed by BW */
-		rc = cam_sfe_top_set_hw_clk_rate(top_priv, final_clk_rate, false, request_id);
+		rc = cam_sfe_top_set_hw_clk_rate(top_priv, final_clk_rate, false, request_id,
+			clk_bw_args->is_drv_config_en);
 		if (rc) {
 			CAM_ERR(CAM_SFE,
-				"SFE:%d Failed in voting final clk:%llu clk_state:%s bw_state:%s",
+				"SFE:%d Failed in voting final clk:%lu clk_state:%s bw_state:%s is_drv_config_en:%s",
 				hw_intf->hw_idx, final_clk_rate,
 				cam_sfe_top_clk_bw_state_to_string(top_priv->clk_state),
-				cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state));
+				cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state),
+				CAM_BOOL_TO_YESNO(clk_bw_args->is_drv_config_en));
 			goto end;
 		}
 
@@ -927,19 +1063,25 @@ static int cam_sfe_top_apply_clk_bw_update(struct cam_sfe_top_priv *top_priv,
 			total_bw_new_vote, false, request_id);
 		if (rc) {
 			CAM_ERR(CAM_SFE,
-				"SFE:%d Failed in voting final bw:%llu clk_state:%s bw_state:%s",
+				"SFE:%d Failed in voting final bw:%llu clk_state:%s bw_state:%s is_drv_config_en:%s",
 				hw_intf->hw_idx, total_bw_new_vote,
 				cam_sfe_top_clk_bw_state_to_string(top_priv->clk_state),
-				cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state));
+				cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state),
+				CAM_BOOL_TO_YESNO(clk_bw_args->is_drv_config_en));
 			goto end;
 		}
 	} else {
-		CAM_ERR(CAM_SFE, "Invalid state to apply CLK/BW clk_state:%s bw_state:%s",
+		CAM_ERR(CAM_SFE,
+			"Invalid state to apply CLK/BW clk_state:%s bw_state:%s is_drv_config_en:%s",
 			cam_sfe_top_clk_bw_state_to_string(top_priv->clk_state),
-			cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state));
+			cam_sfe_top_clk_bw_state_to_string(top_priv->bw_state),
+			CAM_BOOL_TO_YESNO(clk_bw_args->is_drv_config_en));
 		rc = -EINVAL;
 		goto end;
 	}
+
+	if (top_priv->clk_state != CAM_CLK_BW_STATE_UNCHANGED)
+		clk_bw_args->clock_updated = true;
 
 end:
 	top_priv->clk_state = CAM_CLK_BW_STATE_INIT;
@@ -950,7 +1092,7 @@ end:
 static int cam_sfe_top_apply_clock_start_stop(struct cam_sfe_top_priv *top_priv)
 {
 	int rc = 0;
-	uint64_t final_clk_rate = 0;
+	unsigned long final_clk_rate = 0;
 
 	rc = cam_sfe_top_calc_hw_clk_rate(top_priv, true, &final_clk_rate, 0);
 	if (rc) {
@@ -963,9 +1105,9 @@ static int cam_sfe_top_apply_clock_start_stop(struct cam_sfe_top_priv *top_priv)
 	if (top_priv->clk_state == CAM_CLK_BW_STATE_UNCHANGED)
 		goto end;
 
-	rc = cam_sfe_top_set_hw_clk_rate(top_priv, final_clk_rate, true, 0);
+	rc = cam_sfe_top_set_hw_clk_rate(top_priv, final_clk_rate, true, 0, false);
 	if (rc) {
-		CAM_ERR(CAM_SFE, "SFE:%d Failed in voting final clk:%llu clk_state:%s",
+		CAM_ERR(CAM_SFE, "SFE:%d Failed in voting final clk:%lu clk_state:%s",
 			top_priv->common_data.hw_intf->hw_idx, final_clk_rate,
 			cam_sfe_top_clk_bw_state_to_string(top_priv->clk_state));
 		goto end;
@@ -1005,6 +1147,275 @@ static int cam_sfe_top_apply_bw_start_stop(struct cam_sfe_top_priv *top_priv)
 
 end:
 	top_priv->bw_state = CAM_CLK_BW_STATE_INIT;
+	return rc;
+}
+
+static int cam_sfe_top_apply_fcg_update(
+	struct cam_sfe_top_priv      *top_priv,
+	struct cam_isp_hw_fcg_update *fcg_update,
+	struct cam_cdm_utils_ops     *cdm_util_ops)
+{
+	struct cam_isp_fcg_config_internal          *fcg_config;
+	struct cam_isp_ch_ctx_fcg_config_internal   *fcg_ch_ctx;
+	struct cam_isp_predict_fcg_config_internal  *fcg_pr;
+	struct cam_sfe_top_hw_info                  *hw_info;
+	struct cam_sfe_fcg_module_info              *fcg_module_info;
+	uint32_t                                     size, fcg_index_shift;
+	uint32_t                                    *reg_val_pair;
+	uint32_t                                     num_regval_pairs = 0;
+	int                                          rc = 0, i, j = 0;
+
+	if (!top_priv || !fcg_update || (fcg_update->prediction_idx == 0)) {
+		CAM_ERR(CAM_SFE, "Invalid args");
+		return -EINVAL;
+	}
+
+	hw_info = top_priv->hw_info;
+	fcg_config = (struct cam_isp_fcg_config_internal *)fcg_update->data;
+	if (!fcg_config || !hw_info) {
+		CAM_ERR(CAM_SFE, "Invalid config params");
+		return -EINVAL;
+	}
+
+	fcg_module_info = hw_info->modules_hw_info->fcg_module_info;
+	if (!fcg_module_info) {
+		CAM_ERR(CAM_SFE, "Invalid FCG common data");
+		return -EINVAL;
+	}
+
+	if (fcg_config->num_ch_ctx > CAM_ISP_MAX_FCG_CH_CTXS) {
+		CAM_ERR(CAM_SFE, "out of bound %d",
+				fcg_config->num_ch_ctx);
+		return -EINVAL;
+	}
+
+	reg_val_pair = CAM_MEM_ZALLOC_ARRAY(fcg_module_info->max_reg_val_pair_size,
+				sizeof(uint32_t),
+				GFP_KERNEL);
+	if (!reg_val_pair) {
+		CAM_ERR(CAM_SFE, "Failed allocating memory for reg val pair");
+		return -ENOMEM;
+	}
+
+	fcg_index_shift = fcg_module_info->fcg_index_shift;
+
+	for (i = 0, j = 0; i < fcg_config->num_ch_ctx; i++) {
+		if (j >= fcg_module_info->max_reg_val_pair_size) {
+			CAM_ERR(CAM_SFE, "reg_val_pair %d exceeds the array limit %u",
+				j, fcg_module_info->max_reg_val_pair_size);
+			rc = -ENOMEM;
+			goto free_mem;
+		}
+
+		fcg_ch_ctx = &fcg_config->ch_ctx_fcg_configs[i];
+		if (!fcg_ch_ctx) {
+			CAM_ERR(CAM_SFE, "Failed in FCG channel/context dereference");
+			rc = -EINVAL;
+			goto free_mem;
+		}
+
+		fcg_pr = &fcg_ch_ctx->predicted_fcg_configs[
+			fcg_update->prediction_idx - 1];
+		if (fcg_ch_ctx->fcg_enable_mask & CAM_ISP_FCG_ENABLE_PHASE) {
+			switch (fcg_ch_ctx->fcg_ch_ctx_id) {
+			case CAM_ISP_FCG_MASK_CH1:
+				CAM_ISP_ADD_REG_VAL_PAIR(reg_val_pair,
+					fcg_module_info->max_reg_val_pair_size, j,
+					fcg_module_info->fcg_ch1_phase_index_cfg_0,
+					(fcg_pr->phase_index_r |
+					fcg_pr->phase_index_g << fcg_index_shift));
+				CAM_ISP_ADD_REG_VAL_PAIR(reg_val_pair,
+					fcg_module_info->max_reg_val_pair_size, j,
+					fcg_module_info->fcg_ch1_phase_index_cfg_1,
+					fcg_pr->phase_index_b);
+				CAM_DBG(CAM_SFE,
+					"Program FCG registers for SFE channel 0x%x, phase_index_cfg_0: %u, phase_index_cfg_1: %u",
+					fcg_ch_ctx->fcg_ch_ctx_id,
+					(fcg_pr->phase_index_r |
+					(fcg_pr->phase_index_g << fcg_index_shift)),
+					fcg_pr->phase_index_b);
+				break;
+			case CAM_ISP_FCG_MASK_CH2:
+				CAM_ISP_ADD_REG_VAL_PAIR(reg_val_pair,
+					fcg_module_info->max_reg_val_pair_size, j,
+					fcg_module_info->fcg_ch2_phase_index_cfg_0,
+					(fcg_pr->phase_index_r |
+					fcg_pr->phase_index_g << fcg_index_shift));
+				CAM_ISP_ADD_REG_VAL_PAIR(reg_val_pair,
+					fcg_module_info->max_reg_val_pair_size, j,
+					fcg_module_info->fcg_ch2_phase_index_cfg_1,
+					fcg_pr->phase_index_b);
+				CAM_DBG(CAM_SFE,
+					"Program FCG registers for SFE channel 0x%x, phase_index_cfg_0: %u, phase_index_cfg_1: %u",
+					fcg_ch_ctx->fcg_ch_ctx_id,
+					(fcg_pr->phase_index_r |
+					(fcg_pr->phase_index_g << fcg_index_shift)),
+					fcg_pr->phase_index_b);
+				break;
+			default:
+				CAM_ERR(CAM_SFE, "Unsupported channel id: 0x%x",
+					fcg_ch_ctx->fcg_ch_ctx_id);
+				rc = -EINVAL;
+				goto free_mem;
+			}
+		}
+
+		if (fcg_ch_ctx->fcg_enable_mask & CAM_ISP_FCG_ENABLE_STATS) {
+			switch (fcg_ch_ctx->fcg_ch_ctx_id) {
+			case CAM_ISP_FCG_MASK_CH1:
+				CAM_ISP_ADD_REG_VAL_PAIR(reg_val_pair,
+					fcg_module_info->max_reg_val_pair_size, j,
+					fcg_module_info->fcg_ch1_stats_phase_index_cfg_0,
+					(fcg_pr->stats_index_r |
+					fcg_pr->stats_index_g << fcg_index_shift));
+				CAM_ISP_ADD_REG_VAL_PAIR(reg_val_pair,
+					fcg_module_info->max_reg_val_pair_size, j,
+					fcg_module_info->fcg_ch1_stats_phase_index_cfg_1,
+					fcg_pr->stats_index_b);
+				CAM_DBG(CAM_SFE,
+					"Program FCG registers for SFE channel 0x%x, stats_index_cfg_0: %u, stats_index_cfg_1: %u",
+					fcg_ch_ctx->fcg_ch_ctx_id,
+					(fcg_pr->phase_index_r |
+					(fcg_pr->phase_index_g << fcg_index_shift)),
+					fcg_pr->phase_index_b);
+				break;
+			case CAM_ISP_FCG_MASK_CH2:
+				CAM_ISP_ADD_REG_VAL_PAIR(reg_val_pair,
+					fcg_module_info->max_reg_val_pair_size, j,
+					fcg_module_info->fcg_ch2_stats_phase_index_cfg_0,
+					(fcg_pr->stats_index_r |
+					fcg_pr->stats_index_g << fcg_index_shift));
+				CAM_ISP_ADD_REG_VAL_PAIR(reg_val_pair,
+					fcg_module_info->max_reg_val_pair_size, j,
+					fcg_module_info->fcg_ch2_stats_phase_index_cfg_1,
+					fcg_pr->stats_index_b);
+				CAM_DBG(CAM_SFE,
+					"Program FCG registers for SFE channel 0x%x, stats_index_cfg_0: %u, stats_index_cfg_1: %u",
+					fcg_ch_ctx->fcg_ch_ctx_id,
+					(fcg_pr->phase_index_r |
+					(fcg_pr->phase_index_g << fcg_index_shift)),
+					fcg_pr->phase_index_b);
+				break;
+			default:
+				CAM_ERR(CAM_SFE, "Unsupported channel id: 0x%x",
+					fcg_ch_ctx->fcg_ch_ctx_id);
+				rc = -EINVAL;
+				goto free_mem;
+			}
+		}
+	}
+
+	num_regval_pairs = j / 2;
+
+	if (num_regval_pairs) {
+		size = cdm_util_ops->cdm_required_size_reg_random(
+			num_regval_pairs);
+
+		if ((size * 4) != fcg_update->cmd_size) {
+			CAM_ERR(CAM_SFE,
+				"Failed! Buf size:%d is wrong, expected size: %d",
+				fcg_update->cmd_size, size * 4);
+			rc = -ENOMEM;
+			goto free_mem;
+		}
+
+		cdm_util_ops->cdm_write_regrandom(
+			(uint32_t *)fcg_update->cmd_buf_addr,
+			num_regval_pairs, reg_val_pair);
+	} else {
+		CAM_WARN(CAM_SFE, "No reg val pairs");
+	}
+
+free_mem:
+	CAM_MEM_FREE(reg_val_pair);
+	return rc;
+}
+
+static int cam_sfe_top_get_fcg_buf_size(
+	struct cam_sfe_top_priv         *top_priv,
+	struct cam_isp_hw_fcg_get_size  *fcg_get_size,
+	struct cam_cdm_utils_ops        *cdm_util_ops)
+{
+	struct cam_sfe_top_hw_info                  *hw_info;
+	struct cam_sfe_modules_common_reg_offset    *modules_hw_info;
+	uint32_t                                     num_types;
+
+	if (!top_priv) {
+		CAM_ERR(CAM_SFE, "Invalid args");
+		return -EINVAL;
+	}
+
+	hw_info = top_priv->hw_info;
+	if (!hw_info) {
+		CAM_ERR(CAM_SFE, "Invalid config params");
+		return -EINVAL;
+	}
+
+	modules_hw_info = hw_info->modules_hw_info;
+	if (!modules_hw_info) {
+		CAM_ERR(CAM_SFE, "Invalid modules hw info");
+		return -EINVAL;
+	}
+
+	if (!modules_hw_info->fcg_supported) {
+		fcg_get_size->fcg_supported = false;
+		CAM_DBG(CAM_SFE, "FCG is not supported by hardware");
+		return 0;
+	}
+
+	fcg_get_size->fcg_supported = true;
+	num_types = fcg_get_size->num_types;
+	if (num_types == 0) {
+		CAM_ERR(CAM_SFE, "Number of types(STATS/PHASE) requested is empty");
+		return -EINVAL;
+	}
+
+	fcg_get_size->kmd_size =
+		cdm_util_ops->cdm_required_size_reg_random(
+			num_types * modules_hw_info->fcg_module_info->fcg_type_size);
+	return 0;
+}
+
+static int cam_sfe_top_fcg_config(
+	struct cam_sfe_top_priv         *top_priv,
+	void                            *cmd_args,
+	uint32_t                         arg_size)
+{
+	struct cam_isp_hw_fcg_cmd       *fcg_cmd;
+	struct cam_cdm_utils_ops        *cdm_util_ops;
+	int rc;
+
+	if (arg_size != sizeof(struct cam_isp_hw_fcg_cmd)) {
+		CAM_ERR(CAM_SFE, "Invalid cmd size, arg_size: %u, expected size: %u",
+			arg_size, sizeof(struct cam_isp_hw_fcg_cmd));
+		return -EINVAL;
+	}
+
+	fcg_cmd = (struct cam_isp_hw_fcg_cmd *) cmd_args;
+	if (!fcg_cmd || !fcg_cmd->res) {
+		CAM_ERR(CAM_SFE, "Invalid cmd args");
+		return -EINVAL;
+	}
+
+	cdm_util_ops =
+		(struct cam_cdm_utils_ops *)fcg_cmd->res->cdm_ops;
+	if (!cdm_util_ops) {
+		CAM_ERR(CAM_SFE, "Invalid CDM ops");
+		return -EINVAL;
+	}
+
+	if (fcg_cmd->get_size_flag) {
+		struct cam_isp_hw_fcg_get_size  *fcg_get_size;
+
+		fcg_get_size = &fcg_cmd->u.fcg_get_size;
+		rc = cam_sfe_top_get_fcg_buf_size(top_priv, fcg_get_size, cdm_util_ops);
+	} else {
+		struct cam_isp_hw_fcg_update    *fcg_update;
+
+		fcg_update = &fcg_cmd->u.fcg_update;
+		rc = cam_sfe_top_apply_fcg_update(top_priv, fcg_update, cdm_util_ops);
+	}
+
 	return rc;
 }
 
@@ -1054,10 +1465,31 @@ int cam_sfe_top_process_cmd(void *priv, uint32_t cmd_type,
 		rc = cam_sfe_set_top_debug(top_priv, cmd_args);
 		break;
 	case CAM_ISP_HW_NOTIFY_OVERFLOW:
-		rc = cam_sfe_top_handle_overflow(top_priv, cmd_type);
+		rc = cam_sfe_top_handle_overflow(top_priv, cmd_args);
 		break;
 	case CAM_ISP_HW_CMD_APPLY_CLK_BW_UPDATE:
 		rc = cam_sfe_top_apply_clk_bw_update(top_priv, cmd_args, arg_size);
+		break;
+	case CAM_ISP_HW_CMD_FCG_CONFIG:
+		rc = cam_sfe_top_fcg_config(top_priv, cmd_args, arg_size);
+		break;
+	case CAM_ISP_HW_CMD_QUERY_CAP: {
+		struct cam_isp_hw_cap *sfe_cap;
+		struct cam_sfe_fcg_module_info *fcg_module_info;
+
+		sfe_cap = (struct cam_isp_hw_cap *) cmd_args;
+		sfe_cap->num_perf_counters =
+			top_priv->common_data.common_reg->num_perf_counters;
+		if (top_priv->hw_info->modules_hw_info->fcg_supported) {
+			fcg_module_info =
+				top_priv->hw_info->modules_hw_info->fcg_module_info;
+			sfe_cap->fcg_supported = true;
+			sfe_cap->max_fcg_ch_ctx =
+				fcg_module_info->max_fcg_ch_ctx;
+			sfe_cap->max_fcg_predictions =
+				fcg_module_info->max_fcg_predictions;
+		}
+	}
 		break;
 	default:
 		CAM_ERR(CAM_SFE, "Invalid cmd type: %d", cmd_type);
@@ -1074,7 +1506,6 @@ int cam_sfe_top_reserve(void *device_priv,
 	struct cam_sfe_top_priv                 *top_priv;
 	struct cam_sfe_acquire_args             *args;
 	struct cam_sfe_hw_sfe_in_acquire_args   *acquire_args;
-	struct cam_sfe_path_data                *path_data;
 	int rc = -EINVAL, i;
 
 	if (!device_priv || !reserve_args) {
@@ -1089,8 +1520,9 @@ int cam_sfe_top_reserve(void *device_priv,
 
 	if (top_priv->reserve_cnt) {
 		if (top_priv->priv_per_stream != args->priv) {
-			CAM_ERR(CAM_SFE,
-				"Acquiring same SFE[%u] HW res: %u for different streams");
+			CAM_DBG(CAM_SFE,
+				"Acquiring same SFE[%u] HW res: %u for different streams",
+				top_priv->common_data.hw_intf->hw_idx, acquire_args->res_id);
 			rc = -EINVAL;
 			return rc;
 		}
@@ -1103,12 +1535,21 @@ int cam_sfe_top_reserve(void *device_priv,
 		if ((top_priv->in_rsrc[i].res_id == acquire_args->res_id) &&
 			(top_priv->in_rsrc[i].res_state ==
 			CAM_ISP_RESOURCE_STATE_AVAILABLE)) {
-			path_data = (struct cam_sfe_path_data *)
-				top_priv->in_rsrc[i].res_priv;
 			CAM_DBG(CAM_SFE,
 				"SFE [%u] for rsrc: %u acquired",
 				top_priv->in_rsrc[i].hw_intf->hw_idx,
 				acquire_args->res_id);
+
+			/* Acquire ownership */
+			if (top_priv->reserve_cnt == 0) {
+				rc = cam_vmrm_soc_acquire_resources(CAM_HW_ID_SFE0 +
+					top_priv->in_rsrc[i].hw_intf->hw_idx);
+				if (rc) {
+					CAM_ERR(CAM_SFE, "SFE[%u] acquire ownership failed",
+						top_priv->in_rsrc[i].hw_intf->hw_idx);
+					return rc;
+				}
+			}
 
 			top_priv->in_rsrc[i].cdm_ops = acquire_args->cdm_ops;
 			top_priv->in_rsrc[i].tasklet_info = args->tasklet;
@@ -1135,6 +1576,7 @@ int cam_sfe_top_release(void *device_priv,
 {
 	struct cam_sfe_top_priv            *top_priv;
 	struct cam_isp_resource_node       *in_res;
+	int rc = 0;
 
 	if (!device_priv || !release_args) {
 		CAM_ERR(CAM_SFE, "Invalid input arguments");
@@ -1163,9 +1605,14 @@ int cam_sfe_top_release(void *device_priv,
 	if (!top_priv->reserve_cnt) {
 		top_priv->priv_per_stream = NULL;
 		top_priv->event_cb = NULL;
+		rc = cam_vmrm_soc_release_resources(CAM_HW_ID_SFE0 + in_res->hw_intf->hw_idx);
+		if (rc) {
+			CAM_ERR(CAM_SFE, "SFE[%u] vmrm soc release resources failed",
+				in_res->hw_intf->hw_idx);
+		}
 	}
 
-	return 0;
+	return rc;
 }
 
 static int cam_sfe_top_get_evt_payload(
@@ -1207,16 +1654,15 @@ static int cam_sfe_top_put_evt_payload(
 		return -EINVAL;
 	}
 
+	CAM_COMMON_SANITIZE_LIST_ENTRY((*evt_payload), struct cam_sfe_top_irq_evt_payload);
 	spin_lock_irqsave(&top_priv->spin_lock, flags);
-	list_add_tail(&(*evt_payload)->list,
-		&top_priv->common_data.free_payload_list);
+	list_add_tail(&(*evt_payload)->list, &top_priv->common_data.free_payload_list);
 	*evt_payload = NULL;
 	spin_unlock_irqrestore(&top_priv->spin_lock, flags);
 
 	CAM_DBG(CAM_SFE, "Done");
 	return 0;
 }
-
 
 static int cam_sfe_top_handle_err_irq_top_half(
 	uint32_t evt_id,
@@ -1354,9 +1800,6 @@ static void cam_sfe_top_print_ipp_violation_info(
 	struct cam_hw_soc_info         *soc_info = common_data->soc_info;
 	uint32_t val = violation_status;
 
-	CAM_INFO(CAM_SFE, "SFE[%u] IPP Violation status 0x%x",
-	     soc_info->index, val);
-
 	if (top_priv->hw_info->ipp_module_desc)
 		CAM_ERR(CAM_SFE, "SFE[%u] IPP Violation Module id: [%u %s]",
 			soc_info->index,
@@ -1367,17 +1810,23 @@ static void cam_sfe_top_print_ipp_violation_info(
 
 static void cam_sfe_top_print_top_irq_error(
 	struct cam_sfe_top_priv *top_priv,
+	struct cam_sfe_top_irq_evt_payload *payload,
 	uint32_t irq_status,
 	uint32_t violation_status)
 {
 	uint32_t i = 0;
 
 	for (i = 0; i < top_priv->hw_info->num_top_errors; i++) {
-		if (top_priv->hw_info->top_err_desc[i].bitmask &
-			irq_status) {
-			CAM_ERR(CAM_SFE, "%s %s",
+		if (top_priv->hw_info->top_err_desc[i].bitmask & irq_status) {
+			CAM_ERR(CAM_SFE, "SFE[%u] %s occurred at [%llu: %09llu]",
+				top_priv->common_data.soc_info->index,
 				top_priv->hw_info->top_err_desc[i].err_name,
-				top_priv->hw_info->top_err_desc[i].desc);
+				payload->ts.mono_time.tv_sec,
+				payload->ts.mono_time.tv_nsec);
+			CAM_ERR(CAM_SFE, "%s", top_priv->hw_info->top_err_desc[i].desc);
+			if (top_priv->hw_info->top_err_desc[i].debug)
+				CAM_ERR(CAM_SFE, "Debug: %s",
+					top_priv->hw_info->top_err_desc[i].debug);
 		}
 	}
 
@@ -1405,14 +1854,12 @@ static int cam_sfe_top_handle_err_irq_bottom_half(
 	evt_info.res_type = CAM_ISP_RESOURCE_SFE_IN;
 	evt_info.reg_val = 0;
 
-	if (irq_status[0] &
-		top_priv->common_data.common_reg_data->error_irq_mask) {
+	if (irq_status[0] & top_priv->common_data.common_reg_data->error_irq_mask) {
 		struct cam_isp_hw_error_event_info err_evt_info;
 
 		viol_sts = payload->violation_status;
-		CAM_INFO(CAM_SFE, "Violation status 0x%x",
-			viol_sts);
-		cam_sfe_top_print_top_irq_error(top_priv,
+		CAM_INFO(CAM_SFE, "Violation status 0x%x", viol_sts);
+		cam_sfe_top_print_top_irq_error(top_priv, payload,
 			irq_status[0], viol_sts);
 		err_evt_info.err_type = CAM_SFE_IRQ_STATUS_VIOLATION;
 		evt_info.event_data = (void *)&err_evt_info;
@@ -1433,14 +1880,16 @@ static int cam_sfe_top_handle_irq_bottom_half(
 	void *handler_priv, void *evt_payload_priv)
 {
 	int i;
-	uint32_t val0, val1, frame_cnt, offset0, offset1;
+	uint32_t val0, val1, frame_cnt = 0, offset0, offset1;
 	uint32_t irq_status[CAM_SFE_IRQ_REGISTERS_MAX] = {0};
 	enum cam_sfe_hw_irq_status          ret = CAM_SFE_IRQ_STATUS_MAX;
 	struct cam_isp_resource_node       *res = handler_priv;
 	struct cam_sfe_path_data           *path_data = res->res_priv;
 	struct cam_sfe_top_priv            *top_priv = path_data->top_priv;
 	struct cam_sfe_top_irq_evt_payload *payload = evt_payload_priv;
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	struct cam_isp_hw_event_info        evt_info;
+#endif
 	for (i = 0; i < CAM_SFE_IRQ_REGISTERS_MAX; i++)
 		irq_status[i] = payload->irq_reg_val[i];
 
@@ -1470,13 +1919,35 @@ static int cam_sfe_top_handle_irq_bottom_half(
 				cam_sfe_top_sel_frame_counter(
 					res->res_id, &frame_cnt,
 					true, path_data);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+			if (top_priv->event_cb) {
+				evt_info.hw_type = CAM_ISP_HW_TYPE_SFE;
+				evt_info.hw_idx   = res->hw_intf->hw_idx;
+				evt_info.res_id   = res->res_id;
+				evt_info.res_type = res->res_type;
+				top_priv->event_cb(top_priv->priv_per_stream,
+					CAM_ISP_HW_EVENT_SOF, (void *)&evt_info);
 			}
+#endif
+			cam_sfe_top_dump_perf_counters("SOF", res->res_name, top_priv);
+		}
 
 		if (irq_status[0] &
 			path_data->path_reg_data->eof_irq_mask) {
 			CAM_DBG(CAM_SFE, "SFE:%d Received %s EOF",
 				res->hw_intf->hw_idx,
 				res->res_name);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+			if (top_priv->event_cb) {
+				evt_info.hw_type = CAM_ISP_HW_TYPE_SFE;
+				evt_info.hw_idx   = res->hw_intf->hw_idx;
+				evt_info.res_id   = res->res_id;
+				evt_info.res_type = res->res_type;
+				top_priv->event_cb(top_priv->priv_per_stream,
+					CAM_ISP_HW_EVENT_EOF, (void *)&evt_info);
+			}
+#endif
+			cam_sfe_top_dump_perf_counters("EOF", res->res_name, top_priv);
 		}
 		ret = CAM_SFE_IRQ_STATUS_SUCCESS;
 	}
@@ -1496,8 +1967,6 @@ int cam_sfe_top_start(
 	struct cam_isp_resource_node         *sfe_res;
 	struct cam_hw_info                   *hw_info = NULL;
 	struct cam_sfe_path_data             *path_data;
-	struct cam_hw_soc_info               *soc_info = NULL;
-	struct cam_sfe_soc_private           *soc_private = NULL;
 	uint32_t   error_mask[CAM_SFE_IRQ_REGISTERS_MAX];
 	uint32_t   sof_eof_mask[CAM_SFE_IRQ_REGISTERS_MAX];
 	uint32_t core_cfg = 0, i = 0;
@@ -1509,8 +1978,6 @@ int cam_sfe_top_start(
 
 	top_priv = (struct cam_sfe_top_priv *)priv;
 	sfe_res = (struct cam_isp_resource_node *) start_args;
-	soc_info = top_priv->common_data.soc_info;
-	soc_private = soc_info->soc_private;
 
 	hw_info = (struct cam_hw_info  *)sfe_res->hw_intf->hw_priv;
 	if (!hw_info) {
@@ -1557,27 +2024,44 @@ int cam_sfe_top_start(
 		}
 	}
 
-	/* Enable debug cfg registers */
-	cam_io_w(path_data->common_reg_data->top_debug_cfg_en,
-		path_data->mem_base +
-		path_data->common_reg->top_debug_cfg);
+	/* First resource stream on */
+	if (!top_priv->start_stop_cnt) {
 
-	/* Enables the context controller testbus*/
-	if (path_data->common_reg->top_cc_test_bus_supported) {
-		for (i = 0; i < top_priv->hw_info->num_of_testbus; i++) {
-			if ((top_priv->sfe_debug_cfg &
-				top_priv->hw_info->test_bus_info[i].debugfs_val) ||
-				top_priv->hw_info->test_bus_info[i].enable) {
-				top_priv->cc_testbus_sel_cfg =
-					top_priv->hw_info->test_bus_info[i].value;
-				break;
+		/* Enable debug cfg registers */
+		cam_io_w(path_data->common_reg_data->top_debug_cfg_en,
+			path_data->mem_base +
+			path_data->common_reg->top_debug_cfg);
+
+		/* Enables the context controller testbus*/
+		if (path_data->common_reg->top_cc_test_bus_supported) {
+			for (i = 0; i < top_priv->hw_info->num_of_testbus; i++) {
+				if ((top_priv->sfe_debug_cfg &
+					top_priv->hw_info->test_bus_info[i].debugfs_val) ||
+					top_priv->hw_info->test_bus_info[i].enable) {
+					top_priv->cc_testbus_sel_cfg =
+						top_priv->hw_info->test_bus_info[i].value;
+					break;
+				}
 			}
+
+			if (top_priv->cc_testbus_sel_cfg)
+				cam_io_w(top_priv->cc_testbus_sel_cfg,
+					path_data->mem_base +
+					path_data->common_reg->top_cc_test_bus_ctrl);
 		}
 
-		if (top_priv->cc_testbus_sel_cfg)
-			cam_io_w(top_priv->cc_testbus_sel_cfg,
+		for (i = 0; i < top_priv->common_data.common_reg->num_perf_counters; i++) {
+			if (!top_priv->perf_counters[i].perf_counter_val)
+				continue;
+
+			top_priv->perf_counters[i].dump_counter = true;
+			cam_io_w_mb(top_priv->perf_counters[i].perf_counter_val,
 				path_data->mem_base +
-				path_data->common_reg->top_cc_test_bus_ctrl);
+				path_data->common_reg->perf_count_reg[i].perf_count_cfg);
+			CAM_DBG(CAM_SFE, "SFE [%u] perf_count_%d: 0x%x",
+				hw_info->soc_info.index, (i + 1),
+				top_priv->perf_counters[i].perf_counter_val);
+		}
 	}
 
 	/* Enable sensor diag info */
@@ -1748,7 +2232,34 @@ int cam_sfe_top_stop(
 				top_priv->error_irq_handle);
 			top_priv->error_irq_handle = 0;
 		}
+
+		/* Reset perf counters at stream off */
+		for (i = 0; i <  top_priv->common_data.common_reg->num_perf_counters; i++) {
+			if (top_priv->perf_counters[i].dump_counter)
+				cam_io_w_mb(0x0, path_data->mem_base +
+					path_data->common_reg->perf_count_reg[i].perf_count_cfg);
+			top_priv->perf_counters[i].dump_counter = false;
+		}
 	}
+
+	return 0;
+}
+
+int cam_sfe_top_init_hw(void *priv, void *init_hw_args, uint32_t arg_size)
+{
+	struct cam_sfe_top_priv *top_priv = priv;
+	void __iomem *mem_base;
+
+	if (!priv) {
+		CAM_ERR(CAM_SFE, "Invalid args");
+		return -EINVAL;
+	}
+
+	mem_base = top_priv->common_data.soc_info->reg_map[SFE_CORE_BASE_IDX].mem_base;
+
+	CAM_DBG(CAM_SFE, "SFE:%d hw-version:0x%x",
+		top_priv->common_data.hw_intf->hw_idx,
+		cam_io_r_mb(mem_base + top_priv->hw_info->common_reg->hw_version));
 
 	return 0;
 }
@@ -1768,14 +2279,14 @@ int cam_sfe_top_init(
 	struct cam_sfe_top_hw_info        *sfe_top_hw_info =
 		(struct cam_sfe_top_hw_info *)top_hw_info;
 
-	sfe_top = kzalloc(sizeof(struct cam_sfe_top), GFP_KERNEL);
+	sfe_top = CAM_MEM_ZALLOC(sizeof(struct cam_sfe_top), GFP_KERNEL);
 	if (!sfe_top) {
 		CAM_DBG(CAM_SFE, "Error, Failed to alloc for sfe_top");
 		rc = -ENOMEM;
 		goto end;
 	}
 
-	top_priv = kzalloc(sizeof(struct cam_sfe_top_priv),
+	top_priv = CAM_MEM_ZALLOC(sizeof(struct cam_sfe_top_priv),
 		GFP_KERNEL);
 	if (!top_priv) {
 		rc = -ENOMEM;
@@ -1793,14 +2304,7 @@ int cam_sfe_top_init(
 		goto free_top_priv;
 	}
 
-	top_priv->applied_clk_rate = 0;
-	top_priv->reserve_cnt = 0;
-	top_priv->start_stop_cnt = 0;
-	top_priv->priv_per_stream = NULL;
-	top_priv->event_cb = NULL;
 	top_priv->num_in_ports = sfe_top_hw_info->num_inputs;
-	memset(&top_priv->core_cfg, 0x0,
-		sizeof(struct cam_sfe_core_cfg));
 
 	CAM_DBG(CAM_SFE,
 		"Initializing SFE [%u] top with hw_version: 0x%x",
@@ -1819,7 +2323,7 @@ int cam_sfe_top_init(
 			top_priv->in_rsrc[i].res_id =
 				CAM_ISP_HW_SFE_IN_PIX;
 
-			path_data = kzalloc(sizeof(struct cam_sfe_path_data),
+			path_data = CAM_MEM_ZALLOC(sizeof(struct cam_sfe_path_data),
 				GFP_KERNEL);
 			if (!path_data) {
 				CAM_DBG(CAM_SFE,
@@ -1847,7 +2351,7 @@ int cam_sfe_top_init(
 			top_priv->in_rsrc[i].res_id =
 				CAM_ISP_HW_SFE_IN_RDI0 + j;
 
-			path_data = kzalloc(sizeof(struct cam_sfe_path_data),
+			path_data = CAM_MEM_ZALLOC(sizeof(struct cam_sfe_path_data),
 					GFP_KERNEL);
 			if (!path_data) {
 				CAM_DBG(CAM_SFE,
@@ -1897,6 +2401,7 @@ int cam_sfe_top_init(
 	sfe_top->hw_ops.stop = cam_sfe_top_stop;
 	sfe_top->hw_ops.reserve = cam_sfe_top_reserve;
 	sfe_top->hw_ops.release = cam_sfe_top_release;
+	sfe_top->hw_ops.init = cam_sfe_top_init_hw;
 
 	spin_lock_init(&top_priv->spin_lock);
 	INIT_LIST_HEAD(&top_priv->common_data.free_payload_list);
@@ -1921,16 +2426,16 @@ deinit_resources:
 		if (!top_priv->in_rsrc[i].res_priv)
 			continue;
 
-		kfree(top_priv->in_rsrc[i].res_priv);
+		CAM_MEM_FREE(top_priv->in_rsrc[i].res_priv);
 		top_priv->in_rsrc[i].res_priv = NULL;
 		top_priv->in_rsrc[i].res_state =
 			CAM_ISP_RESOURCE_STATE_UNAVAILABLE;
 	}
 free_top_priv:
-	kfree(sfe_top->top_priv);
+	CAM_MEM_FREE(sfe_top->top_priv);
 	sfe_top->top_priv = NULL;
 free_sfe_top:
-	kfree(sfe_top);
+	CAM_MEM_FREE(sfe_top);
 end:
 	*sfe_top_ptr = NULL;
 	return rc;
@@ -1990,14 +2495,14 @@ int cam_sfe_top_deinit(
 			continue;
 		}
 
-		kfree(top_priv->in_rsrc[i].res_priv);
+		CAM_MEM_FREE(top_priv->in_rsrc[i].res_priv);
 		top_priv->in_rsrc[i].res_priv = NULL;
 	}
 
-	kfree(sfe_top->top_priv);
+	CAM_MEM_FREE(sfe_top->top_priv);
 
 free_sfe_top:
-	kfree(sfe_top);
+	CAM_MEM_FREE(sfe_top);
 	*sfe_top_ptr = NULL;
 
 	return rc;

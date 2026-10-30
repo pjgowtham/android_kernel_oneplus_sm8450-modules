@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -14,8 +14,12 @@
 #include "cam_sfe_soc.h"
 #include "cam_sfe680.h"
 #include "cam_sfe780.h"
+#include "cam_sfe880.h"
 #include "cam_debug_util.h"
 #include "camera_main.h"
+#include "cam_vmrm_interface.h"
+#include "cam_mem_mgr_api.h"
+#include "cam_req_mgr_dev.h"
 
 static struct cam_isp_hw_intf_data cam_sfe_hw_list[CAM_SFE_HW_NUM_MAX];
 static uint32_t g_num_sfe_hws;
@@ -33,7 +37,10 @@ static int cam_sfe_component_bind(struct device *dev,
 	struct cam_sfe_soc_private        *soc_priv;
 	uint32_t                           sfe_dev_idx;
 	int                                i, rc = 0;
+	struct timespec64                  ts_start, ts_end;
+	long                               microsec = 0;
 
+	CAM_GET_TIMESTAMP(ts_start);
 	pdev = to_platform_device(dev);
 
 	rc = of_property_read_u32(pdev->dev.of_node, "cell-index", &sfe_dev_idx);
@@ -47,13 +54,13 @@ static int cam_sfe_component_bind(struct device *dev,
 		goto end;
 	}
 
-	sfe_hw_intf = kzalloc(sizeof(struct cam_hw_intf), GFP_KERNEL);
+	sfe_hw_intf = CAM_MEM_ZALLOC(sizeof(struct cam_hw_intf), GFP_KERNEL);
 	if (!sfe_hw_intf) {
 		rc = -ENOMEM;
 		goto end;
 	}
 
-	sfe_info = kzalloc(sizeof(struct cam_hw_info), GFP_KERNEL);
+	sfe_info = CAM_MEM_ZALLOC(sizeof(struct cam_hw_info), GFP_KERNEL);
 	if (!sfe_info) {
 		rc = -ENOMEM;
 		goto free_sfe_hw_intf;
@@ -75,6 +82,7 @@ static int cam_sfe_component_bind(struct device *dev,
 	sfe_hw_intf->hw_ops.read = cam_sfe_read;
 	sfe_hw_intf->hw_ops.write = cam_sfe_write;
 	sfe_hw_intf->hw_ops.process_cmd = cam_sfe_process_cmd;
+	sfe_hw_intf->hw_ops.test_irq_line = cam_sfe_test_irq_line;
 	sfe_hw_intf->hw_type = CAM_ISP_HW_TYPE_SFE;
 
 	CAM_DBG(CAM_SFE, "SFE component bind type %d index %d",
@@ -82,7 +90,7 @@ static int cam_sfe_component_bind(struct device *dev,
 
 	platform_set_drvdata(pdev, sfe_hw_intf);
 
-	sfe_info->core_info = kzalloc(sizeof(struct cam_sfe_hw_core_info),
+	sfe_info->core_info = CAM_MEM_ZALLOC(sizeof(struct cam_sfe_hw_core_info),
 		GFP_KERNEL);
 	if (!sfe_info->core_info) {
 		CAM_DBG(CAM_SFE, "Failed to alloc for core");
@@ -129,8 +137,18 @@ static int cam_sfe_component_bind(struct device *dev,
 		cam_sfe_hw_list[sfe_hw_intf->hw_idx].hw_pid[i] =
 			soc_priv->pid[i];
 
+	sfe_info->soc_info.hw_id = CAM_HW_ID_SFE0 + sfe_info->soc_info.index;
+	rc = cam_vmvm_populate_hw_instance_info(&sfe_info->soc_info, NULL, NULL);
+	if (rc) {
+		CAM_ERR(CAM_SFE, " hw instance populate failed: %d", rc);
+		goto deinit_soc;
+	}
+
 	CAM_DBG(CAM_SFE, "SFE%d bound successfully",
 		sfe_hw_intf->hw_idx);
+	CAM_GET_TIMESTAMP(ts_end);
+	CAM_GET_TIMESTAMP_DIFF_IN_MICRO(ts_start, ts_end, microsec);
+	cam_record_bind_latency(pdev->name, microsec);
 
 	return rc;
 
@@ -138,11 +156,11 @@ deinit_soc:
 	if (cam_sfe_deinit_soc_resources(&sfe_info->soc_info))
 		CAM_ERR(CAM_SFE, "Failed to deinit soc");
 free_core_info:
-	kfree(sfe_info->core_info);
+	CAM_MEM_FREE(sfe_info->core_info);
 free_sfe_hw:
-	kfree(sfe_info);
+	CAM_MEM_FREE(sfe_info);
 free_sfe_hw_intf:
-	kfree(sfe_hw_intf);
+	CAM_MEM_FREE(sfe_hw_intf);
 end:
 	return rc;
 }
@@ -173,14 +191,12 @@ static void cam_sfe_component_unbind(struct device *dev,
 	sfe_info = sfe_hw_intf->hw_priv;
 	if (!sfe_info) {
 		CAM_ERR(CAM_SFE, "HW data is NULL");
-		rc = -ENODEV;
 		goto free_sfe_hw_intf;
 	}
 
 	core_info = (struct cam_sfe_hw_core_info *)sfe_info->core_info;
 	if (!core_info) {
 		CAM_ERR(CAM_SFE, "core data NULL");
-		rc = -EINVAL;
 		goto deinit_soc;
 	}
 
@@ -188,7 +204,7 @@ static void cam_sfe_component_unbind(struct device *dev,
 	if (rc < 0)
 		CAM_ERR(CAM_SFE, "Failed to deinit core rc=%d", rc);
 
-	kfree(sfe_info->core_info);
+	CAM_MEM_FREE(sfe_info->core_info);
 
 deinit_soc:
 	rc = cam_sfe_deinit_soc_resources(&sfe_info->soc_info);
@@ -196,12 +212,12 @@ deinit_soc:
 		CAM_ERR(CAM_SFE, "Failed to deinit soc rc=%d", rc);
 
 	mutex_destroy(&sfe_info->hw_mutex);
-	kfree(sfe_info);
+	CAM_MEM_FREE(sfe_info);
 
 	CAM_DBG(CAM_SFE, "SFE%d remove successful", sfe_hw_intf->hw_idx);
 
 free_sfe_hw_intf:
-	kfree(sfe_hw_intf);
+	CAM_MEM_FREE(sfe_hw_intf);
 }
 
 const static struct component_ops cam_sfe_component_ops = {
@@ -260,6 +276,10 @@ static const struct of_device_id cam_sfe_dt_match[] = {
 	{
 		.compatible = "qcom,sfe780",
 		.data = &cam_sfe780_hw_info,
+	},
+	{
+		.compatible = "qcom,sfe880",
+		.data = &cam_sfe880_hw_info,
 	},
 	{}
 };

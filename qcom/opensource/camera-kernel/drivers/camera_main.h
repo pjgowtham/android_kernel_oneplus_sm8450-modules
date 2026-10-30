@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef CAMERA_MAIN_H
@@ -10,6 +11,9 @@
 #include <linux/i2c.h>
 #include <linux/component.h>
 
+#ifdef CONFIG_SPECTRA_VMRM
+extern struct platform_driver cam_vmrm_intf_driver;
+#endif
 extern struct platform_driver cam_sync_driver;
 extern struct platform_driver cam_smmu_driver;
 extern struct platform_driver cam_cpas_driver;
@@ -47,10 +51,11 @@ extern struct platform_driver cam_flash_platform_driver;
 #endif
 #endif
 #ifdef CONFIG_SPECTRA_ICP
-extern struct platform_driver cam_a5_driver;
-extern struct platform_driver cam_lx7_driver;
+extern struct platform_driver cam_icp_v1_driver;
+extern struct platform_driver cam_icp_v2_driver;
 extern struct platform_driver cam_ipe_driver;
 extern struct platform_driver cam_bps_driver;
+extern struct platform_driver cam_ofe_driver;
 extern struct platform_driver cam_icp_driver;
 #endif
 #ifdef CONFIG_SPECTRA_OPE
@@ -86,6 +91,9 @@ extern struct platform_driver custom_driver;
  */
 static struct platform_driver *const cam_component_platform_drivers[] = {
 /* BASE */
+#ifdef CONFIG_SPECTRA_VMRM
+	&cam_vmrm_intf_driver,
+#endif
 	&cam_sync_driver,
 	&cam_smmu_driver,
 	&cam_cpas_driver,
@@ -118,10 +126,11 @@ static struct platform_driver *const cam_component_platform_drivers[] = {
 #endif
 #endif
 #ifdef CONFIG_SPECTRA_ICP
-	&cam_a5_driver,
-	&cam_lx7_driver,
+	&cam_icp_v1_driver,
+	&cam_icp_v2_driver,
 	&cam_ipe_driver,
 	&cam_bps_driver,
+	&cam_ofe_driver,
 	&cam_icp_driver,
 #endif
 #ifdef CONFIG_SPECTRA_OPE

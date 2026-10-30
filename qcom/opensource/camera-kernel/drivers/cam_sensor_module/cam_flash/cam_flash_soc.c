@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
- *
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/of.h>
 #include <linux/of_gpio.h>
 #include "cam_flash_soc.h"
 #include "cam_res_mgr_api.h"
-#include <dt-bindings/msm-camera.h>
+#include "cam_mem_mgr_api.h"
 
 void cam_flash_put_source_node_data(struct cam_flash_ctrl *fctrl)
 {
@@ -77,13 +76,6 @@ static int32_t cam_get_source_node_info(
 
 	soc_private->is_wled_flash =
 		of_property_read_bool(of_node, "wled-flash-support");
-
-	rc = of_property_read_u32(of_node,
-			"flash-type", &soc_private->flash_type);
-	if (rc) {
-		CAM_ERR(CAM_FLASH, "flash-type read failed rc=%d", rc);
-		soc_private->flash_type = CAM_FLASH_TYPE_PMIC;
-	}
 
 	switch_src_node = of_parse_phandle(of_node, "switch-source", 0);
 	if (!switch_src_node) {
@@ -171,12 +163,10 @@ static int32_t cam_get_source_node_info(
 			}
 
 			/* Read operational-current */
-			rc = of_property_read_u32(flash_src_node,
+			if (of_property_read_u32(flash_src_node,
 				"qcom,current-ma",
-				&soc_private->flash_op_current[i]);
-			if (rc) {
+				&soc_private->flash_op_current[i])) {
 				CAM_DBG(CAM_FLASH, "op-current: read failed");
-				rc = 0;
 			}
 
 			/* Read max-duration */
@@ -293,7 +283,7 @@ int cam_flash_get_dt_data(struct cam_flash_ctrl *fctrl,
 	}
 
 	soc_info->soc_private =
-		kzalloc(sizeof(struct cam_flash_private_soc), GFP_KERNEL);
+		CAM_MEM_ZALLOC(sizeof(struct cam_flash_private_soc), GFP_KERNEL);
 	if (!soc_info->soc_private) {
 		rc = -ENOMEM;
 		goto release_soc_res;
@@ -325,7 +315,7 @@ int cam_flash_get_dt_data(struct cam_flash_ctrl *fctrl,
 	return rc;
 
 free_soc_private:
-	kfree(soc_info->soc_private);
+	CAM_MEM_FREE(soc_info->soc_private);
 	soc_info->soc_private = NULL;
 release_soc_res:
 	cam_soc_util_release_platform_resource(soc_info);

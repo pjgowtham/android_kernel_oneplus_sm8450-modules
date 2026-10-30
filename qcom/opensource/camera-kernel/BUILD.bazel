@@ -1,15 +1,10 @@
-load("//build/kernel/kleaf:kernel.bzl", "ddk_headers")
-
 package(
     default_visibility = [
         "//visibility:public",
     ],
 )
 
-filegroup(
-    name = "camera_dt_bindings",
-    srcs = glob(["dt-bindings/**"]),
-)
+load("//build/kernel/kleaf:kernel.bzl", "ddk_headers")
 
 ddk_headers(
     name = "camera_uapi_headers",
@@ -51,14 +46,16 @@ driver_includes = [
     "drivers/cam_fd/fd_hw_mgr/fd_hw",
     "drivers/cam_icp",
     "drivers/cam_icp/fw_inc",
-    "drivers/cam_icp/icp_hw/a5_hw",
     "drivers/cam_icp/icp_hw/bps_hw",
     "drivers/cam_icp/icp_hw/icp_hw_mgr",
     "drivers/cam_icp/icp_hw/icp_hw_mgr/include",
+    "drivers/cam_icp/icp_hw/icp_proc",
+    "drivers/cam_icp/icp_hw/icp_proc/icp_common",
+    "drivers/cam_icp/icp_hw/icp_proc/icp_v1_hw",
+    "drivers/cam_icp/icp_hw/icp_proc/icp_v2_hw",
     "drivers/cam_icp/icp_hw/include",
     "drivers/cam_icp/icp_hw/ipe_hw",
-    "drivers/cam_icp/icp_hw/lx7_hw",
-    "drivers/cam_icp/utils",
+    "drivers/cam_icp/icp_hw/ofe_hw",
     "drivers/cam_isp",
     "drivers/cam_isp/isp_hw_mgr",
     "drivers/cam_isp/isp_hw_mgr/hw_utils/include",
@@ -111,9 +108,15 @@ driver_includes = [
     "drivers/cam_sensor_module/cam_tpg/tpg_hw/tpg_hw_v_1_0",
     "drivers/cam_sensor_module/cam_tpg/tpg_hw/tpg_hw_v_1_2",
     "drivers/cam_sensor_module/cam_tpg/tpg_hw/tpg_hw_v_1_3",
+    "drivers/cam_sensor_module/cam_tpg/tpg_hw/tpg_hw_v_1_4",
     "drivers/cam_smmu",
     "drivers/cam_sync",
     "drivers/cam_utils",
+    "drivers/cam_vmrm",
+    "drivers/cam_vmrm/qrtr",
+    "drivers/oplus/cam_sensor_module/cam_module_utils",
+    "drivers/oplus/cam_sensor_module/cam_link",
+
 ]
 
 ddk_headers(
@@ -132,6 +135,47 @@ ddk_headers(
     ],
 )
 
+genrule(
+    name = "camera_banner_header",
+    srcs = [],
+    outs = ["cam_generated.h"],
+    cmd = """
+      {
+        printf '#define CAMERA_COMPILE_TIME "%s"\n' "$$(date)"
+        printf '#define CAMERA_COMPILE_BY "%s"\n' "$$(whoami)"
+        printf '#define CAMERA_COMPILE_HOST "%s"\n' "$$(uname -n)"
+      } > "$@"
+    """
+)
+
+ddk_headers(
+    name = "camera_banner",
+    hdrs = [":camera_banner_header"],
+)
+
 load(":camera_modules.bzl", "define_camera_module")
 
 define_camera_module()
+
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+string_flag(
+    name = "project_name",
+    build_setting_default = "none",
+)
+config_setting(
+    name = "no_project",
+    flag_values = {":project_name": "none"},
+)
+config_setting(
+    name = "pineapple",
+    flag_values = {":project_name": "pineapple"},
+)
+config_setting(
+    name = "sun",
+    flag_values = {":project_name": "sun"},
+)
+config_setting(
+    name = "canoe",
+    flag_values = {":project_name": "canoe"},
+)
+

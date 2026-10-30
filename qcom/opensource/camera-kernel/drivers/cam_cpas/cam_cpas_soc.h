@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_CPAS_SOC_H_
@@ -12,20 +12,8 @@
 #include "cam_cpas_hw.h"
 
 #define CAM_REGULATOR_LEVEL_MAX 16
-#define CAM_CPAS_MAX_TREE_NODES 61
+#define CAM_CPAS_MAX_TREE_NODES 63
 #define CAM_CPAS_MAX_FUSE_FEATURE 10
-
-/**
- * struct cam_cpas_vdd_ahb_mapping : Voltage to ahb level mapping
- *
- * @vdd_corner : Voltage corner value
- * @ahb_level : AHB vote level corresponds to this vdd_corner
- *
- */
-struct cam_cpas_vdd_ahb_mapping {
-	unsigned int vdd_corner;
-	enum cam_vote_level ahb_level;
-};
 
 /**
  * enum cam_cpas_num_subparts_types - Enum for types of number of camera subparts
@@ -41,17 +29,16 @@ enum cam_cpas_num_subparts_types {
  *
  * @cell_idx: Index to identify node from device tree and its parent
  * @level_idx: Index to identify at what level the node is present
- * @axi_port_idx: Index to identify which axi port to vote the consolidated bw
+ * @axi_port_idx_arr: Index to identify which axi port to vote the consolidated bw.
+ *                    It can point to multiple indexes in case of camera DRV
+ * @drv_voting_idx: Specifies the index to which the child node would finally vote.
  * @camnoc_axi_port_idx: Index to find which axi port to vote consolidated bw
  * @path_data_type: Traffic type info from device tree (ife-vid, ife-disp etc)
  * @path_trans_type: Transaction type info from device tree (rd, wr)
  * @merge_type: Traffic merge type (calculation info) from device tree
  * @bus_width_factor: Factor for accounting bus width in CAMNOC bw calculation
- * @camnoc_bw: CAMNOC bw value at current node
- * @mnoc_ab_bw: MNOC AB bw value at current node
- * @mnoc_ib_bw: MNOC IB bw value at current node
- * @ddr_ab_bw: DDR AB bw value at current node
- * @ddr_ib_bw: DDR IB bw value at current node
+ * @bw_info: AXI BW info for all drv ports
+ * @is_rt_node: Indicates if a tree node is representing a RT bus node/port
  * @camnoc_max_needed: If node is needed for CAMNOC BW calculation then true
  * @constituent_paths: Constituent paths presence info from device tree
  *     Ex: For CAM_CPAS_PATH_DATA_IFE_UBWC_STATS, index corresponding to
@@ -62,34 +49,39 @@ enum cam_cpas_num_subparts_types {
  *     (starting from end node of cpas client)
  * @pri_lut_low_offset: Register offset value for priority lut low.
  *                           Valid only for level1 nodes (representing NIUs)
+ * @pri_lut_high_offset: Register offset value for priority lut high.
+ *                           Valid only for level1 nodes (representing NIUs)
  * @niu_size: Size of NIU that this node represents. Size in KB
- * @curr_priority: New calculated priority
- * @applied_priority: Currently applied priority
+ * @curr_priority_low:     New calculated priority lut low values
+ * @curr_priority_high:    New calculated priority lut high values
+ * @applied_priority_low:  Currently applied priority lut low values
+ * @applied_priority_high: Currently applied priority lut high values
  *
  */
 struct cam_cpas_tree_node {
 	uint32_t cell_idx;
 	int level_idx;
-	int axi_port_idx;
+	int *axi_port_idx_arr;
+	int drv_voting_idx;
 	int camnoc_axi_port_idx;
 	const char *node_name;
 	uint32_t path_data_type;
 	uint32_t path_trans_type;
 	uint32_t merge_type;
 	uint32_t bus_width_factor;
-	uint64_t camnoc_bw;
-	uint64_t mnoc_ab_bw;
-	uint64_t mnoc_ib_bw;
-	uint64_t ddr_ab_bw;
-	uint64_t ddr_ib_bw;
+	struct cam_cpas_axi_bw_info *bw_info;
+	bool is_rt_node;
 	bool camnoc_max_needed;
 	bool constituent_paths[CAM_CPAS_PATH_DATA_MAX];
 	struct device_node *tree_dev_node;
 	struct cam_cpas_tree_node *parent_node;
 	uint32_t pri_lut_low_offset;
+	uint32_t pri_lut_high_offset;
 	uint32_t niu_size;
-	uint32_t curr_priority;
-	uint32_t applied_priority;
+	uint32_t curr_priority_low;
+	uint32_t curr_priority_high;
+	uint32_t applied_priority_low;
+	uint32_t applied_priority_high;
 };
 
 /**
@@ -110,41 +102,138 @@ struct cam_cpas_feature_info {
 };
 
 /**
+ * struct cam_sys_cache_local_info : camera cache info saving locally
+ *
+ * @type: Cache type, For example cache types are
+ *        CAM_LLCC_SMALL_1/CAM_LLCC_SMALL_2/CAM_LLCC_LARGE_1/ ....
+ *        CAM_LLCC_IPE_SRT_IP/CAM_LLCC_IPE_RT_RF
+ * @staling_distance:       staling_distance
+ * @mode:       llcc staling mode params, possible allowed values
+ *              CAM_LLCC_STALING_MODE_CAPACITY/CAM_LLCC_STALING_MODE_NOTIFY
+ * @op_type:    cache operation type, possible allowed values are
+ *                  CAM_LLCC_NOTIFY_STALING_EVICT/CAM_LLCC_NOTIFY_STALING_FORGET
+ */
+struct cam_sys_cache_local_info {
+	uint32_t        type;
+	uint32_t        staling_distance;
+	uint32_t        mode;
+	uint32_t        op_type;
+};
+
+/**
  * struct cam_sys_cache_info : Last level camera cache info
  *
  * @ref_cnt:   Ref cnt activate/deactivate cache
- * @type:      cache type small/large etc.
+ * @type: Cache type, For example cache types are
+ *        CAM_LLCC_SMALL_1/CAM_LLCC_SMALL_2/CAM_LLCC_LARGE_1/ ....
+ *        CAM_LLCC_IPE_SRT_IP/CAM_LLCC_IPE_RT_RF
  * @uid:       Client user ID
  * @size:      Cache size
  * @scid:      Slice ID
  * @slic_desc: Slice descriptor
+ * @staling_distance:       staling_distance
+ * @mode:       camera llcc's staling mode params, possible allowed values
+ *              CAM_LLCC_STALING_MODE_CAPACITY/CAM_LLCC_STALING_MODE_NOTIFY
+ * @op_type:    cache operation type, possible allowed values are
+ *              CAM_LLCC_NOTIFY_STALING_EVICT/CAM_LLCC_NOTIFY_STALING_FORGET
+ * @concur      concurrent usage is supported or not for a scid
  */
 struct cam_sys_cache_info {
 	uint32_t                         ref_cnt;
-	enum cam_sys_cache_config_types  type;
+	uint32_t                         type;
 	uint32_t                         uid;
 	size_t                           size;
 	int32_t                          scid;
 	const char                      *name;
 	struct llcc_slice_desc          *slic_desc;
+	uint32_t                         staling_distance;
+	int32_t                          mode;
+	int32_t                          op_type;
+	uint32_t                         concur;
 };
 
 
 /**
  * struct cam_cpas_smart_qos_info : Smart QOS info
  *
- * @rt_wr_priority_min:   Minimum priority value for rt write nius
- * @rt_wr_priority_max:   Maximum priority value for rt write nius
- * @num_rt_wr_nius:       Number of RT Wr NIUs
- * @rt_wr_niu_node:       List of level1 nodes representing RT Wr NIUs
+ * @rt_wr_priority_min:      Minimum priority value for rt write nius
+ * @rt_wr_priority_max:      Maximum priority value for rt write nius
+ * @rt_wr_priority_clamp:    Clamp priority value for rt write nius
+ * @rt_wr_slope_factor:      Slope factor value for rt write nius
+ * @leaststressed_clamp_th:  Leaststressed clamp threshold value for rt write nius
+ * @moststressed_clamp_th:   Moststressed clamp threshold value for rt write nius
+ * @highstress_indicator_th: Highstress indicator threshold value for rt write nius
+ * @lowstress_indicator_th:  Lowstress indicator threshold value for rt write nius
+ * @bw_ratio_scale_factor:   BW ratio scale factor value for rt write nius
+ * @num_rt_wr_nius:          Number of rt write nius
+ * @rt_wr_niu_node:          List of level1 nodes representing rt write nius
  */
 struct cam_cpas_smart_qos_info {
 	uint8_t rt_wr_priority_min;
 	uint8_t rt_wr_priority_max;
+	uint8_t rt_wr_priority_clamp;
+	uint8_t rt_wr_slope_factor;
+	uint8_t leaststressed_clamp_th;
+	uint8_t moststressed_clamp_th;
+	uint8_t highstress_indicator_th;
+	uint8_t lowstress_indicator_th;
+	uint8_t bw_ratio_scale_factor;
 	uint8_t num_rt_wr_nius;
 	struct cam_cpas_tree_node *rt_wr_niu_node[CAM_CPAS_MAX_RT_WR_NIU_NODES];
 };
 
+/**
+ * struct cam_cpas_domain_id_mapping : Domain id mapping
+ *
+ * @domain_type: Domain type, currently defined as two,
+ *               secure/non-secure. This will be expanded
+ *               later to more types, and correspnding ID
+ * @mapping_id: ID of domain type
+ */
+struct cam_cpas_domain_id_mapping {
+	uint32_t domain_type;
+	uint32_t mapping_id;
+};
+
+/**
+ * struct cam_cpas_domain_id_info : Stores all information related
+ *                                  to domain-id support
+ * @domain_id_entries: Stores mapping between domain types and their IDs
+ * @num_domain_ids: Num of domain id types found from dtsi
+ * @domain_id_supported: Whether domain id is supported
+ */
+struct cam_cpas_domain_id_info {
+	struct cam_cpas_domain_id_mapping *domain_id_entries;
+	uint32_t num_domain_ids;
+	bool domain_id_supported;
+};
+
+/**
+ * struct cam_cpas_domain_id_support_clks : Stores all information
+ *                                          related to clocks
+ *                                          needed to turn on SWIs
+ *                                          for domain id programming
+ * @clk_names:   Clock names as declared in DT
+ * @clk_idx:     Corresponding clk index as declared in DT
+ * @number_clks: Number of clocks declared to turn all CSIDs
+ */
+struct cam_cpas_domain_id_support_clks {
+	const char *clk_names[CAM_SOC_MAX_OPT_CLK];
+	int32_t clk_idx[CAM_SOC_MAX_OPT_CLK];
+	int number_clks;
+};
+
+/**
+ * struct cam_cpas_soc_irq_data: irq data to be passed in irq handler from ISR
+ *
+ * @cpas_hw: cpas hw info
+ * @camnoc_type: type of camnoc associated with the irq
+ *
+ */
+struct cam_cpas_soc_irq_data {
+	struct cam_hw_info *cpas_hw;
+	enum cam_camnoc_hw_type camnoc_type;
+};
 
 /**
  * struct cam_cpas_sysfs_info - cpas sysfs info
@@ -184,6 +273,7 @@ struct cam_cpas_sysfs_info {
  * @camnoc_axi_clk_bw_margin : BW Margin in percentage to add while calculating
  *      camnoc axi clock
  * @camnoc_axi_min_ib_bw: Min camnoc BW which varies based on target
+ * @cam_max_rt_axi_bw: Max axi BW in bytes which varies based on target
  * @fuse_info: fuse information
  * @sysfs_info: Camera subparts sysfs information
  * @rpmh_info: RPMH BCM info
@@ -192,8 +282,15 @@ struct cam_cpas_sysfs_info {
  * @num_caches: Number of last level caches
  * @part_info: Camera Hw subpart info
  * @llcc_info: Cache info
+ * @enable_secure_qos_update: whether to program QoS securely on current chipset
  * @enable_smart_qos: Whether to enable Smart QoS mechanism on current chipset
+ * @enable_cam_ddr_drv: Whether to enable Camera DDR DRV on current chipset
+ * @enable_cam_clk_drv: Whether to enable Camera Clk DRV on current chipset
  * @smart_qos_info: Pointer to smart qos info
+ * @icp_clk_index: Index of optional icp clk
+ * @domain_id_info: Stores all information related to domain id support
+ * @domain_id_clks: All clock related information for domain id support
+ * @irq_data: array of data for each irq line to be passed in irq handler
  */
 struct cam_cpas_private_soc {
 	const char *arch_compat;
@@ -211,6 +308,7 @@ struct cam_cpas_private_soc {
 	uint32_t camnoc_bus_width;
 	uint32_t camnoc_axi_clk_bw_margin;
 	uint64_t camnoc_axi_min_ib_bw;
+	uint64_t cam_max_rt_axi_bw;
 	struct cam_cpas_fuse_info fuse_info;
 	struct cam_cpas_sysfs_info sysfs_info;
 	uint32_t rpmh_info[CAM_RPMH_BCM_INFO_MAX];
@@ -220,10 +318,26 @@ struct cam_cpas_private_soc {
 	uint32_t part_info;
 	struct cam_sys_cache_info *llcc_info;
 	bool enable_smart_qos;
+	bool enable_cam_ddr_drv;
+	bool enable_cam_clk_drv;
+	bool enable_secure_qos_update;
 	struct cam_cpas_smart_qos_info *smart_qos_info;
+	int32_t icp_clk_index;
+	struct cam_cpas_domain_id_info domain_id_info;
+	struct cam_cpas_domain_id_support_clks *domain_id_clks;
+	struct cam_cpas_soc_irq_data *irq_data;
 };
 
+void cam_cpas_dump_tree_vote_info(struct cam_hw_info *cpas_hw,
+	const struct cam_cpas_tree_node *tree_node,
+	const char *identifier, int ddr_drv_idx, int cesta_drv_idx);
+void cam_cpas_dump_full_tree_state(struct cam_hw_info *cpas_hw, const char *identifier);
+
 void cam_cpas_util_debug_parse_data(struct cam_cpas_private_soc *soc_private);
+void cam_cpas_dump_cons_axi_vote_info(
+	const struct cam_cpas_client *cpas_client,
+	const char *identifier,
+	struct cam_axi_consolidate_vote *axi_vote);
 void cam_cpas_dump_axi_vote_info(
 	const struct cam_cpas_client *cpas_client,
 	const char *identifier,
@@ -238,4 +352,5 @@ int cam_cpas_soc_enable_resources(struct cam_hw_soc_info *soc_info,
 int cam_cpas_soc_disable_resources(struct cam_hw_soc_info *soc_info,
 	bool disable_clocks, bool disable_irq);
 int cam_cpas_soc_disable_irq(struct cam_hw_soc_info *soc_info);
+int cam_cpas_vmrm_callback_handler(void *cb_data, void *msg, uint32_t size);
 #endif /* _CAM_CPAS_SOC_H_ */

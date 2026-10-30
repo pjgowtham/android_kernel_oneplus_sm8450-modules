@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/slab.h>
 #include "cam_cpas_api.h"
 #include "cam_vfe_soc.h"
 #include "cam_debug_util.h"
+#include "cam_mem_mgr_api.h"
 
 static bool cam_vfe_cpas_cb(uint32_t client_handle, void *userdata,
 	struct cam_cpas_irq_data *irq_data)
@@ -113,12 +115,15 @@ end:
 
 static int cam_vfe_request_platform_resource(
 	struct cam_hw_soc_info *soc_info,
-	irq_handler_t vfe_irq_handler, void *irq_data)
+	irq_handler_t vfe_irq_handler, void *data)
 {
-	int rc = 0;
+	int rc = 0, i;
+	void *irq_data[CAM_SOC_MAX_IRQ_LINES_PER_DEV] = {0};
 
-	rc = cam_soc_util_request_platform_resource(soc_info, vfe_irq_handler,
-		irq_data);
+	for (i = 0; i < soc_info->irq_count; i++)
+		irq_data[i] = data;
+
+	rc = cam_soc_util_request_platform_resource(soc_info, vfe_irq_handler, &(irq_data[0]));
 	if (rc)
 		CAM_ERR(CAM_ISP,
 			"Error! Request platform resource failed rc=%d", rc);
@@ -145,7 +150,7 @@ int cam_vfe_init_soc_resources(struct cam_hw_soc_info *soc_info,
 	struct cam_vfe_soc_private       *soc_private;
 	struct cam_cpas_register_params   cpas_register_param;
 
-	soc_private = kzalloc(sizeof(struct cam_vfe_soc_private),
+	soc_private = CAM_MEM_ZALLOC(sizeof(struct cam_vfe_soc_private),
 		GFP_KERNEL);
 	if (!soc_private) {
 		CAM_DBG(CAM_ISP, "Error! soc_private Alloc Failed");
@@ -166,6 +171,14 @@ int cam_vfe_init_soc_resources(struct cam_hw_soc_info *soc_info,
 		goto free_soc_private;
 	}
 
+	if (!soc_private->is_ife_lite) {
+		rc = cam_cpas_query_drv_enable(NULL, &soc_info->is_clk_drv_en);
+		if (rc) {
+			CAM_ERR(CAM_ISP, "Failed to query DRV enable rc:%d", rc);
+			goto free_soc_private;
+		}
+	}
+
 	rc = cam_soc_util_get_option_clk_by_name(soc_info, CAM_VFE_DSP_CLK_NAME,
 		&soc_private->dsp_clk_index);
 	if (rc)
@@ -179,13 +192,13 @@ int cam_vfe_init_soc_resources(struct cam_hw_soc_info *soc_info,
 		goto free_soc_private;
 	}
 
-	memset(&cpas_register_param, 0, sizeof(cpas_register_param));
-	strlcpy(cpas_register_param.identifier, "ife",
+	strscpy(cpas_register_param.identifier, "ife",
 		CAM_HW_IDENTIFIER_LENGTH);
 	cpas_register_param.cell_index = soc_info->index;
 	cpas_register_param.dev = soc_info->dev;
 	cpas_register_param.cam_cpas_client_cb = cam_vfe_cpas_cb;
 	cpas_register_param.userdata = soc_info;
+
 	rc = cam_cpas_register_client(&cpas_register_param);
 	if (rc) {
 		CAM_ERR(CAM_ISP, "CPAS registration failed rc=%d", rc);
@@ -198,7 +211,7 @@ int cam_vfe_init_soc_resources(struct cam_hw_soc_info *soc_info,
 release_soc:
 	cam_soc_util_release_platform_resource(soc_info);
 free_soc_private:
-	kfree(soc_private);
+	CAM_MEM_FREE(soc_private);
 
 	return rc;
 }
@@ -235,7 +248,7 @@ int cam_vfe_deinit_soc_resources(struct cam_hw_soc_info *soc_info)
 			CAM_ERR(CAM_ISP,
 				"Error Put dsp clk failed rc=%d", rc);
 	}
-	kfree(soc_private);
+	CAM_MEM_FREE(soc_private);
 
 	return rc;
 }
@@ -252,19 +265,15 @@ int cam_vfe_enable_soc_resources(struct cam_hw_soc_info *soc_info)
 		rc = -EINVAL;
 		goto end;
 	}
-	soc_private = soc_info->soc_private;
 
+	soc_private = soc_info->soc_private;
 	ahb_vote.type       = CAM_VOTE_ABSOLUTE;
-	ahb_vote.vote.level = CAM_LOWSVS_VOTE;
+	ahb_vote.vote.level = CAM_LOWSVS_D1_VOTE;
 	axi_vote.num_paths = 1;
-	if (strnstr(soc_info->compatible, "lite",
-		strlen(soc_info->compatible))) {
-		axi_vote.axi_path[0].path_data_type =
-			CAM_AXI_PATH_DATA_IFE_RDI1;
-	} else {
-		axi_vote.axi_path[0].path_data_type =
-			CAM_AXI_PATH_DATA_IFE_VID;
-	}
+
+	axi_vote.axi_path[0].path_data_type = CAM_CPAS_API_PATH_DATA_STD_START;
+	if (!soc_private->is_ife_lite)
+		axi_vote.axi_path[0].vote_level = CAM_CPAS_VOTE_LEVEL_LOW;
 
 	axi_vote.axi_path[0].transac_type = CAM_AXI_TRANSACTION_WRITE;
 	axi_vote.axi_path[0].camnoc_bw = CAM_CPAS_DEFAULT_RT_AXI_BW;
@@ -278,8 +287,17 @@ int cam_vfe_enable_soc_resources(struct cam_hw_soc_info *soc_info)
 		goto end;
 	}
 
-	rc = cam_soc_util_enable_platform_resource(soc_info, true,
-		CAM_LOWSVS_VOTE, true);
+	if (!soc_private->is_ife_lite) {
+		rc = cam_cpas_query_drv_enable(NULL, &soc_info->is_clk_drv_en);
+		if (rc) {
+			CAM_ERR(CAM_ISP, "Failed to query DRV enable rc:%d", rc);
+			return rc;
+		}
+	}
+
+	rc = cam_soc_util_enable_platform_resource(soc_info,
+		(soc_info->is_clk_drv_en ? soc_info->index : CAM_CLK_SW_CLIENT_IDX), true,
+		soc_info->lowest_clk_level, true);
 	if (rc) {
 		CAM_ERR(CAM_ISP, "Error! enable platform failed rc=%d", rc);
 		goto stop_cpas;
@@ -314,8 +332,8 @@ int cam_vfe_soc_enable_clk(struct cam_hw_soc_info *soc_info,
 			goto end;
 		}
 
-		rc = cam_soc_util_clk_enable(soc_info, true,
-			soc_private->dsp_clk_index, 0, NULL);
+		rc = cam_soc_util_clk_enable(soc_info, CAM_CLK_SW_CLIENT_IDX, true,
+			soc_private->dsp_clk_index, 0);
 		if (rc)
 			CAM_ERR(CAM_ISP,
 			"Error enable dsp clk failed rc=%d", rc);
@@ -346,7 +364,7 @@ int cam_vfe_soc_disable_clk(struct cam_hw_soc_info *soc_info,
 			goto end;
 		}
 
-		rc = cam_soc_util_clk_disable(soc_info, true,
+		rc = cam_soc_util_clk_disable(soc_info, CAM_CLK_SW_CLIENT_IDX, true,
 			soc_private->dsp_clk_index);
 		if (rc)
 			CAM_ERR(CAM_ISP,
@@ -368,9 +386,11 @@ int cam_vfe_disable_soc_resources(struct cam_hw_soc_info *soc_info)
 		rc = -EINVAL;
 		return rc;
 	}
+
 	soc_private = soc_info->soc_private;
 
-	rc = cam_soc_util_disable_platform_resource(soc_info, true, true);
+	rc = cam_soc_util_disable_platform_resource(soc_info,
+		(soc_info->is_clk_drv_en ? soc_info->index : CAM_CLK_SW_CLIENT_IDX), true, true);
 	if (rc) {
 		CAM_ERR(CAM_ISP, "Disable platform failed rc=%d", rc);
 		return rc;

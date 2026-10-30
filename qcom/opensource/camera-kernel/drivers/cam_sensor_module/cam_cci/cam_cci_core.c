@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -9,6 +9,10 @@
 #include "cam_cci_dev.h"
 #include "cam_req_mgr_workq.h"
 #include "cam_common_util.h"
+#include "cam_mem_mgr_api.h"
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#include "cam_cci_ctrl_interface.h"
+#endif
 
 static int32_t cam_cci_convert_type_to_num_bytes(
 	enum camera_sensor_i2c_type type)
@@ -193,19 +197,44 @@ static int32_t cam_cci_write_i2c_queue(struct cci_device *cci_dev,
 	return rc;
 }
 
-static int32_t cam_cci_lock_queue(struct cci_device *cci_dev,
+static void cam_cci_lock_queue(struct cci_device *cci_dev,
 	enum cci_i2c_master_t master,
 	enum cci_i2c_queue_t queue, uint32_t en)
 {
-	uint32_t val;
+	uint32_t                val = 0;
+	uint32_t                read_val = 0;
+	struct cam_hw_soc_info *soc_info =
+		&cci_dev->soc_info;
+	void __iomem           *base =
+		soc_info->reg_map[0].mem_base;
+	uint32_t                reg_offset =
+		master * 0x200 + queue * 0x100;
 
 	if (queue != PRIORITY_QUEUE)
-		return 0;
+		return;
 
 	val = en ? CCI_I2C_LOCK_CMD : CCI_I2C_UNLOCK_CMD;
-	return cam_cci_write_i2c_queue(cci_dev, val, master, queue);
-}
 
+	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d_LOAD_DATA_ADDR:val 0x%x:0x%x ",
+		cci_dev->soc_info.index, master, queue,
+		CCI_I2C_M0_Q0_LOAD_DATA_ADDR +
+		reg_offset, val);
+	cam_io_w_mb(val, base + CCI_I2C_M0_Q0_LOAD_DATA_ADDR +
+		reg_offset);
+
+	if (cci_dev->cci_master_info[master].is_burst_enable[queue] == true) {
+		cci_dev->cci_master_info[master].num_words_exec[queue]++;
+		read_val = cci_dev->cci_master_info[master].num_words_exec[queue];
+	} else {
+		read_val = cam_io_r_mb(base +
+			CCI_I2C_M0_Q0_CUR_WORD_CNT_ADDR + reg_offset);
+	}
+
+	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d_EXEC_WORD_CNT_ADDR %d",
+		cci_dev->soc_info.index, master, queue, read_val);
+	cam_io_w_mb(read_val, base +
+		CCI_I2C_M0_Q0_EXEC_WORD_CNT_ADDR + reg_offset);
+}
 
 void cam_cci_dump_registers(struct cci_device *cci_dev,
 	enum cci_i2c_master_t master, enum cci_i2c_queue_t queue)
@@ -272,7 +301,7 @@ void cam_cci_dump_registers(struct cci_device *cci_dev,
 }
 EXPORT_SYMBOL(cam_cci_dump_registers);
 
-static uint32_t cam_cci_wait(struct cci_device *cci_dev,
+static int cam_cci_wait(struct cci_device *cci_dev,
 	enum cci_i2c_master_t master,
 	enum cci_i2c_queue_t queue)
 {
@@ -333,14 +362,19 @@ static void cam_cci_load_report_cmd(struct cci_device *cci_dev,
 	cam_io_w_mb(report_val,
 		base + CCI_I2C_M0_Q0_LOAD_DATA_ADDR +
 		reg_offset);
-	read_val++;
-
+	if (cci_dev->cci_master_info[master].is_burst_enable[queue] == true) {
+		cci_dev->cci_master_info[master].num_words_exec[queue]++;
+		read_val = cci_dev->cci_master_info[master].num_words_exec[queue];
+	} else {
+		read_val++;
+	}
 	cci_dev->cci_i2c_queue_info[master][queue].report_id++;
 	if (cci_dev->cci_i2c_queue_info[master][queue].report_id == REPORT_IDSIZE)
 		cci_dev->cci_i2c_queue_info[master][queue].report_id = 0;
 
-	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d_EXEC_WORD_CNT_ADDR %d",
-		cci_dev->soc_info.index, master, queue, read_val);
+	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d_EXEC_WORD_CNT_ADDR %d (ReadValue: %u)",
+		cci_dev->soc_info.index, master, queue, read_val,
+		cam_io_r_mb(base + CCI_I2C_M0_Q0_EXEC_WORD_CNT_ADDR + reg_offset));
 	cam_io_w_mb(read_val, base +
 		CCI_I2C_M0_Q0_EXEC_WORD_CNT_ADDR + reg_offset);
 }
@@ -356,7 +390,6 @@ static int32_t cam_cci_wait_report_cmd(struct cci_device *cci_dev,
 
 	uint32_t reg_val = 1 << ((master * 2) + queue);
 
-	cam_cci_load_report_cmd(cci_dev, master, queue);
 	spin_lock_irqsave(
 		&cci_dev->cci_master_info[master].lock_q[queue], flags);
 	atomic_set(&cci_dev->cci_master_info[master].q_free[queue], 1);
@@ -380,13 +413,9 @@ static int32_t cam_cci_transfer_end(struct cci_device *cci_dev,
 	if (atomic_read(&cci_dev->cci_master_info[master].q_free[queue]) == 0) {
 		spin_unlock_irqrestore(
 			&cci_dev->cci_master_info[master].lock_q[queue], flags);
-		rc = cam_cci_lock_queue(cci_dev, master, queue, 0);
-		if (rc < 0) {
-			CAM_ERR(CAM_CCI,
-				"CCI%d_I2C_M%d_Q%d Failed to lock for rc: %d",
-				cci_dev->soc_info.index, master, queue, rc);
-			return rc;
-		}
+		cam_cci_load_report_cmd(cci_dev, master, queue);
+		cam_cci_lock_queue(cci_dev, master, queue, 0);
+
 		rc = cam_cci_wait_report_cmd(cci_dev, master, queue);
 		if (rc < 0) {
 			CAM_ERR(CAM_CCI,
@@ -407,13 +436,9 @@ static int32_t cam_cci_transfer_end(struct cci_device *cci_dev,
 				cci_dev->soc_info.index, master, queue, rc);
 			return rc;
 		}
-		rc = cam_cci_lock_queue(cci_dev, master, queue, 0);
-		if (rc < 0) {
-			CAM_ERR(CAM_CCI,
-				"CCI%d_I2C_M%d_Q%d Failed to lock_queue for rc: %d",
-				cci_dev->soc_info.index, master, queue, rc);
-			return rc;
-		}
+		cam_cci_load_report_cmd(cci_dev, master, queue);
+		cam_cci_lock_queue(cci_dev, master, queue, 0);
+
 		rc = cam_cci_wait_report_cmd(cci_dev, master, queue);
 		if (rc < 0) {
 			CAM_ERR(CAM_CCI,
@@ -498,6 +523,7 @@ static int32_t cam_cci_process_full_q(struct cci_device *cci_dev,
 		spin_unlock_irqrestore(
 			&cci_dev->cci_master_info[master].lock_q[queue], flags);
 		CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d is set to 0", cci_dev->soc_info.index, master, queue);
+		cam_cci_load_report_cmd(cci_dev, master, queue);
 		rc = cam_cci_wait_report_cmd(cci_dev, master, queue);
 		if (rc < 0) {
 			CAM_ERR(CAM_CCI,
@@ -718,13 +744,480 @@ static int32_t cam_cci_set_clk_param(struct cci_device *cci_dev,
 	return 0;
 }
 
+int32_t cam_cci_data_queue_burst_apply(struct cci_device *cci_dev,
+	enum cci_i2c_master_t master, enum cci_i2c_queue_t queue,
+	uint32_t triggerHalfQueue)
+{
+	struct cam_hw_soc_info *soc_info =
+		&cci_dev->soc_info;
+	void __iomem *base = soc_info->reg_map[0].mem_base;
+	uint32_t reg_val = 1 << ((master * 2) + queue);
+	uint32_t iterate = 0;
+	uint32_t numBytes = 0;
+	bool condition = false;
+	uint32_t num_word_written_to_queue = 0;
+	uint32_t *data_queue = NULL;
+	uint32_t index = 0;
+	uint32_t reg_offset;
+	uint32_t queue_size = cci_dev->cci_i2c_queue_info[master][queue].max_queue_size;
+	uint32_t numWordsInQueue = 0, queueStartThreshold = 0;
+
+	reg_offset = master * 0x200 + queue * 0x100;
+	data_queue = cci_dev->cci_master_info[master].data_queue[queue];
+	num_word_written_to_queue = cci_dev->cci_master_info[master].num_words_in_data_queue[queue];
+	index = cci_dev->cci_master_info[master].data_queue_start_index[queue];
+	queueStartThreshold = cci_dev->cci_master_info[master].half_queue_mark[queue];
+
+	if (data_queue == NULL)	{
+		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d_Q%d data_queue is NULL",
+			cci_dev->soc_info.index, master, queue);
+		return -EINVAL;
+	}
+
+	/* At First this routine is called from process context with FULL QUEUE
+	 * Execution. and next iteration will be called from IRQ Context to process
+	 * only HALF QUEUE size decided by precomputed value "queueStartThreshold"
+	 * */
+	if (triggerHalfQueue == 1) {
+		// Apply HALF QUEUE
+		trace_cam_cci_burst(cci_dev->soc_info.index, master, queue,
+			"thirq raised Buflvl",
+			cci_dev->cci_master_info[master].th_irq_ref_cnt[queue]);
+		CAM_DBG(CAM_CCI,
+			"CCI%d_I2C_M%d_Q%d Threshold IRQ Raised, BufferLevel: %d",
+			cci_dev->soc_info.index, master, queue,
+			cam_io_r_mb(base + CCI_I2C_M0_Q0_CUR_WORD_CNT_ADDR + reg_offset));
+	} else {
+		// Apply FULL QUEUE
+		numWordsInQueue = cam_io_r_mb(base +
+			CCI_I2C_M0_Q0_CUR_WORD_CNT_ADDR + reg_offset);
+	}
+
+	while (index < num_word_written_to_queue) {
+		numBytes = (data_queue[index] & 0xF0) >> 4;
+		if ((numBytes == 0xF) || (numBytes == 0xE)) {
+		       iterate = 3;
+		} else {
+			numBytes = (numBytes + 4) & ~0x03;
+			iterate = numBytes / 4;
+		}
+		if (numBytes == 0xE) {
+			CAM_DBG(CAM_CCI,
+				"CCI%d_I2C_M%d_Q%d THRESHOLD IRQ Enabled; data_queue[%d]: 0x%x refcnt: %d",
+				cci_dev->soc_info.index, master, queue, index, data_queue[index],
+				cci_dev->cci_master_info[master].th_irq_ref_cnt[queue]);
+		}
+		if (triggerHalfQueue == 0) {
+			condition = ((numWordsInQueue + iterate + 1) > queue_size);
+		} else {
+			condition = (cci_dev->cci_master_info[master].th_irq_ref_cnt[queue] > 0) ?
+				(numWordsInQueue >= queueStartThreshold) : 0;
+		}
+
+		if (condition == true) {
+			CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d CUR_WORD_CNT_ADDR %d len %d max %d",
+				cci_dev->soc_info.index, master, queue, numWordsInQueue, iterate, queue_size);
+			if ((cci_dev->cci_master_info[master].th_irq_ref_cnt[queue]) > 0) {
+				cam_io_w_mb(numWordsInQueue, base +
+					CCI_I2C_M0_Q0_EXEC_WORD_CNT_ADDR + reg_offset);
+				cam_io_w_mb(reg_val, base + CCI_QUEUE_START_ADDR);
+				triggerHalfQueue = 1;
+				numWordsInQueue = 0;
+				CAM_INFO(CAM_CCI,
+					"CCI%d_I2C_M%d_Q%d Issued QUEUE_START, "
+					"wait for Threshold_IRQ, th_irq_ref_cnt[%d]:%d",
+					cci_dev->soc_info.index, master, queue, queue,
+					cci_dev->cci_master_info[master].th_irq_ref_cnt[queue]);
+				trace_cam_cci_burst(cci_dev->soc_info.index, master, queue,
+					"Q_START thirq_cnt",
+					cci_dev->cci_master_info[master].th_irq_ref_cnt[queue]);
+
+				return 0;
+			}
+		} else {
+			while (iterate > 0) {
+				cam_io_w_mb(data_queue[index], base +
+					CCI_I2C_M0_Q0_LOAD_DATA_ADDR +
+					master * 0x200 + queue * 0x100);
+				CAM_DBG(CAM_CCI,
+					"CCI%d_I2C_M%d_Q%d LOAD_DATA_ADDR 0x%x, "
+					"index: %d trig: %d numWordsInQueue: %d",
+					cci_dev->soc_info.index, master, queue,
+					data_queue[index], (index + 1),
+					triggerHalfQueue, (numWordsInQueue + 1));
+				numWordsInQueue++;
+				index++;
+				cci_dev->cci_master_info[master].data_queue_start_index[queue] = index;
+				iterate--;
+			}
+		}
+	}
+
+	if ((numWordsInQueue > 0) && (cci_dev->cci_master_info[master].th_irq_ref_cnt[queue] > 0)) {
+		cam_io_w_mb(numWordsInQueue, base +
+			CCI_I2C_M0_Q0_EXEC_WORD_CNT_ADDR + reg_offset);
+		cam_io_w_mb(reg_val, base + CCI_QUEUE_START_ADDR);
+		CAM_DBG(CAM_CCI,
+			"CCI%d_I2C_M%d_Q%d Issued ****** FINAL QUEUE_START********, "
+			"numWordsInQueue: %d, th_irq_ref_cnt[%d]:%d",
+			cci_dev->soc_info.index, master, queue, queue, numWordsInQueue,
+			cci_dev->cci_master_info[master].th_irq_ref_cnt[queue]);
+		numWordsInQueue = 0;
+	}
+
+	return 0;
+}
+
+static int32_t cam_cci_data_queue_burst(struct cci_device *cci_dev,
+	struct cam_cci_ctrl *c_ctrl, enum cci_i2c_queue_t queue,
+	enum cci_i2c_sync sync_en)
+{
+	uint16_t i = 0, j = 0, len = 0;
+	int32_t rc = 0, en_seq_write = 0;
+	struct cam_sensor_i2c_reg_setting *i2c_msg =
+		&c_ctrl->cfg.cci_i2c_write_cfg;
+	struct cam_sensor_i2c_reg_array *i2c_cmd = i2c_msg->reg_setting;
+	enum cci_i2c_master_t master = c_ctrl->cci_info->cci_i2c_master;
+	uint16_t reg_addr = 0, cmd_size = i2c_msg->size;
+	uint32_t reg_offset, val, delay = 0;
+	uint32_t max_queue_size, queue_size = 0;
+	struct cam_hw_soc_info *soc_info =
+		&cci_dev->soc_info;
+	void __iomem *base = soc_info->reg_map[0].mem_base;
+	unsigned long flags;
+	uint8_t next_position = i2c_msg->data_type;
+	uint32_t half_queue_mark = 0, full_queue_mark = 0, num_payload = 0;
+	uint32_t num_word_written_to_queue = 0;
+	uint32_t *data_queue = NULL;
+	uint8_t data_len = 0, addr_len = 0;
+	uint32_t index = 0;
+	uint8_t *buf = NULL;
+	uint32_t last_i2c_full_payload = 0;
+	uint32_t trigger_half_queue = 0, queue_start_threshold = 0;
+	uint32_t en_threshold_irq = 0, cci_enable_th_irq = 0;
+
+	if (i2c_cmd == NULL) {
+		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d_Q%d Failed: i2c cmd is NULL",
+			cci_dev->soc_info.index, master, queue);
+		return -EINVAL;
+	}
+
+	if ((!cmd_size) || (cmd_size > CCI_I2C_MAX_WRITE)) {
+		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d_Q%d failed: invalid cmd_size %d",
+			cci_dev->soc_info.index, master, queue, cmd_size);
+		return -EINVAL;
+	}
+
+	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d addr type %d data type %d cmd_size %d",
+		cci_dev->soc_info.index, master, queue, i2c_msg->addr_type, i2c_msg->data_type, cmd_size);
+
+	if (i2c_msg->addr_type >= CAMERA_SENSOR_I2C_TYPE_MAX) {
+		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d_Q%d failed: invalid addr_type 0x%X",
+			cci_dev->soc_info.index, master, queue, i2c_msg->addr_type);
+		return -EINVAL;
+	}
+	if (i2c_msg->data_type >= CAMERA_SENSOR_I2C_TYPE_MAX) {
+		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d_Q%d failed: invalid data_type 0x%X",
+			cci_dev->soc_info.index, master, queue, i2c_msg->data_type);
+		return -EINVAL;
+	}
+
+	trace_cam_cci_burst(cci_dev->soc_info.index, master, queue,
+		"cci burst write START for sid",
+		c_ctrl->cci_info->sid);
+	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d : START for sid: 0x%x size: %d",
+		cci_dev->soc_info.index, master, queue, c_ctrl->cci_info->sid, i2c_msg->size);
+
+	cci_dev->cci_master_info[master].is_burst_enable[queue] = false;
+	cci_dev->cci_master_info[master].num_words_exec[queue] = 0;
+
+	addr_len = cam_cci_convert_type_to_num_bytes(i2c_msg->addr_type);
+	data_len = cam_cci_convert_type_to_num_bytes(i2c_msg->data_type);
+	len = (cmd_size * data_len + addr_len);
+	last_i2c_full_payload = len/MSM_CCI_WRITE_DATA_PAYLOAD_SIZE_11;
+	/*
+	 * For every 11 Bytes of Data 1 Byte of data is Control cmd: 0xF9 or 0xE9 or {0x19 to 0xB9}
+	 * Hence compute will account for "len/PAYLOAD_SIZE_11"
+	 */
+	len = len + len/MSM_CCI_WRITE_DATA_PAYLOAD_SIZE_11 +
+		(((len % MSM_CCI_WRITE_DATA_PAYLOAD_SIZE_11) == 0) ? 0 : 1);
+	if (len % 4) {
+		len = len/4 + 1;
+	} else {
+		len = len/4;
+	}
+	/*
+	 * Its possible that 8 number of CCI cmds, each 32-bit
+	 * can co-exisist in QUEUE along with I2C Data
+	 */
+	len = len + 8;
+
+	data_queue = CAM_MEM_ZALLOC((len * sizeof(uint32_t)),
+			GFP_KERNEL);
+	if (!data_queue) {
+		CAM_ERR(CAM_CCI, "Unable to allocate memory, BUF is NULL");
+		return -ENOMEM;
+	}
+
+	reg_offset = master * 0x200 + queue * 0x100;
+
+	cam_io_w_mb(cci_dev->cci_wait_sync_cfg.cid,
+		base + CCI_SET_CID_SYNC_TIMER_ADDR +
+		cci_dev->cci_wait_sync_cfg.csid *
+		CCI_SET_CID_SYNC_TIMER_OFFSET);
+
+	/* Retry count is not supported in BURST MODE */
+	c_ctrl->cci_info->retries = 0;
+
+	/* 
+	 * 1. Configure Slave ID through SET_PARAM_CMD
+	 *    For Burst Mode retries are not supported.
+	 *    Record the number of words written to QUEUE
+	*/
+	val = CCI_I2C_SET_PARAM_CMD | c_ctrl->cci_info->sid << 4 |
+		c_ctrl->cci_info->retries << 16 |
+		c_ctrl->cci_info->id_map << 18;
+
+	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d_LOAD_DATA_ADDR:val 0x%x:0x%x",
+		cci_dev->soc_info.index, master, queue, CCI_I2C_M0_Q0_LOAD_DATA_ADDR +
+		reg_offset, val);
+	cam_io_w_mb(val, base + CCI_I2C_M0_Q0_LOAD_DATA_ADDR +
+		reg_offset);
+	index++;
+
+	/* 
+	 * 2. Initialize the variables used for synchronizing between
+	 *    process context and CCI IRQ Context
+	 */
+	spin_lock_irqsave(&cci_dev->cci_master_info[master].lock_q[queue],
+		flags);
+	atomic_set(&cci_dev->cci_master_info[master].q_free[queue], 0);
+	// atomic_set(&cci_dev->cci_master_info[master].th_irq_ref_cnt[queue], 0);
+	reinit_completion(&cci_dev->cci_master_info[master].th_burst_complete[queue]);
+	spin_unlock_irqrestore(&cci_dev->cci_master_info[master].lock_q[queue],
+		flags);
+	cci_dev->cci_master_info[master].th_irq_ref_cnt[queue] = 0;
+
+	max_queue_size =
+		cci_dev->cci_i2c_queue_info[master][queue].max_queue_size;
+
+	if ((c_ctrl->cmd == MSM_CCI_I2C_WRITE_SEQ) ||
+		(c_ctrl->cmd == MSM_CCI_I2C_WRITE_BURST))
+		queue_size = max_queue_size;
+	else
+		queue_size = max_queue_size / 2;
+	reg_addr = i2c_cmd->reg_addr;
+
+	if (len < queue_size) {
+		CAM_DBG(CAM_CCI,
+			"CCI%d_I2C_M%d_Q%d: len: %d < QueueSize: %d "
+			"No need of threshold IRQ",
+			cci_dev->soc_info.index, master, queue, len, queue_size);
+		cci_enable_th_irq = 0;
+	} else {
+		cci_enable_th_irq = CCI_ENABLE_THRESHOLD_IRQ;
+	}
+
+	if (sync_en == MSM_SYNC_ENABLE && cci_dev->valid_sync &&
+		cmd_size < max_queue_size) {
+		val = CCI_I2C_WAIT_SYNC_CMD |
+			((cci_dev->cci_wait_sync_cfg.line) << 4);
+		cam_io_w_mb(val,
+			base + CCI_I2C_M0_Q0_LOAD_DATA_ADDR +
+			reg_offset);
+		index++;
+	}
+
+	/* 3. LOCK the QUEUE So that we can start BURST WRITE*/
+	cam_cci_lock_queue(cci_dev, master, queue, 1);
+	index++;
+
+	/*
+	 * 4. Need to place 0xE0 marker in middle and end of the QUEUE to trigger
+	 *    Thresold Interrupt
+	 */
+	full_queue_mark = (queue_size - index - 1) / MSM_CCI_WRITE_DATA_PAYLOAD_SIZE_WORDS;
+	half_queue_mark = full_queue_mark / 2;
+	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d queue_size: %d full_queue_mark: %d half_queue_mark: %d",
+		cci_dev->soc_info.index, master, queue, queue_size, full_queue_mark, half_queue_mark);
+
+	/*
+	 * 5. Iterate through entire size of settings ==> {reg_addr, reg_data}
+	 *    and formulate in QUEUE0 like below
+	 *            D2 A1 A2 F9  ==> 0xF9: Hold the BUS for I2C WRITE; {0xA2A1, 0xD2D1,
+	 *            D6 D3 D4 D1  ==> 0xD4D3, 0xD6D5, 0xD8D7, 0xD10D9.......}
+	 *           D10 D7 D8 D5
+	 */
+
+	index = 0;
+	buf = (uint8_t *) &data_queue[index];
+	while (cmd_size) {
+		delay = i2c_cmd->delay;
+		i = 0;
+		buf[i++] = CCI_I2C_WRITE_CMD;
+
+		if (en_seq_write == 0) {
+			for (j = 0; j < i2c_msg->addr_type; j++) {
+				buf[i2c_msg->addr_type - j] = (reg_addr >> (j * 8)) & 0xFF;
+				i++;
+			}
+		}
+		do {
+			if (i2c_msg->data_type == CAMERA_SENSOR_I2C_TYPE_BYTE) {
+				buf[i++] = i2c_cmd->reg_data;
+				if (c_ctrl->cmd == MSM_CCI_I2C_WRITE_SEQ ||
+					c_ctrl->cmd == MSM_CCI_I2C_WRITE_BURST)
+					reg_addr++;
+			} else {
+				if (i <= cci_dev->payload_size) {
+					/*
+					 * this logic fill reg data to buf[] array
+					 * which has a max index value 11,
+					 * and the sensor reg data type can be DWORD/3B/WORD,
+					 * next_position records the split position or the
+					 * position in the reg data where will be filled into
+					 * next buf[] array slot.
+					 */
+					if (next_position >= CAMERA_SENSOR_I2C_TYPE_DWORD) {
+						buf[i++] = (i2c_cmd->reg_data &
+							0xFF000000) >> 24;
+						if ((i-1) == MSM_CCI_WRITE_DATA_PAYLOAD_SIZE_11) {
+							next_position = CAMERA_SENSOR_I2C_TYPE_3B;
+							break;
+						}
+					}
+					/* fill highest byte of 3B type sensor reg data */
+					if (next_position >= CAMERA_SENSOR_I2C_TYPE_3B) {
+						buf[i++] = (i2c_cmd->reg_data &
+							0x00FF0000) >> 16;
+						if ((i-1) == MSM_CCI_WRITE_DATA_PAYLOAD_SIZE_11) {
+							next_position = CAMERA_SENSOR_I2C_TYPE_WORD;
+							break;
+						}
+					}
+					/* fill high byte of WORD type sensor reg data */
+					if (next_position >= CAMERA_SENSOR_I2C_TYPE_WORD) {
+						buf[i++] = (i2c_cmd->reg_data &
+							0x0000FF00) >> 8;
+						if ((i-1) == MSM_CCI_WRITE_DATA_PAYLOAD_SIZE_11) {
+							next_position = CAMERA_SENSOR_I2C_TYPE_BYTE;
+							break;
+						}
+					}
+					/* fill lowest byte of sensor reg data */
+					buf[i++] = i2c_cmd->reg_data & 0x000000FF;
+					next_position = i2c_msg->data_type;
+
+					if (c_ctrl->cmd == MSM_CCI_I2C_WRITE_SEQ ||
+						c_ctrl->cmd == MSM_CCI_I2C_WRITE_BURST)
+						reg_addr += i2c_msg->data_type;
+				}
+			}
+			/* move to next cmd while all reg data bytes are filled */
+			if (next_position == i2c_msg->data_type) {
+				i2c_cmd++;
+				--cmd_size;
+			}
+		} while ((cmd_size > 0) && (i <= cci_dev->payload_size));
+
+		num_payload++;
+		en_threshold_irq = cci_enable_th_irq &&
+			(((num_payload % half_queue_mark) == 0) || (num_payload == last_i2c_full_payload));
+		if (cmd_size > 0) {
+			if (en_threshold_irq) {
+				buf[0] |= 0xE0;
+				cci_dev->cci_master_info[master].th_irq_ref_cnt[queue]++;
+				CAM_DBG(CAM_CCI,
+					"CCI%d_I2C_M%d_Q%d Th IRQ enabled for index: %d "
+					"num_payld: %d th_irq_ref_cnt: %d",
+					cci_dev->soc_info.index, master, queue, num_word_written_to_queue,
+					num_payload, cci_dev->cci_master_info[master].th_irq_ref_cnt[queue]);
+			} else {
+				buf[0] |= 0xF0;
+			}
+		} else {
+			buf[0] |= ((i-1) << 4);
+			CAM_DBG(CAM_CCI, "End of register Write............ ");
+		}
+		en_seq_write = 1;
+		len = ((i-1)/4) + 1;
+		/* increment pointer to next multiple of 4; which is a word in CCI QUEUE */
+		buf = buf + ((i+3) & ~0x03);
+		num_word_written_to_queue += len;
+	}
+
+	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d num words to Queue: %d th_irq_ref_cnt: %d cci_dev: %p",
+		cci_dev->soc_info.index, master, queue, num_word_written_to_queue,
+		cci_dev->cci_master_info[master].th_irq_ref_cnt[queue], cci_dev);
+
+	trace_cam_cci_burst(cci_dev->soc_info.index, master, queue,
+		"thirq_cnt",
+		cci_dev->cci_master_info[master].th_irq_ref_cnt[queue]);
+
+	index = 0;
+	queue_start_threshold = half_queue_mark * MSM_CCI_WRITE_DATA_PAYLOAD_SIZE_WORDS;
+
+	cci_dev->cci_master_info[master].data_queue[queue] = data_queue;
+	cci_dev->cci_master_info[master].num_words_in_data_queue[queue] = num_word_written_to_queue;
+	cci_dev->cci_master_info[master].data_queue_start_index[queue] = index;
+	cci_dev->cci_master_info[master].half_queue_mark[queue] = queue_start_threshold;
+
+	cam_cci_data_queue_burst_apply(cci_dev, master, queue, trigger_half_queue);
+
+	while ((cci_dev->cci_master_info[master].th_irq_ref_cnt[queue]) > 0) {
+		if (!cam_common_wait_for_completion_timeout(
+			&cci_dev->cci_master_info[master].th_burst_complete[queue],
+			CCI_TIMEOUT)) {
+			cam_cci_dump_registers(cci_dev, master, queue);
+
+			CAM_ERR(CAM_CCI,
+				"CCI%d_I2C_M%d_Q%d wait timeout, rc: %d",
+				cci_dev->soc_info.index, master, queue, rc);
+			rc = -ETIMEDOUT;
+			cam_cci_flush_queue(cci_dev, master);
+			CAM_INFO(CAM_CCI,
+				"CCI%d_I2C_M%d_Q%d dump register after reset",
+				cci_dev->soc_info.index, master, queue);
+			cam_cci_dump_registers(cci_dev, master, queue);
+			goto ERROR;
+		}
+		cci_dev->cci_master_info[master].th_irq_ref_cnt[queue]--;
+		CAM_DBG(CAM_CCI,
+			"CCI%d_I2C_M%d_Q%d Threshold IRQ Raised, BufferLevel: %d",
+			cci_dev->soc_info.index, master, queue,
+			cam_io_r_mb(base + CCI_I2C_M0_Q0_CUR_WORD_CNT_ADDR + reg_offset));
+	}
+
+	if (cci_dev->cci_master_info[master].th_irq_ref_cnt[queue] > 0) {
+		cci_dev->cci_master_info[master].is_burst_enable[queue] = true;
+		cci_dev->cci_master_info[master].num_words_exec[queue] = 0;
+	}
+
+	rc = cam_cci_transfer_end(cci_dev, master, queue);
+	if (rc < 0) {
+		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d_Q%d Slave: 0x%x failed rc %d",
+			cci_dev->soc_info.index, master, queue, (c_ctrl->cci_info->sid << 1), rc);
+		goto ERROR;
+	}
+	trace_cam_cci_burst(cci_dev->soc_info.index, master, queue,
+		"cci burst write Done for sid",
+		c_ctrl->cci_info->sid);
+	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d : completed ....for sid: 0x%x size: %d",
+		cci_dev->soc_info.index, master, queue, c_ctrl->cci_info->sid, i2c_msg->size);
+
+ERROR:
+	CAM_MEM_FREE(data_queue);
+	cci_dev->cci_master_info[master].data_queue[queue] = NULL;
+	return rc;
+}
+
 static int32_t cam_cci_data_queue(struct cci_device *cci_dev,
 	struct cam_cci_ctrl *c_ctrl, enum cci_i2c_queue_t queue,
 	enum cci_i2c_sync sync_en)
 {
 	uint16_t i = 0, j = 0, k = 0, h = 0, len = 0;
 	int32_t rc = 0, free_size = 0, en_seq_write = 0;
-	uint8_t data[12];
+	uint8_t write_data[CAM_MAX_NUM_CCI_PAYLOAD_BYTES + 1] = {0};
 	struct cam_sensor_i2c_reg_setting *i2c_msg =
 		&c_ctrl->cfg.cci_i2c_write_cfg;
 	struct cam_sensor_i2c_reg_array *i2c_cmd = i2c_msg->reg_setting;
@@ -765,10 +1258,14 @@ static int32_t cam_cci_data_queue(struct cci_device *cci_dev,
 	}
 	reg_offset = master * 0x200 + queue * 0x100;
 
+	cci_dev->cci_master_info[master].is_burst_enable[queue] = false;
+	cci_dev->cci_master_info[master].num_words_exec[queue] = 0;
 	cam_io_w_mb(cci_dev->cci_wait_sync_cfg.cid,
 		base + CCI_SET_CID_SYNC_TIMER_ADDR +
 		cci_dev->cci_wait_sync_cfg.csid *
 		CCI_SET_CID_SYNC_TIMER_OFFSET);
+
+	cam_cci_lock_queue(cci_dev, master, queue, 1);
 
 	val = CCI_I2C_SET_PARAM_CMD | c_ctrl->cci_info->sid << 4 |
 		c_ctrl->cci_info->retries << 16 |
@@ -805,14 +1302,6 @@ static int32_t cam_cci_data_queue(struct cci_device *cci_dev,
 			reg_offset);
 	}
 
-	rc = cam_cci_lock_queue(cci_dev, master, queue, 1);
-	if (rc < 0) {
-		CAM_ERR(CAM_CCI,
-			"CCI%d_I2C_M%d_Q%d Failed to lock_queue for rc: %d",
-			cci_dev->soc_info.index, master, queue, rc);
-		return rc;
-	}
-
 	while (cmd_size) {
 		uint32_t pack = 0;
 
@@ -829,9 +1318,9 @@ static int32_t cam_cci_data_queue(struct cci_device *cci_dev,
 			CCI_I2C_M0_Q0_CUR_WORD_CNT_ADDR + reg_offset);
 		CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d CUR_WORD_CNT_ADDR %d len %d max %d",
 			cci_dev->soc_info.index, master, queue, read_val, len, max_queue_size);
-		/* + 1 - space alocation for Report CMD */
-		if ((read_val + len + 1) > queue_size) {
-			if ((read_val + len + 1) > max_queue_size) {
+		/* + 2 - space alocation for Report and Unlock CMD */
+		if ((read_val + len + 2) > queue_size) {
+			if ((read_val + len + 2) > max_queue_size) {
 				rc = cam_cci_process_full_q(cci_dev,
 					master, queue);
 				if (rc < 0) {
@@ -849,7 +1338,7 @@ static int32_t cam_cci_data_queue(struct cci_device *cci_dev,
 			cci_dev->soc_info.index, master, queue, cmd_size, i2c_cmd->reg_addr, i2c_cmd->reg_data);
 		delay = i2c_cmd->delay;
 		i = 0;
-		data[i++] = CCI_I2C_WRITE_CMD;
+		write_data[i++] = CCI_I2C_WRITE_CMD;
 
 		/*
 		 * in case of multiple command
@@ -866,71 +1355,60 @@ static int32_t cam_cci_data_queue(struct cci_device *cci_dev,
 			reg_addr = i2c_cmd->reg_addr;
 
 		if (en_seq_write == 0) {
-			/* either byte or word addr */
-			if (i2c_msg->addr_type == CAMERA_SENSOR_I2C_TYPE_BYTE)
-				data[i++] = reg_addr;
-			else {
-				data[i++] = (reg_addr & 0xFF00) >> 8;
-				data[i++] = reg_addr & 0x00FF;
+			for (j = 0; j < i2c_msg->addr_type; j++) {
+				write_data[i2c_msg->addr_type - j] = (reg_addr >> (j * 8)) & 0xFF;
+				i++;
 			}
 		}
-		/* max of 10 data bytes */
+
 		do {
 			if (i2c_msg->data_type == CAMERA_SENSOR_I2C_TYPE_BYTE) {
-				data[i++] = i2c_cmd->reg_data;
+				write_data[i++] = i2c_cmd->reg_data;
 				if (c_ctrl->cmd == MSM_CCI_I2C_WRITE_SEQ)
 					reg_addr++;
 			} else {
 				if (i <= cci_dev->payload_size) {
-					switch (i2c_msg->data_type) {
-					case CAMERA_SENSOR_I2C_TYPE_DWORD:
-						if (next_position >= i2c_msg->data_type)
-							data[i++] = (i2c_cmd->reg_data &
-								0xFF000000) >> 24;
+					/*
+					 * this logic fill reg data to write_data[] array
+					 * which has a max index value 11,
+					 * and the sensor reg data type can be DWORD/3B/WORD,
+					 * next_position records the split position or the
+					 * position in the reg data where will be filled into
+					 * next write_data[] array slot.
+					 */
+					if (next_position >= CAMERA_SENSOR_I2C_TYPE_DWORD) {
+						write_data[i++] = (i2c_cmd->reg_data &
+							0xFF000000) >> 24;
 						if ((i-1) == MSM_CCI_WRITE_DATA_PAYLOAD_SIZE_11) {
 							next_position = CAMERA_SENSOR_I2C_TYPE_3B;
 							break;
 						}
-						fallthrough;
-					case CAMERA_SENSOR_I2C_TYPE_3B:
-						if (next_position >= i2c_msg->data_type)
-							data[i++] = (i2c_cmd->reg_data &
-								0x00FF0000) >> 16;
+					}
+					/* fill highest byte of 3B type sensor reg data */
+					if (next_position >= CAMERA_SENSOR_I2C_TYPE_3B) {
+						write_data[i++] = (i2c_cmd->reg_data &
+							0x00FF0000) >> 16;
 						if ((i-1) == MSM_CCI_WRITE_DATA_PAYLOAD_SIZE_11) {
 							next_position = CAMERA_SENSOR_I2C_TYPE_WORD;
 							break;
 						}
-						fallthrough;
-					case CAMERA_SENSOR_I2C_TYPE_WORD:
-						if (next_position >= i2c_msg->data_type)
-							data[i++] = (i2c_cmd->reg_data &
-								0x0000FF00) >> 8;
+					}
+					/* fill high byte of WORD type sensor reg data */
+					if (next_position >= CAMERA_SENSOR_I2C_TYPE_WORD) {
+						write_data[i++] = (i2c_cmd->reg_data &
+							0x0000FF00) >> 8;
 						if ((i-1) == MSM_CCI_WRITE_DATA_PAYLOAD_SIZE_11) {
 							next_position = CAMERA_SENSOR_I2C_TYPE_BYTE;
 							break;
 						}
-						fallthrough;
-					case CAMERA_SENSOR_I2C_TYPE_BYTE:
-						data[i++] = i2c_cmd->reg_data &
-							0x000000FF;
-						if ((i-1) == MSM_CCI_WRITE_DATA_PAYLOAD_SIZE_11) {
-							next_position = i2c_msg->data_type;
-							break;
-						}
-						next_position = i2c_msg->data_type;
-						break;
-					default:
-						CAM_ERR(CAM_CCI,
-							"CCI%d_I2C_M%d_Q%d invalid data type: %d",
-							cci_dev->soc_info.index, master, queue,
-							i2c_msg->data_type);
-						return -EINVAL;
 					}
+					/* fill lowest byte of sensor reg data */
+					write_data[i++] = i2c_cmd->reg_data & 0x000000FF;
+					next_position = i2c_msg->data_type;
 
 					if (c_ctrl->cmd == MSM_CCI_I2C_WRITE_SEQ)
 						reg_addr += i2c_msg->data_type;
-				} else
-					break;
+				}
 			}
 			/* move to next cmd while all reg data bytes are filled */
 			if (next_position == i2c_msg->data_type) {
@@ -947,20 +1425,22 @@ static int32_t cam_cci_data_queue(struct cci_device *cci_dev,
 			((i-1) == MSM_CCI_WRITE_DATA_PAYLOAD_SIZE_11) &&
 			cci_dev->support_seq_write && cmd_size > 0 &&
 			free_size > BURST_MIN_FREE_SIZE) {
-			data[0] |= 0xF0;
+			write_data[0] |= 0xF0;
 			en_seq_write = 1;
 		} else {
-			data[0] |= ((i-1) << 4);
+			write_data[0] |= ((i-1) << 4);
 			en_seq_write = 0;
 		}
 		len = ((i-1)/4) + 1;
 
+		CAM_DBG(CAM_CCI, "free_size %d, en_seq_write %d i: %d len: %d ",
+			free_size, en_seq_write, i, len);
 		read_val = cam_io_r_mb(base +
 			CCI_I2C_M0_Q0_CUR_WORD_CNT_ADDR + reg_offset);
 		for (h = 0, k = 0; h < len; h++) {
 			cmd = 0;
 			for (j = 0; (j < 4 && k < i); j++)
-				cmd |= (data[k++] << (j * 8));
+				cmd |= (write_data[k++] << (j * 8));
 			CAM_DBG(CAM_CCI,
 				"CCI%d_I2C_M%d_Q%d LOAD_DATA_ADDR 0x%x, len:%d, cnt: %d",
 				cci_dev->soc_info.index, master, queue, cmd, len, read_val);
@@ -1019,6 +1499,10 @@ static int32_t cam_cci_burst_read(struct v4l2_subdev *sd,
 	void __iomem                       *base = NULL;
 
 	cci_dev = v4l2_get_subdevdata(sd);
+	if (!cci_dev) {
+		CAM_ERR(CAM_CCI, "cci_dev NULL");
+		return -EINVAL;
+	}
 	master = c_ctrl->cci_info->cci_i2c_master;
 	read_cfg = &c_ctrl->cfg.cci_i2c_read_cfg;
 
@@ -1078,8 +1562,18 @@ static int32_t cam_cci_burst_read(struct v4l2_subdev *sd,
 		goto rel_mutex_q;
 	}
 
+	val = CCI_I2C_LOCK_CMD;
+	rc = cam_cci_write_i2c_queue(cci_dev, val, master, queue);
+	if (rc < 0) {
+		CAM_DBG(CAM_CCI,
+			"CCI%d_I2C_M%d_Q%d failed to write lock_cmd for rc: %d",
+			cci_dev->soc_info.index, master, queue, rc);
+		goto rel_mutex_q;
+	}
+
 	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d set param sid 0x%x retries %d id_map %d",
-		cci_dev->soc_info.index, master, queue, c_ctrl->cci_info->sid, c_ctrl->cci_info->retries,
+		cci_dev->soc_info.index, master, queue,
+		c_ctrl->cci_info->sid, c_ctrl->cci_info->retries,
 		c_ctrl->cci_info->id_map);
 	val = CCI_I2C_SET_PARAM_CMD | c_ctrl->cci_info->sid << 4 |
 		c_ctrl->cci_info->retries << 16 |
@@ -1088,15 +1582,6 @@ static int32_t cam_cci_burst_read(struct v4l2_subdev *sd,
 	if (rc < 0) {
 		CAM_DBG(CAM_CCI,
 			"CCI%d_I2C_M%d_Q%d Failed to write param_cmd for rc: %d",
-			cci_dev->soc_info.index, master, queue, rc);
-		goto rel_mutex_q;
-	}
-
-	val = CCI_I2C_LOCK_CMD;
-	rc = cam_cci_write_i2c_queue(cci_dev, val, master, queue);
-	if (rc < 0) {
-		CAM_DBG(CAM_CCI,
-			"CCI%d_I2C_M%d_Q%d failed to write lock_cmd for rc: %d",
 			cci_dev->soc_info.index, master, queue, rc);
 		goto rel_mutex_q;
 	}
@@ -1128,7 +1613,7 @@ static int32_t cam_cci_burst_read(struct v4l2_subdev *sd,
 	rc = cam_cci_write_i2c_queue(cci_dev, val, master, queue);
 	if (rc < 0) {
 		CAM_DBG(CAM_CCI,
-			"CCI%d_I2C_M%d_Q%d Failed to write unlock_cmd for rc: %d",
+			"CCI%d_I2C_M%d_Q%d failed to write unlock_cmd for rc: %d",
 			cci_dev->soc_info.index, master, queue, rc);
 		goto rel_mutex_q;
 	}
@@ -1189,7 +1674,7 @@ read_again:
 
 		total_read_words += read_words;
 		while (read_words > 0) {
-			val = cam_io_r_mb(base +
+			val = cam_io_r(base +
 				CCI_I2C_M0_READ_DATA_ADDR + master * 0x100);
 			for (i = 0; (i < 4) &&
 				(index < read_cfg->num_byte); i++) {
@@ -1202,8 +1687,9 @@ read_again:
 				} else {
 					read_cfg->data[index] =
 						(val  >> (i * 8)) & 0xFF;
-					CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d data[%d] 0x%x", 
-						cci_dev->soc_info.index, master, queue, index, read_cfg->data[index]);
+					CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d data[%d] 0x%x",
+						cci_dev->soc_info.index, master, queue, index,
+						read_cfg->data[index]);
 					index++;
 				}
 			}
@@ -1295,6 +1781,8 @@ static int32_t cam_cci_read(struct v4l2_subdev *sd,
 {
 	int32_t rc = 0;
 	uint32_t val = 0;
+	uint8_t read_data_byte[CAM_MAX_NUM_CCI_PAYLOAD_BYTES + 1] = {0};
+	uint32_t *reg_addr;
 	int32_t read_words = 0, exp_words = 0;
 	int32_t index = 0, first_byte = 0;
 	uint32_t i = 0;
@@ -1306,6 +1794,10 @@ static int32_t cam_cci_read(struct v4l2_subdev *sd,
 	void __iomem *base = NULL;
 
 	cci_dev = v4l2_get_subdevdata(sd);
+	if (!cci_dev) {
+		CAM_ERR(CAM_CCI, "cci_dev NULL");
+		return -EINVAL;
+	}
 	master = c_ctrl->cci_info->cci_i2c_master;
 	read_cfg = &c_ctrl->cfg.cci_i2c_read_cfg;
 
@@ -1339,8 +1831,11 @@ static int32_t cam_cci_read(struct v4l2_subdev *sd,
 		cci_dev->cci_i2c_queue_info[master][queue].max_queue_size - 1,
 		master, queue);
 	if (rc < 0) {
-		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d_Q%d Initial validataion failed rc: %d",
-			cci_dev->soc_info.index, master, queue, rc);
+		val = cam_io_r_mb(base + CCI_I2C_M0_Q0_CUR_CMD_ADDR +
+			master * 0x200 + queue * 0x100);
+		CAM_ERR(CAM_CCI,
+			"CCI%d_I2C_M%d_Q%d Initial validataion failed rc: %d, CUR_CMD:0x%x",
+			cci_dev->soc_info.index, master, queue, rc, val);
 		goto rel_mutex_q;
 	}
 
@@ -1357,8 +1852,18 @@ static int32_t cam_cci_read(struct v4l2_subdev *sd,
 		goto rel_mutex_q;
 	}
 
+	val = CCI_I2C_LOCK_CMD;
+	rc = cam_cci_write_i2c_queue(cci_dev, val, master, queue);
+	if (rc < 0) {
+		CAM_DBG(CAM_CCI,
+			"CCI%d_I2C_M%d_Q%d failed to write lock_cmd for rc: %d",
+			cci_dev->soc_info.index, master, queue, rc);
+		goto rel_mutex_q;
+	}
+
 	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d set param sid 0x%x retries %d id_map %d",
-		cci_dev->soc_info.index, master, queue, c_ctrl->cci_info->sid, c_ctrl->cci_info->retries,
+		cci_dev->soc_info.index, master, queue,
+		c_ctrl->cci_info->sid, c_ctrl->cci_info->retries,
 		c_ctrl->cci_info->id_map);
 	val = CCI_I2C_SET_PARAM_CMD | c_ctrl->cci_info->sid << 4 |
 		c_ctrl->cci_info->retries << 16 |
@@ -1371,15 +1876,6 @@ static int32_t cam_cci_read(struct v4l2_subdev *sd,
 		goto rel_mutex_q;
 	}
 
-	val = CCI_I2C_LOCK_CMD;
-	rc = cam_cci_write_i2c_queue(cci_dev, val, master, queue);
-	if (rc < 0) {
-		CAM_DBG(CAM_CCI,
-			"CCI%d_I2C_M%d_Q%d Failed to write lock_cmd for rc: %d",
-			cci_dev->soc_info.index, master, queue, rc);
-		goto rel_mutex_q;
-	}
-
 	if (read_cfg->addr_type >= CAMERA_SENSOR_I2C_TYPE_MAX) {
 		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d_Q%d Failed : Invalid addr type: %u",
 			cci_dev->soc_info.index, master, queue, read_cfg->addr_type);
@@ -1387,18 +1883,23 @@ static int32_t cam_cci_read(struct v4l2_subdev *sd,
 		goto rel_mutex_q;
 	}
 
-	val = CCI_I2C_WRITE_DISABLE_P_CMD | (read_cfg->addr_type << 4);
+	read_data_byte[0] = CCI_I2C_WRITE_DISABLE_P_CMD | (read_cfg->addr_type << 4);
 	for (i = 0; i < read_cfg->addr_type; i++) {
-		val |= ((read_cfg->addr >> (i << 3)) & 0xFF)  <<
-		((read_cfg->addr_type - i) << 3);
+		read_data_byte[read_cfg->addr_type - i] = (read_cfg->addr >> (i * 8)) & 0xFF;
 	}
 
-	rc = cam_cci_write_i2c_queue(cci_dev, val, master, queue);
-	if (rc < 0) {
-		CAM_DBG(CAM_CCI,
-			"CCI%d_I2C_M%d_Q%d Failed to write disable_cmd for rc: %d",
-			cci_dev->soc_info.index, master, queue, rc);
-		goto rel_mutex_q;
+	reg_addr = (uint32_t *)&read_data_byte[0];
+	read_words = DIV_ROUND_UP(read_cfg->addr_type + 1, 4);
+
+	for (i = 0; i < read_words; i++) {
+		rc = cam_cci_write_i2c_queue(cci_dev, *reg_addr, master, queue);
+		if (rc < 0) {
+			CAM_DBG(CAM_CCI,
+				"CCI%d_I2C_M%d_Q%d Failed to write disable_cmd for rc: %d",
+				cci_dev->soc_info.index, master, queue, rc);
+			goto rel_mutex_q;
+		}
+		reg_addr++;
 	}
 
 	val = CCI_I2C_READ_CMD | (read_cfg->num_byte << 4);
@@ -1414,14 +1915,14 @@ static int32_t cam_cci_read(struct v4l2_subdev *sd,
 	rc = cam_cci_write_i2c_queue(cci_dev, val, master, queue);
 	if (rc < 0) {
 		CAM_DBG(CAM_CCI,
-			"CCI%d_I2C_M%d_Q%d Failed to write unlock_cmd for rc: %d",
+			"CCI%d_I2C_M%d_Q%d failed to write unlock_cmd for rc: %d",
 			cci_dev->soc_info.index, master, queue, rc);
 		goto rel_mutex_q;
 	}
 
 	val = cam_io_r_mb(base + CCI_I2C_M0_Q0_CUR_WORD_CNT_ADDR
 			+ master * 0x200 + queue * 0x100);
-	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d cur word cnt 0x%x",
+	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d_CUR_WORD_CNT 0x%x",
 		cci_dev->soc_info.index, master, queue, val);
 	cam_io_w_mb(val, base + CCI_I2C_M0_Q0_EXEC_WORD_CNT_ADDR
 			+ master * 0x200 + queue * 0x100);
@@ -1446,8 +1947,14 @@ static int32_t cam_cci_read(struct v4l2_subdev *sd,
 	}
 
 	if (cci_dev->cci_master_info[master].status) {
-		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d_Q%d ERROR with Slave 0x%x",
-			cci_dev->soc_info.index, master, queue, (c_ctrl->cci_info->sid << 1));
+		if (cci_dev->is_probing)
+			CAM_INFO(CAM_CCI, "CCI%d_I2C_M%d_Q%d ERROR with Slave 0x%x",
+				cci_dev->soc_info.index, master, queue,
+				(c_ctrl->cci_info->sid << 1));
+		else
+			CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d_Q%d ERROR with Slave 0x%x",
+				cci_dev->soc_info.index, master, queue,
+				(c_ctrl->cci_info->sid << 1));
 		rc = -EINVAL;
 		cci_dev->cci_master_info[master].status = 0;
 		goto rel_mutex_q;
@@ -1464,11 +1971,11 @@ static int32_t cam_cci_read(struct v4l2_subdev *sd,
 		goto rel_mutex_q;
 	}
 	index = 0;
-	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d index: %d, num_type: %d",
+	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d index: %d, num_bytes: %d",
 		cci_dev->soc_info.index, master, queue, index, read_cfg->num_byte);
 	first_byte = 0;
 	while (read_words > 0) {
-		val = cam_io_r_mb(base +
+		val = cam_io_r(base +
 			CCI_I2C_M0_READ_DATA_ADDR + master * 0x100);
 		CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d read val: 0x%x",
 			cci_dev->soc_info.index, master, queue, val);
@@ -1509,6 +2016,10 @@ static int32_t cam_cci_i2c_write(struct v4l2_subdev *sd,
 	enum cci_i2c_master_t master;
 
 	cci_dev = v4l2_get_subdevdata(sd);
+	if (!cci_dev) {
+		CAM_ERR(CAM_CCI, "cci_dev NULL");
+		return -EINVAL;
+	}
 
 	if (cci_dev->cci_state != CCI_STATE_ENABLED) {
 		CAM_ERR(CAM_CCI, "invalid cci: %d state: %d",
@@ -1516,6 +2027,13 @@ static int32_t cam_cci_i2c_write(struct v4l2_subdev *sd,
 		return -EINVAL;
 	}
 	master = c_ctrl->cci_info->cci_i2c_master;
+	if (master >= MASTER_MAX || master < 0) {
+		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d Invalid I2C master addr",
+			cci_dev->soc_info.index,
+			master);
+		return -EINVAL;
+	}
+
 	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d_Q%d set param sid 0x%x retries %d id_map %d",
 		cci_dev->soc_info.index, master, queue, c_ctrl->cci_info->sid, c_ctrl->cci_info->retries,
 		c_ctrl->cci_info->id_map);
@@ -1528,6 +2046,7 @@ static int32_t cam_cci_i2c_write(struct v4l2_subdev *sd,
 		return rc;
 	}
 	reinit_completion(&cci_dev->cci_master_info[master].report_q[queue]);
+	reinit_completion(&cci_dev->cci_master_info[master].th_burst_complete[queue]);
 	/*
 	 * Call validate queue to make sure queue is empty before starting.
 	 * If this call fails, don't proceed with i2c_write call. This is to
@@ -1547,12 +2066,22 @@ static int32_t cam_cci_i2c_write(struct v4l2_subdev *sd,
 			cci_dev->soc_info.index, master, queue, c_ctrl->cci_info->retries, CCI_I2C_READ_MAX_RETRIES);
 		goto ERROR;
 	}
-	rc = cam_cci_data_queue(cci_dev, c_ctrl, queue, sync_en);
-	if (rc < 0) {
-		CAM_ERR(CAM_CCI,
-			"CCI%d_I2C_M%d_Q%d Failed in queueing the data for rc: %d",
-			cci_dev->soc_info.index, master, queue, rc);
-		goto ERROR;
+	if (c_ctrl->cmd == MSM_CCI_I2C_WRITE_BURST) {
+		rc = cam_cci_data_queue_burst(cci_dev, c_ctrl, queue, sync_en);
+		if (rc < 0) {
+			CAM_ERR(CAM_CCI,
+				"CCI%d_I2C_M%d_Q%d Failed in queueing i2c Burst write data for rc: %d",
+				cci_dev->soc_info.index, master, queue, rc);
+			goto ERROR;
+		}
+	} else {
+		rc = cam_cci_data_queue(cci_dev, c_ctrl, queue, sync_en);
+		if (rc < 0) {
+			CAM_ERR(CAM_CCI,
+				"CCI%d_I2C_M%d_Q%d Failed in queueing the data for rc: %d",
+				cci_dev->soc_info.index, master, queue, rc);
+			goto ERROR;
+		}
 	}
 
 ERROR:
@@ -1569,16 +2098,14 @@ static void cam_cci_write_async_helper(struct work_struct *work)
 	struct cci_device *cci_dev;
 	struct cci_write_async *write_async =
 		container_of(work, struct cci_write_async, work);
-	struct cam_sensor_i2c_reg_setting *i2c_msg;
 	enum cci_i2c_master_t master;
 	struct cam_cci_master_info *cci_master_info;
 
 	cam_common_util_thread_switch_delay_detect(
-		"CCI workq schedule",
+		"cam_cci_workq", "schedule", cam_cci_write_async_helper,
 		write_async->workq_scheduled_ts,
 		CAM_WORKQ_SCHEDULE_TIME_THRESHOLD);
 	cci_dev = write_async->cci_dev;
-	i2c_msg = &write_async->c_ctrl.cfg.cci_i2c_write_cfg;
 	master = write_async->c_ctrl.cci_info->cci_i2c_master;
 	cci_master_info = &cci_dev->cci_master_info[master];
 
@@ -1590,8 +2117,8 @@ static void cam_cci_write_async_helper(struct work_struct *work)
 		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d_Q%d Failed rc: %d",
 		cci_dev->soc_info.index, master, write_async->queue, rc);
 
-	kfree(write_async->c_ctrl.cfg.cci_i2c_write_cfg.reg_setting);
-	kfree(write_async);
+	CAM_MEM_FREE(write_async->c_ctrl.cfg.cci_i2c_write_cfg.reg_setting);
+	CAM_MEM_FREE(write_async);
 }
 
 static int32_t cam_cci_i2c_write_async(struct v4l2_subdev *sd,
@@ -1605,8 +2132,12 @@ static int32_t cam_cci_i2c_write_async(struct v4l2_subdev *sd,
 	struct cam_sensor_i2c_reg_setting *cci_i2c_write_cfg_w;
 
 	cci_dev = v4l2_get_subdevdata(sd);
+	if (!cci_dev) {
+		CAM_ERR(CAM_CCI, "cci_dev NULL");
+		return -EINVAL;
+	}
 
-	write_async = kzalloc(sizeof(*write_async), GFP_KERNEL);
+	write_async = CAM_MEM_ZALLOC(sizeof(*write_async), GFP_KERNEL);
 	if (!write_async) {
 		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d_Q%d Memory allocation failed for write_async",
 			cci_dev->soc_info.index, c_ctrl->cci_info->cci_i2c_master, queue);
@@ -1624,17 +2155,17 @@ static int32_t cam_cci_i2c_write_async(struct v4l2_subdev *sd,
 	cci_i2c_write_cfg_w = &write_async->c_ctrl.cfg.cci_i2c_write_cfg;
 
 	if (cci_i2c_write_cfg->size == 0) {
-		kfree(write_async);
+		CAM_MEM_FREE(write_async);
 		return -EINVAL;
 	}
 
 	cci_i2c_write_cfg_w->reg_setting =
-		kzalloc(sizeof(struct cam_sensor_i2c_reg_array)*
+		CAM_MEM_ZALLOC(sizeof(struct cam_sensor_i2c_reg_array)*
 		cci_i2c_write_cfg->size, GFP_KERNEL);
 	if (!cci_i2c_write_cfg_w->reg_setting) {
 		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d_Q%d Couldn't allocate memory for reg_setting",
 			cci_dev->soc_info.index, c_ctrl->cci_info->cci_i2c_master, queue);
-		kfree(write_async);
+		CAM_MEM_FREE(write_async);
 		return -ENOMEM;
 	}
 	memcpy(cci_i2c_write_cfg_w->reg_setting,
@@ -1711,8 +2242,12 @@ static int32_t cam_cci_read_bytes_v_1_2(struct v4l2_subdev *sd,
 		cci_dev->is_burst_read[master] = false;
 		rc = cam_cci_read(sd, c_ctrl);
 		if (rc) {
-			CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d failed to read rc: %d",
-				cci_dev->soc_info.index, master, rc);
+			if (cci_dev->is_probing)
+				CAM_INFO(CAM_CCI, "CCI%d_I2C_M%d failed to read rc: %d",
+					cci_dev->soc_info.index, master, rc);
+			else
+				CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d failed to read rc: %d",
+					cci_dev->soc_info.index, master, rc);
 			goto ERROR;
 		}
 
@@ -1764,6 +2299,8 @@ static int32_t cam_cci_read_bytes(struct v4l2_subdev *sd,
 		return -EINVAL;
 	}
 
+	cci_dev->is_probing = c_ctrl->is_probing;
+
 	master = c_ctrl->cci_info->cci_i2c_master;
 	read_cfg = &c_ctrl->cfg.cci_i2c_read_cfg;
 	if ((!read_cfg->num_byte) || (read_cfg->num_byte > CCI_I2C_MAX_READ)) {
@@ -1799,8 +2336,12 @@ static int32_t cam_cci_read_bytes(struct v4l2_subdev *sd,
 			rc = cam_cci_read(sd, c_ctrl);
 		}
 		if (rc) {
-			CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d Failed to read rc:%d",
-				cci_dev->soc_info.index, master, rc);
+			if (cci_dev->is_probing)
+				CAM_INFO(CAM_CCI, "CCI%d_I2C_M%d Failed to read rc:%d",
+					cci_dev->soc_info.index, master, rc);
+			else
+				CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d Failed to read rc:%d",
+					cci_dev->soc_info.index, master, rc);
 			goto ERROR;
 		}
 
@@ -1841,10 +2382,14 @@ static int32_t cam_cci_i2c_set_sync_prms(struct v4l2_subdev *sd,
 static int32_t cam_cci_release(struct v4l2_subdev *sd,
 	enum cci_i2c_master_t master)
 {
-	uint8_t rc = 0;
+	int                rc;
 	struct cci_device *cci_dev;
 
 	cci_dev = v4l2_get_subdevdata(sd);
+	if (!cci_dev) {
+		CAM_ERR(CAM_CCI, "cci_dev NULL");
+		return -EINVAL;
+	}
 
 	rc = cam_cci_soc_release(cci_dev, master);
 	if (rc < 0) {
@@ -1884,8 +2429,9 @@ static int32_t cam_cci_write(struct v4l2_subdev *sd,
 
 	cci_master_info = &cci_dev->cci_master_info[master];
 
-	switch (c_ctrl->cmd) {
 	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d ctrl_cmd = %d", cci_dev->soc_info.index, master, c_ctrl->cmd);
+
+	switch (c_ctrl->cmd) {
 	case MSM_CCI_I2C_WRITE_SYNC_BLOCK:
 		mutex_lock(&cci_master_info->mutex_q[SYNC_QUEUE]);
 		rc = cam_cci_i2c_write(sd, c_ctrl,
@@ -1897,8 +2443,6 @@ static int32_t cam_cci_write(struct v4l2_subdev *sd,
 			SYNC_QUEUE, MSM_SYNC_ENABLE);
 		break;
 	case MSM_CCI_I2C_WRITE:
-	case MSM_CCI_I2C_WRITE_SEQ:
-	case MSM_CCI_I2C_WRITE_BURST:
 		for (i = 0; i < NUM_QUEUES; i++) {
 			if (mutex_trylock(&cci_master_info->mutex_q[i])) {
 				rc = cam_cci_i2c_write(sd, c_ctrl, i,
@@ -1907,6 +2451,13 @@ static int32_t cam_cci_write(struct v4l2_subdev *sd,
 				return rc;
 			}
 		}
+		mutex_lock(&cci_master_info->mutex_q[PRIORITY_QUEUE]);
+		rc = cam_cci_i2c_write(sd, c_ctrl,
+			PRIORITY_QUEUE, MSM_SYNC_DISABLE);
+		mutex_unlock(&cci_master_info->mutex_q[PRIORITY_QUEUE]);
+		break;
+	case MSM_CCI_I2C_WRITE_SEQ:
+	case MSM_CCI_I2C_WRITE_BURST:
 		mutex_lock(&cci_master_info->mutex_q[PRIORITY_QUEUE]);
 		rc = cam_cci_i2c_write(sd, c_ctrl,
 			PRIORITY_QUEUE, MSM_SYNC_DISABLE);
@@ -1935,8 +2486,8 @@ int32_t cam_cci_core_cfg(struct v4l2_subdev *sd,
 		return -EINVAL;
 	}
 
-	if (!cci_ctrl || !cci_ctrl->cci_info) {
-		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d CCI_CTRL OR CCI_INFO IS NULL", cci_dev->soc_info.index, master);
+	if (!cci_ctrl) {
+		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d CCI_CTRL IS NULL", cci_dev->soc_info.index, master);
 		return -EINVAL;
 	}
 
@@ -1946,10 +2497,11 @@ int32_t cam_cci_core_cfg(struct v4l2_subdev *sd,
 		return -EINVAL;
 	}
 
-	if (cci_dev->cci_master_info[master].status < 0) {
+	if ((cci_dev->cci_master_info[master].status < 0) && (cci_ctrl->cmd != MSM_CCI_RELEASE)) {
 		CAM_WARN(CAM_CCI, "CCI hardware is resetting");
 		return -EAGAIN;
 	}
+	cci_dev->is_probing = false;
 	CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d cmd = %d", cci_dev->soc_info.index, master, cci_ctrl->cmd);
 
 	switch (cci_ctrl->cmd) {
@@ -1997,3 +2549,155 @@ int32_t cam_cci_core_cfg(struct v4l2_subdev *sd,
 
 	return rc;
 }
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#define MAX_WRITE_ARRAY_SIZE   300
+static struct cam_cci_ctrl cci_ctrl_interface;
+static struct cam_sensor_cci_client cci_ctrl_interface_info;
+static struct cam_sensor_i2c_reg_array write_regarray[MAX_WRITE_ARRAY_SIZE];
+bool dump_tof_registers = FALSE;
+
+int32_t cam_cci_read_packet(struct cam_cci_ctrl *cci_ctrl,
+	uint32_t addr, uint8_t *data,uint32_t count)
+{
+	int32_t rc = -EINVAL;
+
+	cci_ctrl->cmd = MSM_CCI_I2C_READ;
+	cci_ctrl->cfg.cci_i2c_read_cfg.addr = addr;
+	cci_ctrl->cfg.cci_i2c_read_cfg.addr_type = CAMERA_SENSOR_I2C_TYPE_BYTE;
+	cci_ctrl->cfg.cci_i2c_read_cfg.data_type = CAMERA_SENSOR_I2C_TYPE_BYTE;
+	cci_ctrl->cfg.cci_i2c_read_cfg.data = data;
+	cci_ctrl->cfg.cci_i2c_read_cfg.num_byte = count;
+
+	rc = cci_ctrl->status;
+	return rc;
+}
+
+static int32_t cam_cci_write_packet(
+	struct cam_cci_ctrl *cci_ctrl,
+	int addr,
+	uint8_t *data,
+	uint16_t count)
+{
+	int32_t rc = 0;
+	int i;
+	memset(write_regarray,0,sizeof(write_regarray));
+	if (!cci_ctrl || !data)
+		return rc;
+	if(count > MAX_WRITE_ARRAY_SIZE){
+		CAM_ERR(CAM_SENSOR, "fatal error!!count exceeds 300,count=%d",
+			count);
+		count = MAX_WRITE_ARRAY_SIZE;
+	}
+	for(i=0; i<count; i++){
+		write_regarray[i].reg_addr = addr+i;
+		write_regarray[i].reg_data = data[i];
+	}
+	cci_ctrl->cfg.cci_i2c_write_cfg.reg_setting =
+		write_regarray;
+	cci_ctrl->cfg.cci_i2c_write_cfg.data_type = CAMERA_SENSOR_I2C_TYPE_BYTE;
+	cci_ctrl->cfg.cci_i2c_write_cfg.addr_type = CAMERA_SENSOR_I2C_TYPE_BYTE;
+	cci_ctrl->cfg.cci_i2c_write_cfg.size = count;
+
+	if (rc < 0) {
+		CAM_ERR(CAM_SENSOR, "Failed rc = %d", rc);
+		return rc;
+	}
+	rc = cci_ctrl->status;
+	//if (write_setting->delay > 20)
+	//	  msleep(write_setting->delay);
+	//else if (write_setting->delay)
+	//	  usleep_range(write_setting->delay * 1000, (write_setting->delay
+	//		  * 1000) + 1000);
+
+	return rc;
+}
+
+int32_t cam_cci_control_interface(void* control)
+{
+
+	int32_t rc = 0,exp_byte;
+	struct v4l2_subdev *sd = cam_cci_get_subdev(CCI_DEVICE_1);
+	struct cci_device *cci_dev = v4l2_get_subdevdata(sd);
+	struct camera_cci_transfer* pControl = (struct camera_cci_transfer*)control;
+	int i=0;
+
+	switch (pControl->cmd) {
+	case CAMERA_CCI_INIT:
+		memset(&cci_ctrl_interface,0,sizeof(cci_ctrl_interface));
+		memset(&cci_ctrl_interface_info,0,sizeof(cci_ctrl_interface_info));
+		cci_ctrl_interface.cci_info = &cci_ctrl_interface_info;
+		cci_ctrl_interface.cci_info->cci_i2c_master = MASTER_1;
+		cci_ctrl_interface.cci_info->i2c_freq_mode = I2C_FAST_PLUS_MODE;
+		cci_ctrl_interface.cci_info->sid = (0x82 >> 1);
+		cci_ctrl_interface.cci_info->retries = 3;
+		cci_ctrl_interface.cci_info->cci_device = CCI_DEVICE_1;
+		mutex_lock(&cci_dev->init_mutex);
+		rc = cam_cci_init(sd, &cci_ctrl_interface);
+		mutex_unlock(&cci_dev->init_mutex);
+		CAM_INFO(CAM_CCI, "cci init cmd,rc=%d",rc);
+		break;
+	case CAMERA_CCI_RELEASE:
+		mutex_lock(&cci_dev->init_mutex);
+		rc = cam_cci_release(sd, cci_ctrl_interface.cci_info->cci_i2c_master);
+		mutex_unlock(&cci_dev->init_mutex);
+		CAM_INFO(CAM_CCI, "cci release cmd,rc=%d",rc);
+		break;
+	case CAMERA_CCI_READ:
+		cci_ctrl_interface.cmd = MSM_CCI_I2C_READ;
+		//pack read data
+		cam_cci_read_packet(&cci_ctrl_interface,
+							pControl->addr,
+							pControl->data,
+							pControl->count);
+		mutex_lock(&cci_dev->init_mutex);
+		cci_ctrl_interface.cci_info->cci_device=CCI_DEVICE_1;
+		rc = cam_cci_read_bytes(sd, &cci_ctrl_interface);
+		mutex_unlock(&cci_dev->init_mutex);
+		if(dump_tof_registers){
+			CAM_ERR(CAM_CCI, "tof_registers %d,rc=%d", pControl->cmd,rc);
+			exp_byte = cci_ctrl_interface.cfg.cci_i2c_read_cfg.num_byte;//((cci_ctrl_interface.cfg.cci_i2c_read_cfg.num_byte / 2) + 1);
+			CAM_ERR(CAM_CCI, "tof_registers read exp byte=%d", exp_byte);
+			for(i=0; i<exp_byte; i++){
+				CAM_ERR(CAM_CCI, "tof_registers read addr =0x%x byte=0x%x,index=%d",
+					cci_ctrl_interface.cfg.cci_i2c_read_cfg.addr,cci_ctrl_interface.cfg.cci_i2c_read_cfg.data[i],i);
+			}
+		}
+		break;
+	case CAMERA_CCI_WRITE:
+		//if(pControl->count>1)
+		//	  cci_ctrl_interface.cmd = MSM_CCI_I2C_WRITE_SEQ;
+		//else
+		//	  cci_ctrl_interface.cmd = MSM_CCI_I2C_WRITE_SYNC_BLOCK;
+		cci_ctrl_interface.cmd = MSM_CCI_I2C_WRITE;
+		//pack write data
+		cam_cci_write_packet(&cci_ctrl_interface,
+							pControl->addr,
+							pControl->data,
+							pControl->count);
+		mutex_lock(&cci_dev->init_mutex);
+		rc = cam_cci_write(sd, &cci_ctrl_interface);
+		mutex_unlock(&cci_dev->init_mutex);
+		if(dump_tof_registers){
+			exp_byte = cci_ctrl_interface.cfg.cci_i2c_write_cfg.size;
+			CAM_ERR(CAM_CCI, "tof_registers write exp byte=%d", exp_byte);
+			for(i=0; i<exp_byte; i++){
+				CAM_ERR(CAM_CCI, "tof_registers write i=%d,addr=0x%x data=0x%x",i,
+					cci_ctrl_interface.cfg.cci_i2c_write_cfg.reg_setting[i].reg_addr,
+					cci_ctrl_interface.cfg.cci_i2c_write_cfg.reg_setting[i].reg_data);
+			}
+		}
+		if(rc < 0){
+			CAM_ERR(CAM_CCI, "cmd %d,rc=%d",pControl->cmd,rc);
+		}
+		break;
+	default:
+		rc = -ENOIOCTLCMD;
+	}
+
+	cci_ctrl_interface.status = rc;
+	return rc;
+}
+EXPORT_SYMBOL(cam_cci_control_interface);
+EXPORT_SYMBOL(dump_tof_registers);
+#endif

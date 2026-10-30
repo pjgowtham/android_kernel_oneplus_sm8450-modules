@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "cam_cci_dev.h"
 #include "cam_cci_core.h"
+#include "linux/interrupt.h"
+#include "uapi/linux/sched/types.h"
+#include "linux/sched/types.h"
 
 static int cam_cci_init_master(struct cci_device *cci_dev,
 	enum cci_i2c_master_t master)
 {
-	int i = 0, rc = 0;
-	void __iomem *base = NULL;
-	struct cam_hw_soc_info *soc_info = NULL;
-	uint32_t max_queue_0_size = 0, max_queue_1_size = 0;
+	int                     i, rc;
+	void __iomem           *base;
+	struct cam_hw_soc_info *soc_info;
+	uint32_t                max_queue_0_size, max_queue_1_size;
 
 	soc_info = &cci_dev->soc_info;
 	base = soc_info->reg_map[0].mem_base;
@@ -122,12 +125,21 @@ int cam_cci_init(struct v4l2_subdev *sd,
 
 	master = c_ctrl->cci_info->cci_i2c_master;
 	soc_info = &cci_dev->soc_info;
+
+	if (!soc_info) {
+		CAM_ERR(CAM_CCI,
+			"CCI%d_I2C_M%d failed: invalid params soc_info:%pK",
+			cci_dev->soc_info.index, master, soc_info);
+		rc = -EINVAL;
+		return rc;
+	}
+
 	base = soc_info->reg_map[0].mem_base;
 
-	if (!soc_info || !base) {
+	if (!base) {
 		CAM_ERR(CAM_CCI,
-			"CCI%d_I2C_M%d failed: invalid params soc_info:%pK, base:%pK",
-			cci_dev->soc_info.index, master, soc_info, base);
+			"CCI%d_I2C_M%d failed: invalid params base:%pK",
+			cci_dev->soc_info.index, master, base);
 		rc = -EINVAL;
 		return rc;
 	}
@@ -158,7 +170,7 @@ int cam_cci_init(struct v4l2_subdev *sd,
 	}
 
 	ahb_vote.type = CAM_VOTE_ABSOLUTE;
-	ahb_vote.vote.level = CAM_LOWSVS_VOTE;
+	ahb_vote.vote.level = CAM_LOWSVS_D1_VOTE;
 	axi_vote.num_paths = 1;
 	axi_vote.axi_path[0].path_data_type = CAM_AXI_PATH_DATA_ALL;
 	axi_vote.axi_path[0].transac_type = CAM_AXI_TRANSACTION_WRITE;
@@ -176,8 +188,8 @@ int cam_cci_init(struct v4l2_subdev *sd,
 	cam_cci_get_clk_rates(cci_dev, c_ctrl);
 
 	/* Enable Regulators and IRQ*/
-	rc = cam_soc_util_enable_platform_resource(soc_info, true,
-		CAM_LOWSVS_VOTE, true);
+	rc = cam_soc_util_enable_platform_resource(soc_info, CAM_CLK_SW_CLIENT_IDX, true,
+		soc_info->lowest_clk_level, true);
 	if (rc < 0) {
 		CAM_DBG(CAM_CCI, "CCI%d_I2C_M%d request platform resources failed, rc: %d",
 			cci_dev->soc_info.index, master, rc);
@@ -220,7 +232,7 @@ int cam_cci_init(struct v4l2_subdev *sd,
 	return 0;
 
 reset_complete_failed:
-	cam_soc_util_disable_platform_resource(soc_info, true, true);
+	cam_soc_util_disable_platform_resource(soc_info, CAM_CLK_SW_CLIENT_IDX, true, true);
 platform_enable_failed:
 	cci_dev->ref_count--;
 	cam_cpas_stop(cci_dev->cpas_handle);
@@ -258,6 +270,8 @@ static void cam_cci_init_cci_params(struct cci_device *new_cci_dev)
 			mutex_init(&new_cci_dev->cci_master_info[i].mutex_q[j]);
 			init_completion(
 				&new_cci_dev->cci_master_info[i].report_q[j]);
+			init_completion(
+				&new_cci_dev->cci_master_info[i].th_burst_complete[j]);
 			spin_lock_init(
 				&new_cci_dev->cci_master_info[i].lock_q[j]);
 		}
@@ -389,6 +403,12 @@ int cam_cci_parse_dt_info(struct platform_device *pdev,
 	int rc = 0, i = 0;
 	struct cam_hw_soc_info *soc_info =
 		&new_cci_dev->soc_info;
+	void *irq_data[CAM_SOC_MAX_IRQ_LINES_PER_DEV] = {0};
+	int32_t  num_irq = 0;
+	struct task_struct  *task = NULL;
+	struct irq_desc     *desc = NULL;
+	struct sched_param param = {0};
+
 
 	rc = cam_soc_util_get_dt_properties(soc_info);
 	if (rc < 0) {
@@ -398,12 +418,53 @@ int cam_cci_parse_dt_info(struct platform_device *pdev,
 
 	new_cci_dev->ref_count = 0;
 
+	for (i = 0; i < soc_info->irq_count; i++)
+		irq_data[i] = new_cci_dev;
+	/*
+	 * Bypass devm_request_irq() and induce
+	 * devm_request_threaded_irq() externally.
+	 */
+	num_irq = soc_info->irq_count;
+	soc_info->irq_count = 0;
 	rc = cam_soc_util_request_platform_resource(soc_info,
-		cam_cci_irq, new_cci_dev);
+		cam_cci_irq, &(irq_data[0]));
 	if (rc < 0) {
 		CAM_ERR(CAM_CCI, "requesting platform resources failed:%d", rc);
 		return -EINVAL;
 	}
+	soc_info->irq_count = num_irq;
+	for (i = 0; i < soc_info->irq_count; i++) {
+		rc = devm_request_threaded_irq(&pdev->dev,
+			soc_info->irq_num[i],
+			cam_cci_irq,
+			cam_cci_threaded_irq,
+			IRQF_TRIGGER_RISING,
+			soc_info->irq_name[i],
+			(void *)(irq_data[i]));
+		if (rc < 0) {
+			CAM_ERR(CAM_CCI, "Failed to reserve IRQ: %d", rc);
+			return -EINVAL;
+		}
+		disable_irq(soc_info->irq_num[i]);
+		desc = irq_to_desc(soc_info->irq_num[i]);
+		if (!desc) {
+			CAM_WARN(CAM_CCI,
+				"Unable to locate Descriptor for irq_num: %d",
+				soc_info->irq_num[i]);
+		} else {
+			task = desc->action->thread;
+			param.sched_priority = MAX_RT_PRIO - 1;
+			if (task) {
+				rc = sched_setscheduler(task, SCHED_FIFO, &param);
+				if (rc) {
+					CAM_ERR(CAM_CCI,
+						"non-fatal: Failed to set Scheduler Priority: %d",
+						rc);
+				}
+			}
+		}
+	}
+
 	new_cci_dev->v4l2_dev_str.pdev = pdev;
 	cam_cci_init_cci_params(new_cci_dev);
 	cam_cci_init_clk_params(new_cci_dev);
@@ -456,7 +517,7 @@ int cam_cci_soc_release(struct cci_device *cci_dev,
 		cci_dev->i2c_freq_mode[i] = I2C_MAX_MODES;
 	}
 
-	rc = cam_soc_util_disable_platform_resource(soc_info, true, true);
+	rc = cam_soc_util_disable_platform_resource(soc_info, CAM_CLK_SW_CLIENT_IDX, true, true);
 	if (rc) {
 		CAM_ERR(CAM_CCI, "CCI%d_I2C_M%d platform resources disable failed, rc: %d",
 			cci_dev->soc_info.index, master, rc);

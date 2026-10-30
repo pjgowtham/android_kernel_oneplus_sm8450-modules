@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_COMMON_UTIL_H_
@@ -9,6 +9,8 @@
 
 #include <linux/types.h>
 #include <linux/kernel.h>
+
+#include "cam_hw_mgr_intf.h"
 
 #define CAM_BITS_MASK_SHIFT(x, mask, shift) (((x) & (mask)) >> shift)
 #define CAM_36BIT_INTF_GET_IOVA_BASE(iova) ((iova) >> 8)
@@ -18,39 +20,145 @@
 #define CAM_COMMON_MINI_DUMP_DEV_NAME_LEN 16
 #define CAM_COMMON_MINI_DUMP_SIZE         10 * 1024 * 1024
 
-#define CAM_COMMON_HW_DUMP_TAG_MAX_LEN 64
+#define CAM_COMMON_HW_DUMP_TAG_MAX_LEN 128
+#define CAM_MAX_NUM_CCI_PAYLOAD_BYTES     11
+
+#define CAM_COMMON_EVT_INJECT_MODULE_PARAM_MAX_LENGTH 4096
+#define CAM_COMMON_EVT_INJECT_BUFFER_LEN              200
+#define CAM_COMMON_EVT_INJECT_BUFFER_ERROR "Buffer_Error"
+#define CAM_COMMON_EVT_INJECT_NOTIFY_EVENT "Notify_Event"
+#define CAM_COMMON_IFE_NODE  "IFE"
+#define CAM_COMMON_ICP_NODE  "IPE"
+#define CAM_COMMON_JPEG_NODE "JPEG"
+
+#define CAM_COMMON_NS_PER_MS              1000000ULL
 
 #define PTR_TO_U64(ptr) ((uint64_t)(uintptr_t)ptr)
 #define U64_TO_PTR(ptr) ((void *)(uintptr_t)ptr)
 
+#define CAM_TRIGGER_PANIC(format, args...) panic("CAMERA - " format "\n", ##args)
+
+#define CAM_GET_BOOT_TIMESTAMP(timestamp) ktime_get_boottime_ts64(&(timestamp))
 #define CAM_GET_TIMESTAMP(timestamp) ktime_get_real_ts64(&(timestamp))
-#define CAM_GET_TIMESTAMP_DIFF_IN_MICRO(ts_start, ts_end, diff_microsec)         \
-({                                                                               \
-	diff_microsec = 0;                                                       \
-	if (ts_end.tv_nsec >= ts_start.tv_nsec) {                                \
-		diff_microsec =                                                  \
-			(ts_end.tv_nsec - ts_start.tv_nsec) / 1000;              \
-		diff_microsec +=                                                 \
-			(ts_end.tv_sec - ts_start.tv_sec) * 1000 * 1000;         \
-	} else {                                                                 \
-		diff_microsec =                                                  \
-			(ts_end.tv_nsec +                                        \
-			(1000*1000*1000 - ts_start.tv_nsec)) / 1000;             \
-		diff_microsec +=                                                 \
-			(ts_end.tv_sec - ts_start.tv_sec - 1) * 1000 * 1000;     \
-	}                                                                        \
+#define CAM_GET_TIMESTAMP_DIFF_IN_MICRO(ts_start, ts_end, diff_microsec)                     \
+({                                                                                           \
+	diff_microsec = 0;                                                                   \
+	if (ts_end.tv_nsec >= ts_start.tv_nsec) {                                            \
+		diff_microsec =                                                              \
+			(ts_end.tv_nsec - ts_start.tv_nsec) / 1000;                          \
+		diff_microsec +=                                                             \
+			(ts_end.tv_sec - ts_start.tv_sec) * 1000 * 1000;                     \
+	} else {                                                                             \
+		diff_microsec =                                                              \
+			(ts_end.tv_nsec +                                                    \
+			(1000*1000*1000 - ts_start.tv_nsec)) / 1000;                         \
+		diff_microsec +=                                                             \
+			(ts_end.tv_sec - ts_start.tv_sec - 1) * 1000 * 1000;                 \
+	}                                                                                    \
+})
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#define CAM_GET_TIMESTAMP_NS(timestamp)                  \
+({                                                       \
+	struct timespec64 current_ts;                        \
+	CAM_GET_TIMESTAMP(current_ts);                       \
+	timestamp = (current_ts.tv_sec % 1000) * 1000 * CAM_COMMON_NS_PER_MS + current_ts.tv_nsec; \
+})
+#endif
+#define CAM_CONVERT_TIMESTAMP_FORMAT(ts, hrs, min, sec, ms)                                  \
+({                                                                                           \
+	uint64_t tmp = ((ts).tv_sec);                                                        \
+	(ms) = ((ts).tv_nsec) / 1000000;                                                     \
+	(sec) = do_div(tmp, 60);                                                             \
+	(min) = do_div(tmp, 60);                                                             \
+	(hrs) = do_div(tmp, 24);                                                             \
 })
 
-#define CAM_CONVERT_TIMESTAMP_FORMAT(ts, hrs, min, sec, ms)                      \
-({                                                                               \
-	uint64_t tmp = ((ts).tv_sec);                                            \
-	(ms) = ((ts).tv_nsec) / 1000000;                                         \
-	(sec) = do_div(tmp, 60);                                                 \
-	(min) = do_div(tmp, 60);                                                 \
-	(hrs) = do_div(tmp, 24);                                                 \
+#define CAM_COMMON_WAIT_FOR_COMPLETION_TIMEOUT_ERRMSG(complete, timeout_jiffies, module_id,  \
+	fmt, args...)                                                                        \
+({                                                                                           \
+	struct timespec64 start_time, end_time;                                              \
+	unsigned long rem_jiffies;                                                           \
+	start_time = ktime_to_timespec64(ktime_get());                                       \
+	rem_jiffies = cam_common_wait_for_completion_timeout((complete), (timeout_jiffies)); \
+	if (!rem_jiffies) {                                                                  \
+		end_time = ktime_to_timespec64(ktime_get());                                 \
+		CAM_ERR(module_id,                                                           \
+		fmt " (timeout: %ums start: timestamp:[%lld:%06lld] end: timestamp:[%lld:%06lld])",\
+		##args, jiffies_to_msecs(timeout_jiffies),                                   \
+		start_time.tv_sec, (start_time.tv_nsec/NSEC_PER_USEC),                       \
+		end_time.tv_sec, (end_time.tv_nsec/NSEC_PER_USEC));                          \
+	}                                                                                    \
+	rem_jiffies;                                                                         \
 })
 
-typedef unsigned long (*cam_common_mini_dump_cb) (void *dst, unsigned long len);
+/*
+ * Sanitizes the linked list entry for event payload
+ */
+#define CAM_COMMON_SANITIZE_LIST_ENTRY(evt_payload, payload_struct_type)                      \
+({                                                                                            \
+	memset(evt_payload, 0, sizeof(payload_struct_type));                               \
+})
+
+/*
+ * manage locking between process context and tasklets.
+ * use appropriate api based on current context.
+ */
+#define _SPIN_LOCK_PROCESS_TO_BH(lock)          \
+({                                              \
+		if (in_task())			\
+			spin_lock_bh(lock);	\
+		else				\
+			spin_lock(lock);	\
+})                                              \
+
+#define _SPIN_UNLOCK_PROCESS_TO_BH(lock)        \
+({                                              \
+		if (in_task())			\
+			spin_unlock_bh(lock);	\
+		else				\
+			spin_unlock(lock);	\
+})                                              \
+
+typedef unsigned long (*cam_common_mini_dump_cb) (void *dst,
+	unsigned long len, void *priv_data);
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/* Memory pool configuration */
+#define MEMORY_POOL_COUNT 2
+
+#define MEMORY_BLOCK_1    6144
+#define MEMORY_BLOCK_2    30720
+
+#define MEMORY_BLOCK_1_COUNT	8
+#define MEMORY_BLOCK_2_COUNT	15
+
+#define MEMORY_POOL_DESTROY_DELAY_SEC 600  // 10min delay (600 seconds)
+#define MEMORY_POOL_DESTROY_WARNING_DELAY_MS 100  // 50ms warning delay before destruction
+
+/* Memory pool state machine - using binary flags */
+typedef enum {
+	MEMORY_POOL_STATE_DESTROYED = 0x01,    /* 000001 - Destroyed */
+	MEMORY_POOL_STATE_CREATING = 0x02,     /* 000010 - Creating */
+	MEMORY_POOL_STATE_CREATED = 0x04,      /* 000100 - Created */
+	MEMORY_POOL_STATE_DESTROY_DELAY = 0x08, /* 001000 - Destroy Delay */
+	MEMORY_POOL_STATE_DESTROY_WARNING = 0x10, /* 010000 - Destroy Warning */
+	MEMORY_POOL_STATE_DESTROYING = 0x20    /* 100000 - Destroying */
+} memory_pool_state_t;
+
+/* 11110011 ~(MEMORY_POOL_STATE_CREATED|MEMORY_POOL_STATE_DESTROY_DELAY)*/
+#define MEMORY_POOL_CANNOT_ALLOC_MASK 0xF3
+
+/* Memory allocation retry configuration */
+#define MEMORY_ALLOC_RETRY_COUNT 5
+#define MEMORY_ALLOC_RETRY_DELAY_MS 5
+
+
+typedef struct {
+	void *address;
+	size_t size;
+	atomic_t allocated;
+} memory_block_t;
+#endif
 
 /**
  * struct cam_common_mini_dump_dev_info
@@ -63,6 +171,7 @@ struct cam_common_mini_dump_dev_info {
 	cam_common_mini_dump_cb  dump_cb[CAM_COMMON_MINI_DUMP_DEV_NUM];
 	uint8_t                  name[CAM_COMMON_MINI_DUMP_DEV_NUM]
 				    [CAM_COMMON_MINI_DUMP_DEV_NAME_LEN];
+	void                    *priv_data[CAM_COMMON_MINI_DUMP_DEV_NUM];
 	uint8_t                  num_devs;
 	bool                     is_registered;
 };
@@ -77,6 +186,96 @@ struct cam_common_mini_dump_data {
 	void          *waddr[CAM_COMMON_MINI_DUMP_DEV_NUM];
 	uint8_t        name[CAM_COMMON_MINI_DUMP_DEV_NUM][CAM_COMMON_MINI_DUMP_DEV_NAME_LEN];
 	unsigned long  size[CAM_COMMON_MINI_DUMP_DEV_NUM];
+};
+
+
+typedef int (*cam_common_evt_inject_cb) (void *inject_args);
+
+enum cam_common_evt_inject_str_id_type {
+	CAM_COMMON_EVT_INJECT_BUFFER_ERROR_TYPE,
+	CAM_COMMON_EVT_INJECT_NOTIFY_EVENT_TYPE
+};
+
+enum cam_common_evt_inject_hw_id {
+	CAM_COMMON_EVT_INJECT_HW_ISP,
+	CAM_COMMON_EVT_INJECT_HW_ICP,
+	CAM_COMMON_EVT_INJECT_HW_JPEG,
+	CAM_COMMON_EVT_INJECT_HW_MAX
+};
+
+enum cam_common_evt_inject_common_param_pos {
+	STRING_ID,
+	HW_NAME,
+	DEV_HDL,
+	REQ_ID,
+	COMMON_PARAM_MAX
+};
+
+enum cam_common_evt_inject_notify_event_pos {
+	EVT_NOTIFY_TYPE,
+	EVT_NOTIFY_PARAM_MAX
+};
+
+enum cam_evt_inject_buffer_error_event {
+	SYNC_ERROR_CAUSE,
+	BUFFER_ERROR_PARAM_MAX
+};
+
+enum cam_evt_inject_error_param_pos {
+	ERR_PARAM_ERR_TYPE,
+	ERR_PARAM_ERR_CODE,
+	ERR_PARAM_MAX
+};
+
+enum cam_evt_inject_node_param_pos {
+	EVENT_TYPE,
+	EVENT_CAUSE,
+	NODE_PARAM_MAX,
+};
+
+enum cam_evt_inject_pf_params_pos {
+	PF_PARAM_CTX_FOUND,
+	PF_PARAM_MAX
+};
+
+/**
+ * struct cam_common_evt_inject_data
+ * @buf_done_data: buf done data
+ * @evt_params   : event params for the injected event
+ */
+struct cam_common_evt_inject_data {
+	void                           *buf_done_data;
+	struct cam_hw_inject_evt_param *evt_params;
+};
+
+typedef int (*cam_common_evt_inject_ops) (void *cam_ctx,
+	struct cam_common_evt_inject_data *inject_evt);
+
+/**
+ * struct cam_common_inject_evt_param
+ * @evt_params : injection event params
+ * @dev_hdl    : device handle to match with ctx's dev_hdl
+ * @hw_id      : hw to be injected with the event
+ */
+struct cam_common_inject_evt_param {
+	struct list_head list;
+	struct cam_hw_inject_evt_param evt_params;
+	int32_t dev_hdl;
+	uint8_t hw_id;
+};
+
+/**
+ * struct cam_common_inject_evt_info
+ * @evt_inject_cb      : address of callback
+ * @active_err_ctx_list: list containing active evt inject requests
+ * @num_hw_registered  : number of callbacks registered
+ * @is_list_initialised: bool to check init for evt_inject list
+ */
+struct cam_common_inject_evt_info {
+	cam_common_evt_inject_cb    evt_inject_cb[CAM_COMMON_EVT_INJECT_HW_MAX];
+	struct list_head            active_evt_ctx_list;
+	uint8_t                     num_hw_registered;
+	bool                        is_list_initialised;
 };
 
 /**
@@ -110,6 +309,13 @@ struct cam_common_hw_dump_header {
 	uint64_t  size;
 	uint32_t  word_size;
 };
+
+/**
+ * @brief                 release all event inject params in the g_inject_evt_info
+ *                        for a specific dev_hdl
+ * @dev_hdl:              device handle to which the evt inject params belong to
+ */
+void cam_common_release_evt_params(int32_t dev_hdl);
 
 /**
  * cam_common_util_get_string_index()
@@ -197,13 +403,15 @@ int cam_common_modify_timer(struct timer_list *timer, int32_t timeout_val);
  *
  * @brief                  Detect if there is any scheduling delay
  *
- * @token:                 String identifier to print workq name or tasklet
+ * @wq_name:               workq name
+ * @state:                 either schedule or execution
+ * @cb:                    callback scheduled or executed
  * @scheduled_time:        Time when workq or tasklet was scheduled
  * @threshold:             Threshold time
  *
  */
-void cam_common_util_thread_switch_delay_detect(const char *token,
-	ktime_t scheduled_time, uint32_t threshold);
+void cam_common_util_thread_switch_delay_detect(char *wq_name, const char *state,
+	void *cb, ktime_t scheduled_time, uint32_t threshold);
 
 /**
  * cam_common_register_mini_dump_cb()
@@ -217,11 +425,11 @@ void cam_common_util_thread_switch_delay_detect(const char *token,
  */
 #if IS_REACHABLE(CONFIG_QCOM_VA_MINIDUMP)
 int cam_common_register_mini_dump_cb(
-	cam_common_mini_dump_cb mini_dump_cb, uint8_t *name);
+	cam_common_mini_dump_cb mini_dump_cb, uint8_t *dev_name, void *priv_data);
 #else
 static inline int cam_common_register_mini_dump_cb(
 	cam_common_mini_dump_cb mini_dump_cb,
-	uint8_t *dev_name)
+	uint8_t *dev_name, void *priv_data)
 {
 	return 0;
 }
@@ -260,6 +468,20 @@ int cam_common_user_dump_helper(
 	...);
 
 /**
+ * cam_common_register_evt_inject_cb()
+ *
+ * @brief                  common interface to register evt inject cb
+ *
+ * @evt_inject_cb:         Pointer to evt_inject_cb
+ * @hw_id:                 HW id of the HW driver registering
+ *
+ * @return:                0 if success in register non-zero if failes
+ */
+int cam_common_register_evt_inject_cb(
+	cam_common_evt_inject_cb evt_inject_cb,
+	enum cam_common_evt_inject_hw_id hw_id);
+
+/**
  * @brief:                 Memory alloc and copy
  *
  * @dst:                   Address of destination address of memory
@@ -276,4 +498,26 @@ int cam_common_mem_kdup(void **dst, void *src, size_t size);
  * @memory:                Address of memory
  */
 void cam_common_mem_free(void *memory);
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/**
+ * @brief:                 Initialize memory pools with dynamic management
+ *
+ * @return:                true if success, false if failed
+ */
+bool common_mem_pools_init(void);
+
+/**
+ * @brief:                 Memory pool sensor power up notification
+ *                        Increments sensor power count and wakes up management thread
+ */
+void mempool_set_sensor_powerup(void);
+
+/**
+ * @brief:                 Memory pool sensor power down notification
+ *                        Decrements sensor power count and wakes up management thread
+ */
+void mempool_set_sensor_powerdown(void);
+
+#endif /* OPLUS_FEATURE_CAMERA_COMMON */
 #endif /* _CAM_COMMON_UTIL_H_ */

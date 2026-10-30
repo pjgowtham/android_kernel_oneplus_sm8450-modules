@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_ISP_HW_MGR_H_
@@ -21,7 +22,9 @@
  *                         acquire device
  * @cb_priv:               first argument for the call back function
  *                         set during acquire device
- * @mini_dump_cb           Callback for mini dump
+ * @mini_dump_cb:          Callback for mini dump
+ * @sec_pf_evt_cb:         Callback interface to ISP context for CDM page fault
+ *                         set during device acquire
  *
  */
 struct cam_isp_hw_mgr_ctx {
@@ -29,6 +32,7 @@ struct cam_isp_hw_mgr_ctx {
 	cam_hw_event_cb_func            event_cb;
 	void                           *cb_priv;
 	cam_ctx_mini_dump_cb_func       mini_dump_cb;
+	cam_hw_pagefault_cb_func        sec_pf_evt_cb;
 };
 
 /**
@@ -70,6 +74,8 @@ struct cam_isp_hw_mgr {
  * @is_secure            informs whether the resource is in secure mode or not
  * @num_children:        number of the child resource node.
  * @use_wm_pack:         Flag to indicate if WM is to be used for packing
+ * @hw_ctxt_id:          HW context ID mask corresponding to this resource
+ * @comp_grp_id:         Composite group ID corresponding to this resource
  *
  */
 struct cam_isp_hw_mgr_res {
@@ -81,6 +87,8 @@ struct cam_isp_hw_mgr_res {
 	uint32_t                         is_secure;
 	uint32_t                         num_children;
 	bool                             use_wm_pack;
+	uint32_t                         hw_ctxt_id_mask;
+	uint32_t                         comp_grp_id;
 };
 
 

@@ -1,13 +1,15 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_CDM_UTIL_H_
 #define _CAM_CDM_UTIL_H_
 
 /* Max len for tag name for header while dumping cmd buffer*/
-#define CAM_CDM_CMD_TAG_MAX_LEN 32
+#define CAM_CDM_CMD_TAG_MAX_LEN 128
+#define CAM_CDM_COMMAND_OFFSET  24
 
 #include <linux/types.h>
 
@@ -225,6 +227,20 @@ struct cam_cdm_cmd_dump_header {
 	uint64_t  size;
 	uint32_t  word_size;
 };
+
+/**
+ * cam_cdm_util_validate_cmd_buf()
+ *
+ * @brief:            Util function to validate cdm command buffers
+ *
+ * @cmd_buffer_start: Pointer to start of cmd buffer
+ * @cmd_buffer_end:   Pointer to end of cmd buffer
+ *
+ * return true if invalid cmd found, otherwise false
+ *
+ */
+bool cam_cdm_util_validate_cmd_buf(
+	uint32_t *cmd_buffer_start, uint32_t *cmd_buffer_end);
 
 /**
  * cam_cdm_util_log_cmd_bufs()

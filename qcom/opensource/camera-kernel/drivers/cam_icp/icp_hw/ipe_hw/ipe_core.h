@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef CAM_IPE_CORE_H
@@ -11,9 +12,6 @@
 #include <linux/of.h>
 #include <linux/platform_device.h>
 
-/* IPE CDM/TOP status register */
-#define IPE_RST_DONE_IRQ_STATUS_BIT  0x1
-
 #define IPE_COLLAPSE_MASK 0x1
 #define IPE_PWR_ON_MASK   0x2
 
@@ -21,18 +19,12 @@ struct cam_ipe_device_hw_info {
 	uint32_t hw_idx;
 	uint32_t pwr_ctrl;
 	uint32_t pwr_status;
-
-	uint32_t top_rst_cmd;
-	uint32_t top_irq_status;
-	uint32_t cdm_rst_cmd;
-	uint32_t cdm_irq_status;
-
-	uint32_t cdm_rst_val;
 };
 
 struct cam_ipe_device_core_info {
 	struct cam_ipe_device_hw_info *ipe_hw_info;
 	uint32_t cpas_handle;
+	uint32_t power_on_cnt;
 	bool cpas_start;
 	bool clk_enable;
 };

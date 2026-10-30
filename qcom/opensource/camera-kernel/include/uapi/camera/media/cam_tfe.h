@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __UAPI_CAM_TFE_H__
@@ -95,7 +95,6 @@
 /* Feature Flag indicators */
 #define CAM_ISP_TFE_FLAG_QCFA_BIN                        BIT(0)
 #define CAM_ISP_TFE_FLAG_BAYER_BIN                       BIT(1)
-#define CAM_ISP_TFE_FLAG_EPD_SUPPORT                     BIT(2)
 
 /* Query devices */
 /**
@@ -437,7 +436,7 @@ struct cam_isp_tfe_clock_config {
 	__u64                       left_pix_hz;
 	__u64                       right_pix_hz;
 	union {
-		__u64                       rdi_hz[1];
+		__u64                   rdi_hz[1];
 		__DECLARE_FLEX_ARRAY(__u64, rdi_hz_flex);
 	};
 } __attribute__((packed));

@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_SENSOR_CMN_HEADER_
 #define _CAM_SENSOR_CMN_HEADER_
 
 #include <linux/i2c.h>
+#include <linux/i3c/master.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
@@ -19,10 +20,13 @@
 #include <media/cam_sensor.h>
 #include <media/cam_req_mgr.h>
 
-#define MAX_POWER_CONFIG    12
-
-#define MAX_PER_FRAME_ARRAY 64
-#define BATCH_SIZE_MAX      16
+#define MAX_POWER_CONFIG                       12
+#define MAX_PER_FRAME_ARRAY                    32
+#define BATCH_SIZE_MAX                         16
+#define CAM_I3C_DEV_PROBE_TIMEOUT_MS           10
+#define CAM_I3C_DEV_PROBE_TIMEOUT_US          (CAM_I3C_DEV_PROBE_TIMEOUT_MS * 1000)
+#define I3C_SENSOR_DEV_ID_DT_PATH              "/soc/qcom,cam-i3c-id-table"
+#define MAX_I3C_DEVICE_ID_ENTRIES              (MAX_CAMERAS * 2)
 
 #define CAM_SENSOR_NAME    "cam-sensor"
 #define CAM_ACTUATOR_NAME  "cam-actuator"
@@ -202,6 +206,20 @@ struct cam_sensor_i2c_reg_array {
 	uint32_t reg_data;
 	uint32_t delay;
 	uint32_t data_mask;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	uint32_t  addr_type;
+	uint32_t  data_type;
+	unsigned short  operation;
+#endif
+};
+
+enum cam_sensor_module_debugfs_device_type {
+	CAM_SENSOR_ACTUATOR,
+	CAM_SENSOR_EEPROM,
+	CAM_SENSOR_FLASH,
+	CAM_SENSOR_OIS,
+	CAM_SENSOR_DEVICE,
+	CAM_SENSOR_MAX,
 };
 
 struct cam_sensor_i2c_reg_setting {
@@ -232,6 +250,7 @@ struct i2c_settings_array {
 	struct list_head list_head;
 	int32_t is_settings_valid;
 	int64_t request_id;
+	struct timespec64 applied_timestamp;
 };
 
 struct i2c_data_settings {
@@ -241,9 +260,19 @@ struct i2c_data_settings {
 	struct i2c_settings_array streamoff_settings;
 	struct i2c_settings_array read_settings;
 	struct i2c_settings_array *per_frame;
+	struct i2c_settings_array *deferred_frame_update;
 	struct i2c_settings_array *frame_skip;
+	struct i2c_settings_array *bubble_update;
 	struct i2c_settings_array reg_bank_unlock_settings;
 	struct i2c_settings_array reg_bank_lock_settings;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	struct i2c_settings_array resolution_settings;
+	struct i2c_settings_array lsc_settings;
+	struct i2c_settings_array qsc_settings;
+	struct i2c_settings_array awbotp_settings;
+	struct i2c_settings_array spc_settings;
+	struct i2c_settings_array pdc_settings;
+#endif
 };
 
 struct cam_sensor_power_ctrl_t {
@@ -258,11 +287,22 @@ struct cam_sensor_power_ctrl_t {
 };
 
 struct cam_camera_slave_info {
-	uint16_t sensor_slave_addr;
-	uint16_t sensor_id_reg_addr;
-	uint16_t sensor_id;
-	uint16_t sensor_id_mask;
+	uint32_t sensor_slave_addr;
+	uint32_t sensor_id_reg_addr;
+	uint32_t sensor_id;
+	uint32_t sensor_id_mask;
 };
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+struct cam_camera_id_info {
+	uint16_t sensor_slave_addr;
+	uint16_t sensor_id_mask;
+	uint32_t sensor_id_reg_addr;
+	uint32_t sensor_id;
+	uint8_t sensor_addr_type;
+	uint8_t sensor_data_type;
+};
+#endif
 
 struct msm_sensor_init_params {
 	int modes_supported;
@@ -307,10 +347,14 @@ struct cam_sensor_power_setting {
 	long config_val;
 	unsigned short delay;
 	void *data[10];
+	bool valid_config;
 };
 
 struct cam_sensor_board_info {
 	struct cam_camera_slave_info slave_info;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	struct cam_camera_id_info id_info;
+#endif
 	int32_t sensor_mount_angle;
 	int32_t secure_mode;
 	int modes_supported;
@@ -330,6 +374,9 @@ enum msm_camera_vreg_name_t {
 	CAM_VAF,
 	CAM_V_CUSTOM1,
 	CAM_V_CUSTOM2,
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	CAM_VANA1,
+#endif
 	CAM_VREG_MAX,
 };
 
@@ -347,5 +394,27 @@ struct msm_camera_gpio_conf {
 	uint8_t camera_on_table_size;
 	struct msm_camera_gpio_num_info *gpio_num_info;
 };
+
+/**
+ * cam_sensor_module_add_i2c_device()
+ * @brief: Each sensor device passes its ctrl struct to a global
+ *         structure of i2c devices in cam_sensor_module_debug.c
+ * @ctrl_struct: Passed as void pointer, and recast to actual struct
+ *               based on device_type
+ * @device_type: Device type based on cam_sensor_module_debugfs_device_type
+ */
+void cam_sensor_module_add_i2c_device(void *ctrl_struct, int device_type);
+
+/**
+ * cam_sensor_module_debug_register()
+ * @brief Creates debugfs entry
+ */
+int cam_sensor_module_debug_register(void);
+
+/**
+ * cam_sensor_module_debug_deregister(void)
+ * @brief Take down debugfs entry
+ */
+void cam_sensor_module_debug_deregister(void);
 
 #endif /* _CAM_SENSOR_CMN_HEADER_ */

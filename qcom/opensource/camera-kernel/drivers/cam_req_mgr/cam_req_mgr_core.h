@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #ifndef _CAM_REQ_MGR_CORE_H_
 #define _CAM_REQ_MGR_CORE_H_
@@ -14,10 +14,12 @@
 
 #define CAM_REQ_MGR_MAX_LINKED_DEV     16
 #define MAX_REQ_SLOTS                  48
+#define MAX_REQ_STATE_MONITOR_NUM      108
+#define MAX_DEV_FOR_SPECIAL_OPS        4
 
 #define CAM_REQ_MGR_WATCHDOG_TIMEOUT          1000
 #define CAM_REQ_MGR_WATCHDOG_TIMEOUT_DEFAULT  5000
-#define CAM_REQ_MGR_WATCHDOG_TIMEOUT_MAX      50000
+#define CAM_REQ_MGR_WATCHDOG_TIMEOUT_MAX      60000
 #define CAM_REQ_MGR_SCHED_REQ_TIMEOUT         1000
 #define CAM_REQ_MGR_SIMULATE_SCHED_REQ        30
 #define CAM_REQ_MGR_DEFAULT_HDL_VAL           0
@@ -26,9 +28,10 @@
 #define FORCE_ENABLE_RECOVERY   1
 #define AUTO_RECOVERY           0
 
-#define CRM_WORKQ_NUM_TASKS 60
+#define CRM_WORKQ_NUM_TASKS 120
 
 #define MAX_SYNC_COUNT 65535
+
 
 /* Default frame rate is 30 */
 #define DEFAULT_FRAME_DURATION 33333333
@@ -37,24 +40,46 @@
 
 #define SYNC_LINK_SOF_CNT_MAX_LMT 1
 
+#define MAXIMUM_LINKS_CAPACITY     8
+
 #define MAXIMUM_LINKS_PER_SESSION  4
 
 #define MAXIMUM_RETRY_ATTEMPTS 3
 
-#define MINIMUM_WORKQUEUE_SCHED_TIME_IN_MS 5
-
 #define VERSION_1  1
 #define VERSION_2  2
 #define CAM_REQ_MGR_MAX_TRIGGERS   2
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#define REQ_MAXIMUM_BUBBLE_TIMES   30
+#else
+#define REQ_MAXIMUM_BUBBLE_TIMES   2
+#endif
 
-/**
- * enum crm_req_eof_trigger_type
- * @codes: to identify which type of eof trigger for next slot
- */
-enum crm_req_eof_trigger_type {
-	CAM_REQ_EOF_TRIGGER_NONE,
-	CAM_REQ_EOF_TRIGGER_NOT_APPLY,
-	CAM_REQ_EOF_TRIGGER_APPLIED,
+#define CAM_REQ_MGR_HALF_FRAME_DURATION(frame_duration) ((frame_duration) / 2)
+#define CAM_REQ_MGR_COMPUTE_TIMEOUT(x) ((x) + (((x) * (x + 25)) / 100))
+
+/* Number of words for dumping req state info */
+#define CAM_CRM_DUMP_EVENT_NUM_WORDS  6
+
+/* Maximum length of tag while dumping */
+#define CAM_CRM_DUMP_TAG_MAX_LEN 128
+
+/* Number of headers in dumping req state info function */
+#define CAM_CRM_DUMP_EVENT_NUM_HEADERS  2
+
+/* Threshold of sensor setting apply delay is 0.1ms */
+#define CAM_CRM_SENSOR_APPLIY_DELAY_THRESHOLD 100000
+
+/* Mismatched frame mode mask */
+#define CAM_CRM_MISMATCHED_FRAME_MODE_MASK BIT(0)
+
+/* Maximum length of log buffer when printing connected devices on error */
+#define CAM_CRM_DUMP_LINKED_DEVICES_MAX_LEN 200
+
+/* Mismatched frame mode to identify notify or drop the mismatchd frame */
+enum crm_mismatched_frame_mode {
+	CRM_NOTIFY_MISMATCHED_FRMAE,
+	CRM_DROP_MISMATCHED_FRMAE,
 };
 
 /**
@@ -72,6 +97,7 @@ enum crm_workq_task_type {
 	CRM_WORKQ_TASK_NOTIFY_FREEZE,
 	CRM_WORKQ_TASK_SCHED_REQ,
 	CRM_WORKQ_TASK_FLUSH_REQ,
+	CRM_WORKQ_TASK_TRIGGER_SYNCED_RESUME,
 	CRM_WORKQ_TASK_INVALID,
 };
 
@@ -90,7 +116,7 @@ enum crm_workq_task_type {
 struct crm_task_payload {
 	enum crm_workq_task_type type;
 	union {
-		struct cam_req_mgr_sched_request        sched_req;
+		struct cam_req_mgr_sched_request_v2     sched_req;
 		struct cam_req_mgr_flush_info           flush_info;
 		struct cam_req_mgr_add_request          dev_req;
 		struct cam_req_mgr_send_request         send_req;
@@ -151,6 +177,40 @@ enum cam_req_mgr_link_state {
 };
 
 /**
+ * enum cam_req_mgr_sync_type
+ * Sync type for syncing info
+ * DELAY_AT_SOF  : inject delay at SOF
+ * DELAY_AT_EOF  : inject delay at EOF
+ * APPLY_AT_EOF  : apply at EOF
+ */
+enum cam_req_mgr_sync_type {
+	CAM_SYNC_TYPE_DELAY_AT_SOF,
+	CAM_SYNC_TYPE_DELAY_AT_EOF,
+	CAM_SYNC_TYPE_APPLY_AT_EOF,
+};
+
+/**
+ * enum cam_req_mgr_req_state
+ * Request operation type for request state recording
+ * REQ_READY        : all packets for this request is added
+ * NOTIFY_TRIGGER   : request is triggered
+ * PROCESS_TRIGGER  : request is in trigger processing
+ * SEND_REQ         : CRM is sending request to each device
+ * NOTIFY_ERR       : request is notified an error
+ * PROCESS_ERR      : request is in error processing
+ * INVALID          : invalid state
+ */
+enum cam_req_mgr_req_state {
+	CAM_CRM_REQ_READY,
+	CAM_CRM_NOTIFY_TRIGGER,
+	CAM_CRM_PROCESS_TRIGGER,
+	CAM_CRM_SEND_REQ,
+	CAM_CRM_NOTIFY_ERR,
+	CAM_CRM_PROCESS_ERR,
+	CAM_CRM_STATE_INVALID,
+};
+
+/**
  * struct cam_req_mgr_traverse_result
  * @req_id        : Req id that is not ready
  * @pd            : pipeline delay
@@ -201,21 +261,21 @@ struct cam_req_mgr_apply {
 
 /**
  * struct crm_tbl_slot_special_ops
+ * @num_dev         : Number of devices need to be applied at this trigger point
  * @dev_hdl         : Device handle who requested for special ops
  * @apply_at_eof    : Boolean Identifier for request to be applied at EOF
- * @is_applied      : Flag to identify if request is already applied to device
- *                    in previous frame
  */
 struct crm_tbl_slot_special_ops {
-	int32_t dev_hdl;
+	uint32_t num_dev;
+	int32_t dev_hdl[MAX_DEV_FOR_SPECIAL_OPS];
 	bool apply_at_eof;
-	bool is_applied;
 };
 
 /**
  * struct cam_req_mgr_tbl_slot
  * @idx                 : slot index
  * @req_ready_map       : mask tracking which all devices have request ready
+ * @req_apply_map       : mask tracking which all devices have request applied
  * @state               : state machine for life cycle of a slot
  * @inject_delay_at_sof : insert extra bubbling for flash type of use cases
  * @inject_delay_at_eof : insert extra bubbling for flash type of use cases
@@ -228,6 +288,7 @@ struct crm_tbl_slot_special_ops {
 struct cam_req_mgr_tbl_slot {
 	int32_t                                idx;
 	uint32_t                               req_ready_map;
+	uint32_t                               req_apply_map;
 	enum crm_req_state                     state;
 	uint32_t                               inject_delay_at_sof;
 	uint32_t                               inject_delay_at_eof;
@@ -262,15 +323,25 @@ struct cam_req_mgr_req_tbl {
 /**
  * struct cam_req_mgr_slot
  * - Internal Book keeping
- * @idx                : slot index
- * @skip_idx           : if req id in this slot needs to be skipped/not applied
- * @status             : state machine for life cycle of a slot
+ * @idx                   : slot index
+ * @skip_idx              : if req id in this slot needs to be skipped/not applied
+ * @status                : state machine for life cycle of a slot
  * - members updated due to external events
- * @recover            : if user enabled recovery for this request.
- * @req_id             : mask tracking which all devices have request ready
- * @sync_mode          : Sync mode in which req id in this slot has to applied
- * @additional_timeout : Adjusted watchdog timeout value associated with
+ * @recover               : if user enabled recovery for this request.
+ * @req_id                : mask tracking which all devices have request ready
+ * @sync_mode             : Sync mode in which req id in this slot has to applied
+ * @additional_timeout    : Adjusted watchdog timeout value associated with
  * this request
+ * @recovery_counter      : Internal recovery counter
+ * @num_sync_links        : Num of sync links
+ * @sync_link_hdls        : Array of sync link handles
+ * @bubble_times          : times of bubbles the req happended
+ * @frame_sync_shift      : frame sync shift value, frame sync may not do SOF sync,
+ *                          so we need to know the shift value in KMD, the unit is ns.
+ * @mismatched_frame_mode : Mismatched frame mode to notify or drop setting mismatched frame
+ * of this slot
+ * @internal_recovered    : indicate if internal recover is already done for request
+ * @skip_set              : Simulate a frame skip on this slot
  */
 struct cam_req_mgr_slot {
 	int32_t               idx;
@@ -280,6 +351,14 @@ struct cam_req_mgr_slot {
 	int64_t               req_id;
 	int32_t               sync_mode;
 	int32_t               additional_timeout;
+	int32_t               recovery_counter;
+	int32_t               num_sync_links;
+	int32_t               sync_link_hdls[MAXIMUM_LINKS_PER_SESSION - 1];
+	uint32_t              bubble_times;
+	uint64_t              frame_sync_shift;
+	int32_t               mismatched_frame_mode;
+	bool                  internal_recovered;
+	bool                  skip_set;
 };
 
 /**
@@ -299,14 +378,36 @@ struct cam_req_mgr_req_queue {
 };
 
 /**
+ * struct cam_req_mgr_req_state_monitor
+ * @req_state    : operation type
+ * @req_id       : request id
+ * @dev_hdl      : to track which device is sending request
+ * @frame_id     : frame id
+ * @time_stamp   : the time stamp of the state
+ * @name         : device_name
+ */
+struct cam_req_mgr_state_monitor {
+	enum cam_req_mgr_req_state  req_state;
+	int64_t                     req_id;
+	int32_t                     dev_hdl;
+	int64_t                     frame_id;
+	struct timespec64           time_stamp;
+	char                        name[256];
+};
+
+/**
  * struct cam_req_mgr_req_data
- * @in_q             : Poiner to Input request queue
- * @l_tbl            : unique pd request tables.
- * @num_tbl          : how many unique pd value devices are present
- * @apply_data       : Holds information about request id for a request
- * @prev_apply_data  : Holds information about request id for a previous
- *                     applied request
- * @lock             : mutex lock protecting request data ops.
+ * @in_q                  : Poiner to Input request queue
+ * @l_tbl                 : unique pd request tables.
+ * @num_tbl               : how many unique pd value devices are present
+ * @apply_data            : Holds information about request id for a request
+ * @prev_apply_data       : Holds information about request id for a previous
+ *                          applied request
+ * @state_monitor         : used to track the request state in CRM
+ * @next_state_idx        : indicates index to hold new request state
+ * @lock                  : mutex lock protecting request data ops.
+ * @monitor_slock         : spin lock protecting state mointor variables
+ * @reset_link_spin_lock  : spin lock protecting link data ops when reset link
  */
 struct cam_req_mgr_req_data {
 	struct cam_req_mgr_req_queue *in_q;
@@ -314,7 +415,12 @@ struct cam_req_mgr_req_data {
 	int32_t                       num_tbl;
 	struct cam_req_mgr_apply      apply_data[CAM_PIPELINE_DELAY_MAX];
 	struct cam_req_mgr_apply      prev_apply_data[CAM_PIPELINE_DELAY_MAX];
+	struct cam_req_mgr_state_monitor state_monitor[
+		MAX_REQ_STATE_MONITOR_NUM];
+	int32_t                       next_state_idx;
 	struct mutex                  lock;
+	spinlock_t                    monitor_slock;
+	spinlock_t                    reset_link_spin_lock;
 };
 
 /**
@@ -340,62 +446,73 @@ struct cam_req_mgr_connected_device {
 /**
  * struct cam_req_mgr_core_link
  * -  Link Properties
- * @link_hdl             : Link identifier
- * @num_devs             : num of connected devices to this link
- * @max_delay            : Max of pipeline delay of all connected devs
- * @min_delay            : Min of pipeline delay of all connected devs
- * @workq                : Pointer to handle workq related jobs
- * @pd_mask              : each set bit indicates the device with pd equal to
- *                          bit position is available.
+ * @link_hdl                    : Link identifier
+ * @num_devs                    : num of connected devices to this link
+ * @max_delay                   : Max of pipeline delay of all connected devs
+ * @min_delay                   : Min of pipeline delay of all connected devs
+ * @max_mswitch_delay           : Max of modeswitch delay of all connected devs
+ * @min_mswitch_delay           : Min of modeswitch delay of all connected devs
+ * @workq                       : Pointer to handle workq related jobs
+ * @pd_mask                     : each set bit indicates the device with pd equal to
+ *                                bit position is available.
  * - List of connected devices
- * @l_dev                : List of connected devices to this link
+ * @l_dev                       : List of connected devices to this link
  * - Request handling data struct
- * @req                  : req data holder.
+ * @req                         : req data holder.
  * - Timer
- * @watchdog             : watchdog timer to recover from sof freeze
+ * @watchdog                    : watchdog timer to recover from sof freeze
  * - Link private data
- * @workq_comp           : conditional variable to block user thread for workq
- *                          to finish schedule request processing
- * @state                : link state machine
- * @parent               : pvt data - link's parent is session
- * @lock                 : mutex lock to guard link data operations
- * @link_state_spin_lock : spin lock to protect link state variable
- * @sync_link            : array of pointer to the sync link for synchronization
- * @num_sync_links       : num of links sync associated with this link
- * @sync_link_sof_skip   : flag determines if a pkt is not available for a given
- *                         frame in a particular link skip corresponding
- *                         frame in sync link as well.
- * @open_req_cnt         : Counter to keep track of open requests that are yet
- *                         to be serviced in the kernel.
- * @last_flush_id        : Last request to flush
- * @is_used              : 1 if link is in use else 0
- * @is_master            : Based on pd among links, the link with the highest pd
- *                         is assigned as master
- * @initial_skip         : Flag to determine if slave has started streaming in
- *                         master-slave sync
- * @in_msync_mode        : Flag to determine if a link is in master-slave mode
- * @initial_sync_req     : The initial req which is required to sync with the
- *                         other link
- * @retry_cnt            : Counter that tracks number of attempts to apply
- *                         the same req
- * @is_shutdown          : Flag to indicate if link needs to be disconnected
- *                         as part of shutdown.
- * @sof_timestamp_value  : SOF timestamp value
- * @prev_sof_timestamp   : Previous SOF timestamp value
- * @dual_trigger         : Links needs to wait for two triggers prior to
- *                         applying the settings
- * @trigger_cnt          : trigger count value per device initiating the trigger
- * @eof_event_cnt        : Atomic variable to track the number of EOF requests
- * @skip_init_frame      : skip initial frames crm_wd_timer validation in the
- *                         case of long exposure use case
- * @last_sof_trigger_jiffies : Record the jiffies of last sof trigger jiffies
- * @wq_congestion        : Indicates if WQ congestion is detected or not
+ * @workq_comp                  : conditional variable to block user thread for workq
+ *                                to finish schedule request processing
+ * @state                       : link state machine
+ * @parent                      : pvt data - link's parent is session
+ * @lock                        : mutex lock to guard link data operations
+ * @link_state_spin_lock        : spin lock to protect link state variable
+ * @sync_link                   : array of pointer to the sync link for synchronization
+ * @num_sync_links              : num of links sync associated with this link
+ * @sync_link_sof_skip          : flag determines if a pkt is not available for a given
+ *                                frame in a particular link skip corresponding
+ *                                frame in sync link as well.
+ * @open_req_cnt                : Counter to keep track of open requests that are yet
+ *                                to be serviced in the kernel.
+ * @last_flush_id               : Last request to flush
+ * @is_used                     : 1 if link is in use else 0
+ * @is_master                   : Based on pd among links, the link with the highest pd
+ *                                is assigned as master
+ * @initial_skip                : Flag to determine if slave has started streaming in
+ *                                master-slave sync
+ * @in_msync_mode               : Flag to determine if a link is in master-slave mode
+ * @initial_sync_req            : The initial req which is required to sync with the
+ *                                other link
+ * @retry_cnt                   : Counter that tracks number of attempts to apply
+ *                                the same req
+ * @is_shutdown                 : Flag to indicate if link needs to be disconnected
+ *                                as part of shutdown.
+ * @sof_timestamp_value         : SOF timestamp value
+ * @prev_sof_timestamp          : Previous SOF timestamp value
+ * @dual_trigger                : Links needs to wait for two triggers prior to
+ *                                applying the settings
+ * @trigger_cnt                 : trigger count value per device initiating the trigger
+ * @eof_event_cnt               : Atomic variable to track the number of EOF requests
+ * @skip_init_frame             : skip initial frames crm_wd_timer validation in the
+ *                                case of long exposure use case
+ * @last_sof_trigger_jiffies    : Record the jiffies of last sof trigger jiffies
+ * @wq_congestion               : Indicates if WQ congestion is detected or not
+ * @try_for_internal_recovery   : If the link stalls try for RT internal recovery
+ * @properties_mask             : Indicates if current link enables some special properties
+ * @cont_empty_slots            : Continuous empty slots
+ * @resume_sync_dev_mask        : Device mask for all devices seeking sync in resume sequence
+ * @resume_sync_curr_mask       : Current device mask of devices notifying they are ready for resume
+ * @last_applied_done_timestamp : Last applied done timestamp value
+ * @exp_time_for_resume         : Exposure time in ms, to be used for WD timer post resume
  */
 struct cam_req_mgr_core_link {
 	int32_t                              link_hdl;
 	int32_t                              num_devs;
 	enum cam_pipeline_delay              max_delay;
 	enum cam_pipeline_delay              min_delay;
+	enum cam_modeswitch_delay            max_mswitch_delay;
+	enum cam_modeswitch_delay            min_mswitch_delay;
 	struct cam_req_mgr_core_workq       *workq;
 	int32_t                              pd_mask;
 	struct cam_req_mgr_connected_device *l_dev;
@@ -420,6 +537,9 @@ struct cam_req_mgr_core_link {
 	uint32_t                             retry_cnt;
 	bool                                 is_shutdown;
 	uint64_t                             sof_timestamp;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	uint64_t                             shift_timestamp;
+#endif
 	uint64_t                             prev_sof_timestamp;
 	bool                                 dual_trigger;
 	uint32_t trigger_cnt[CAM_REQ_MGR_MAX_TRIGGERS]
@@ -428,6 +548,14 @@ struct cam_req_mgr_core_link {
 	bool                                 skip_init_frame;
 	uint64_t                             last_sof_trigger_jiffies;
 	bool                                 wq_congestion;
+	bool                                 try_for_internal_recovery;
+	bool                                 is_sending_req;
+	uint32_t                             properties_mask;
+	uint32_t                             cont_empty_slots;
+	uint32_t                             resume_sync_dev_mask;
+	uint32_t                             resume_sync_curr_mask;
+	uint64_t                             last_applied_done_timestamp;
+	uint32_t                             exp_time_for_resume;
 };
 
 /**
@@ -461,11 +589,16 @@ struct cam_req_mgr_core_session {
  * @session_head : list head holding sessions
  * @crm_lock     : mutex lock to protect session creation & destruction
  * @recovery_on_apply_fail : Recovery on apply failure using debugfs.
+ * @disable_sensor_standby : Disable synced resume feature including
+ *                           sensor standby8
+ * @simulate_skip_frame    : Simulate a skip if set
  */
 struct cam_req_mgr_core_device {
 	struct list_head             session_head;
 	struct mutex                 crm_lock;
 	bool                         recovery_on_apply_fail;
+	bool                         disable_sensor_standby;
+	bool                         simulate_skip_frame;
 };
 
 /**
@@ -563,6 +696,48 @@ struct cam_req_mgr_core_link_mini_dump {
 };
 
 /**
+ * struct cam_req_mgr_core_sched_req
+ *
+ * - Common members
+ * @session_hdl          : Input param - Identifier for CSL session
+ * @ink_hdl              : Input Param -Identifier for link including itself.
+ * @bubble_enable        : Input Param - Cam req mgr will do bubble recovery if this
+ *                         flag is set.
+ * @sync_mode            : Type of Sync mode for this request
+ * @additional_timeout   : Additional timeout value (in ms) associated with
+ *                         this request. This value needs to be 0 in cases where long exposure is
+ *                         not configured for the sensor.The max timeout that will be supported
+ *                         is 50000 ms
+ * @req_id               : Input Param - Request Id from which all requests will be flushed
+ *
+ * - Support sched_request
+ * @reserved             : Reserved
+ *
+ * - Support sched_request_v2/sched_request_v3
+ * @version              : Version number
+ * @num_links            : Input Param - Num of links for sync
+ * @num_valid_params     : Number of valid params
+ * @param_mask           : mask to indicate what the parameters are
+ * @params               : pointer, point to parameters passed from user space
+ * @link_hdls            : pointer, point to Input Param - Array of link handles to be for sync
+ */
+struct cam_req_mgr_core_sched_req {
+	int32_t                     session_hdl;
+	int32_t                     link_hdl;
+	int32_t                     bubble_enable;
+	int32_t                     sync_mode;
+	int32_t                     additional_timeout;
+	int64_t                     req_id;
+	int32_t                     reserved;
+	int32_t                     version;
+	int32_t                     num_links;
+	int32_t                     num_valid_params;
+	int32_t                     param_mask;
+	int32_t                    *params;
+	int32_t                    *link_hdls;
+};
+
+/**
  * struct cam_req_mgr_core_mini_dump
  * @link             : Array of dumped links
  * @num_link         : Number of links dumped
@@ -605,7 +780,6 @@ int cam_req_mgr_destroy_session(struct cam_req_mgr_session_info *ses_info,
 int cam_req_mgr_link(struct cam_req_mgr_ver_info *link_info);
 int cam_req_mgr_link_v2(struct cam_req_mgr_ver_info *link_info);
 
-
 /**
  * cam_req_mgr_unlink()
  * @brief       : destroy a link in a session
@@ -623,7 +797,21 @@ int cam_req_mgr_unlink(struct cam_req_mgr_unlink_info *unlink_info);
 int cam_req_mgr_schedule_request(struct cam_req_mgr_sched_request *sched_req);
 
 /**
- * cam_req_mgr_sync_mode_setup()
+ * cam_req_mgr_schedule_request_v2()
+ * @brief: Request is scheduled
+ * @sched_req: request id, session, link id info, bubble recovery info and sync info
+ */
+int cam_req_mgr_schedule_request_v2(struct cam_req_mgr_sched_request_v2 *sched_req);
+
+/**
+ * cam_req_mgr_schedule_request_v3()
+ * @brief: Request is scheduled
+ * @sched_req: request id, session, link id info, bubble recovery info and sync info
+ */
+int cam_req_mgr_schedule_request_v3(struct cam_req_mgr_sched_request_v3 *sched_req);
+
+/**
+ * cam_req_mgr_sync_config()
  * @brief: sync for links in a session
  * @sync_info: session, links info and master link info
  */
@@ -667,4 +855,19 @@ int cam_req_mgr_link_control(struct cam_req_mgr_link_control *control);
  * @dump_req: Dump request
  */
 int cam_req_mgr_dump_request(struct cam_dump_req_cmd *dump_req);
+
+/**
+ * cam_req_mgr_link_properties()
+ * @brief:   Handles link properties
+ * @properties: Link properties
+ */
+int cam_req_mgr_link_properties(struct cam_req_mgr_link_properties *properties);
+
+/**
+ * cam_req_mgr_dump_connected_devices()
+ * @brief:  Dump all connected devices on the link
+ * @link_hdl: Link Handle
+ */
+void cam_req_mgr_dump_linked_devices_on_err(int32_t link_hdl);
+
 #endif

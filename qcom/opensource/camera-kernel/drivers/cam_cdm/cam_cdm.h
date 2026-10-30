@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_CDM_H_
@@ -26,6 +26,9 @@
 #define CAM_SW_CDM_INDEX                  0
 #define CAM_CDM_INFLIGHT_WORKS            5
 #define CAM_CDM_HW_RESET_TIMEOUT          300
+#define CAM_CDM_PAUSE_CORE_US_TIMEOUT     10000
+
+#define CAM_CDM_CAP_PAUSE_CORE            BIT(0)
 
 /*
  * Macros to get prepare and get information
@@ -86,6 +89,7 @@
 #define CAM_CDM_ERROR_HW_STATUS 0x5
 #define CAM_CDM_FLUSH_HW_STATUS 0x6
 #define CAM_CDM_RESET_ERR_STATUS 0x7
+#define CAM_CDM_PF_HW_STATUS 0x8
 
 /* Curent used AHB masks and shifts */
 #define CAM_CDM_AHB_LOG_CID_SHIFT    28
@@ -292,12 +296,14 @@ struct cam_cdm_comp_wait_status {
  * @num_bl_fifo_irq:        number of FIFO irqs in CDM
  * @num_bl_pending_req_reg: number of pending_requests register in CDM
  * @num_scratch_reg:        number of scratch registers in CDM
+ * @capabilities:           If some newer features are supported on target
  */
 struct cam_cdm_common_reg_data {
 	uint32_t num_bl_fifo;
 	uint32_t num_bl_fifo_irq;
 	uint32_t num_bl_pending_req_reg;
 	uint32_t num_scratch_reg;
+	uint32_t capabilities;
 };
 
 /**
@@ -312,6 +318,9 @@ struct cam_cdm_common_reg_data {
  *                       wait, etc.
  * @core_en:             offset to pause/enable CDM
  * @fe_cfg:              offset to configure CDM fetch engine
+ * @cdm_status:          offset to read CDM status register, this register
+ *                       indicates if CDM is idle, and if a pause operation
+ *                       is successfully completed or not
  * @irq_context_status   offset to read back irq context status
  * @bl_fifo_rb:          offset to set BL_FIFO read back
  * @bl_fifo_base_rb:     offset to read back base address on offset set by
@@ -347,6 +356,8 @@ struct cam_cdm_common_reg_data {
  *                       and invalid commands in FIFO
  * @spare:               spare register
  * @priority_group_bit_offset offset of priority group bits
+ * @pause_core_done_mask: Mask to test if pause core operation is done
+ * @pause_core_enable_mask: Mask to enable pause core operation
  *
  */
 struct cam_cdm_common_regs {
@@ -357,6 +368,7 @@ struct cam_cdm_common_regs {
 	uint32_t core_cfg;
 	uint32_t core_en;
 	uint32_t fe_cfg;
+	uint32_t cdm_status;
 	uint32_t irq_context_status;
 	uint32_t bl_fifo_rb;
 	uint32_t bl_fifo_base_rb;
@@ -387,6 +399,8 @@ struct cam_cdm_common_regs {
 	const struct cam_cdm_icl_regs *icl_reg;
 	uint32_t spare;
 	uint32_t priority_group_bit_offset;
+	uint32_t pause_core_done_mask;
+	uint32_t pause_core_enable_mask;
 };
 
 /**
@@ -457,6 +471,7 @@ enum cam_cdm_hw_version {
 	CAM_CDM_VERSION_1_2 = 0x10020000,
 	CAM_CDM_VERSION_2_0 = 0x20000000,
 	CAM_CDM_VERSION_2_1 = 0x20010000,
+	CAM_CDM_VERSION_2_2 = 0x20020000,
 	CAM_CDM_VERSION_MAX,
 };
 
@@ -496,14 +511,6 @@ struct cam_cdm_hw_intf_cmd_submit_bl {
 	struct cam_cdm_bl_request *data;
 };
 
-/* struct cam_cdm_hw_mem - CDM hw memory struct */
-struct cam_cdm_hw_mem {
-	int32_t handle;
-	uint32_t vaddr;
-	uintptr_t kmdvaddr;
-	size_t size;
-};
-
 /* struct cam_cdm_bl_fifo - CDM hw memory struct */
 struct cam_cdm_bl_fifo {
 	struct completion bl_complete;
@@ -541,6 +548,7 @@ struct cam_cdm_bl_fifo {
  * @gen_irq:             memory region in which gen_irq command will be written
  * @cpas_handle:         handle for cpas driver
  * @arbitration:         type of arbitration to be used for the CDM
+ * @num_active_clients:  Number of currently active clients
  */
 struct cam_cdm {
 	uint32_t index;
@@ -560,9 +568,9 @@ struct cam_cdm {
 	struct cam_cdm_bl_fifo bl_fifo[CAM_CDM_BL_FIFO_MAX];
 	unsigned long cdm_status;
 	uint8_t bl_tag;
-	struct cam_cdm_hw_mem gen_irq[CAM_CDM_BL_FIFO_MAX];
 	uint32_t cpas_handle;
 	enum cam_cdm_arbitration arbitration;
+	uint8_t num_active_clients;
 };
 
 /* struct cam_cdm_private_dt_data - CDM hw custom dt data */
@@ -593,6 +601,7 @@ struct cam_cdm_intf_mgr {
 	uint32_t dt_supported_hw_cdm;
 	int32_t refcount;
 	struct cam_cdm_intf_devices nodes[CAM_CDM_INTF_MGR_MAX_SUPPORTED_CDM];
+	struct dentry *dentry;
 };
 
 int cam_cdm_intf_register_hw_cdm(struct cam_hw_intf *hw,

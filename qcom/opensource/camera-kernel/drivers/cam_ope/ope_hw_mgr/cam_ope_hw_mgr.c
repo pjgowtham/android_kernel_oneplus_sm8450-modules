@@ -20,7 +20,6 @@
 #include <media/cam_defs.h>
 #include <media/cam_ope.h>
 #include <media/cam_cpas.h>
-#include <linux/math64.h>
 
 #include "cam_sync_api.h"
 #include "cam_packet_util.h"
@@ -43,6 +42,7 @@
 #include "cam_cdm.h"
 #include "ope_dev_intf.h"
 #include "cam_compat.h"
+#include "cam_mem_mgr_api.h"
 
 static struct cam_ope_hw_mgr *ope_hw_mgr;
 
@@ -186,7 +186,8 @@ static void cam_ope_free_io_config(struct cam_ope_request *req)
 	for (i = 0; i < OPE_MAX_BATCH_SIZE; i++) {
 		for (j = 0; j < OPE_MAX_IO_BUFS; j++) {
 			if (req->io_buf[i][j]) {
-				cam_free_clear((void *)req->io_buf[i][j]);
+				CAM_MEM_ZFREE((void *)req->io_buf[i][j],
+						sizeof(struct ope_io_buf));
 				req->io_buf[i][j] = NULL;
 			}
 		}
@@ -356,7 +357,7 @@ static int cam_ope_dump_hang_patches(struct cam_packet *packet,
 
 	for (i = 0; i < packet->num_patches; i++) {
 		rc = cam_mem_get_io_buf(patch_desc[i].src_buf_hdl,
-			iommu_hdl, &iova_addr, &src_buf_size, NULL);
+			iommu_hdl, &iova_addr, &src_buf_size, NULL, NULL);
 		if (rc < 0) {
 			CAM_ERR(CAM_UTIL,
 				"get src buf address failed for handle 0x%x",
@@ -382,7 +383,7 @@ static int cam_ope_dump_direct(struct ope_cmd_buf_info *cmd_buf_info,
 	int rc = 0;
 
 	rc = cam_mem_get_io_buf(cmd_buf_info->mem_handle,
-		ope_hw_mgr->iommu_hdl, &iova_addr, &size, NULL);
+		ope_hw_mgr->iommu_hdl, &iova_addr, &size, NULL, NULL);
 	if (rc < 0) {
 		CAM_ERR(CAM_UTIL, "get cmd buf addressfailed for handle 0x%x",
 			cmd_buf_info->mem_handle);
@@ -432,6 +433,7 @@ end:
 static int cam_ope_mgr_put_cmd_buf(struct cam_packet *packet)
 {
 	int i = 0;
+	int rc;
 	struct cam_cmd_buf_desc *cmd_desc = NULL;
 
 	cmd_desc = (struct cam_cmd_buf_desc *)
@@ -524,7 +526,7 @@ static int cam_ope_mgr_dump_frame_set(uintptr_t frame_process_addr,
 		for (i = 0; i < frame_process->frame_set[j].num_io_bufs; i++) {
 			io_buf = &frame_process->frame_set[j].io_buf[i];
 			rc = cam_mem_get_io_buf(io_buf->mem_handle[0],
-				ope_hw_mgr->iommu_hdl, &iova_addr, &size, NULL);
+				ope_hw_mgr->iommu_hdl, &iova_addr, &size, NULL, NULL);
 			if (rc) {
 				CAM_ERR(CAM_OPE, "get io buf fail 0x%x",
 					io_buf->mem_handle[0]);
@@ -603,7 +605,7 @@ static int cam_ope_dump_bls(struct cam_ope_request *ope_req,
 	cdm_cmd = ope_req->cdm_cmd;
 	for (i = 0; i < cdm_cmd->cmd_arrary_count; i++) {
 		rc = cam_mem_get_io_buf(cdm_cmd->cmd_flex[i].bl_addr.mem_handle,
-				ope_hw_mgr->iommu_hdl, &iova_addr, &size, NULL);
+				ope_hw_mgr->iommu_hdl, &iova_addr, &size, NULL, NULL);
 		if (rc) {
 			CAM_ERR(CAM_OPE, "get io buf fail 0x%x",
 				cdm_cmd->cmd_flex[i].bl_addr.mem_handle);
@@ -657,7 +659,7 @@ static bool cam_ope_check_req_delay(struct cam_ope_ctx *ctx_data,
 
 	if (ts_ns - req_time <
 		((ctx_data->req_timer_timeout -
-			div_u64(ctx_data->req_timer_timeout, 10)) * 1000000)) {
+			ctx_data->req_timer_timeout / 10) * 1000000)) {
 		CAM_INFO(CAM_OPE, "ctx: %d, ts_ns : %llu",
 		ctx_data->ctx_id, ts_ns);
 		cam_ope_req_timer_reset(ctx_data);
@@ -808,7 +810,7 @@ static int32_t cam_ope_process_request_timer(void *priv, void *data)
 
 	memset(&ctx_data->clk_info.axi_path[0], 0,
 		CAM_OPE_MAX_PER_PATH_VOTES *
-		sizeof(struct cam_axi_per_path_bw_vote));
+		sizeof(struct cam_cpas_axi_per_path_bw_vote));
 	ctx_data->clk_info.curr_fc = 0;
 	ctx_data->clk_info.base_clk = 0;
 
@@ -816,7 +818,7 @@ static int32_t cam_ope_process_request_timer(void *priv, void *data)
 	memcpy(&clk_update.axi_vote.axi_path[0],
 		&clk_info->axi_path[0],
 		clk_update.axi_vote.num_paths *
-		sizeof(struct cam_axi_per_path_bw_vote));
+		sizeof(struct cam_cpas_axi_per_path_bw_vote));
 
 	if (device_share_ratio > 1) {
 		for (i = 0; i < clk_update.axi_vote.num_paths; i++) {
@@ -1493,7 +1495,7 @@ static bool cam_ope_update_bw_v2(struct cam_ope_hw_mgr *hw_mgr,
 
 	memcpy(&ctx_data->clk_info.axi_path[0],
 		&clk_info->axi_path[0],
-		clk_info->num_paths * sizeof(struct cam_axi_per_path_bw_vote));
+		clk_info->num_paths * sizeof(struct cam_cpas_axi_per_path_bw_vote));
 
 	/*
 	 * Add new vote of this context in hw mgr.
@@ -1598,7 +1600,7 @@ static int cam_ope_update_cpas_vote(struct cam_ope_hw_mgr *hw_mgr,
 	memcpy(&bw_update.axi_vote.axi_path[0],
 		&clk_info->axi_path[0],
 		bw_update.axi_vote.num_paths *
-		sizeof(struct cam_axi_per_path_bw_vote));
+		sizeof(struct cam_cpas_axi_per_path_bw_vote));
 
 	bw_update.axi_vote_valid = true;
 	for (i = 0; i < ope_hw_mgr->num_ope; i++) {
@@ -1626,7 +1628,7 @@ static int cam_ope_mgr_ope_clk_update(struct cam_ope_hw_mgr *hw_mgr,
 }
 
 static void cam_ope_ctx_cdm_callback(uint32_t handle, void *userdata,
-	enum cam_cdm_cb_status status, uint64_t cookie)
+	enum cam_cdm_cb_status status, void *cookie)
 {
 	int rc = 0;
 	struct cam_ope_ctx *ctx;
@@ -1634,6 +1636,7 @@ static void cam_ope_ctx_cdm_callback(uint32_t handle, void *userdata,
 	struct cam_hw_done_event_data buf_data;
 	struct timespec64 ts;
 	uint32_t evt_id = CAM_CTX_EVT_ID_SUCCESS;
+	uint64_t req_id = 0;
 	bool dump_flag = true;
 	int i;
 
@@ -1642,29 +1645,32 @@ static void cam_ope_ctx_cdm_callback(uint32_t handle, void *userdata,
 		return;
 	}
 
-	if (cookie >= CAM_CTX_REQ_MAX) {
-		CAM_ERR(CAM_OPE, "Invalid reqIdx = %llu", cookie);
+	if (status != CAM_CDM_CB_STATUS_PAGEFAULT)
+		req_id = *(uint64_t *)cookie;
+
+	if (req_id >= CAM_CTX_REQ_MAX) {
+		CAM_ERR(CAM_OPE, "Invalid reqIdx = %u", req_id);
 		return;
 	}
 
 	ctx = userdata;
 	mutex_lock(&ctx->ctx_mutex);
 
-	if (!test_bit(cookie, ctx->bitmap)) {
-		CAM_ERR(CAM_OPE, "Req not present reqIdx = %d for ctx_id = %d",
-			cookie, ctx->ctx_id);
+	if (!test_bit(req_id, ctx->bitmap)) {
+		CAM_ERR(CAM_OPE, "Req not present reqIdx = %u for ctx_id = %d",
+			req_id, ctx->ctx_id);
 		goto end;
 	}
 
-	ope_req = ctx->req_list[cookie];
+	ope_req = ctx->req_list[req_id];
 
 	ktime_get_boottime_ts64(&ts);
 	ope_hw_mgr->last_callback_time = (uint64_t)((ts.tv_sec * 1000000000) +
 		ts.tv_nsec);
 
 	CAM_DBG(CAM_REQ,
-		"hdl=%x, udata=%pK, status=%d, cookie=%d",
-		handle, userdata, status, cookie);
+		"hdl=%x, udata=%pK, status=%d, cookie=%u",
+		handle, userdata, status, req_id);
 	CAM_DBG(CAM_REQ, "req_id= %llu ctx_id= %d lcb=%llu",
 		ope_req->request_id, ctx->ctx_id,
 		ope_hw_mgr->last_callback_time);
@@ -1678,8 +1684,8 @@ static void cam_ope_ctx_cdm_callback(uint32_t handle, void *userdata,
 
 	if (status == CAM_CDM_CB_STATUS_BL_SUCCESS) {
 		CAM_DBG(CAM_OPE,
-			"hdl=%x, udata=%pK, status=%d, cookie=%d  req_id=%llu ctx_id=%d",
-			handle, userdata, status, cookie,
+			"hdl=%x, udata=%pK, status=%d, cookie=%u  req_id=%llu ctx_id=%d",
+			handle, userdata, status, req_id,
 			ope_req->request_id, ctx->ctx_id);
 		cam_ope_req_timer_reset(ctx);
 		cam_ope_device_timer_reset(ope_hw_mgr);
@@ -1692,8 +1698,8 @@ static void cam_ope_ctx_cdm_callback(uint32_t handle, void *userdata,
 			goto end;
 	} else {
 		CAM_INFO(CAM_OPE,
-			"CDM hdl=%x, udata=%pK, status=%d, cookie=%d req_id = %llu ctx_id=%d",
-			 handle, userdata, status, cookie,
+			"CDM hdl=%x, udata=%pK, status=%d, cookie=%u req_id = %llu ctx_id=%d",
+			 handle, userdata, status, req_id,
 			 ope_req->request_id, ctx->ctx_id);
 		CAM_INFO(CAM_OPE, "Rst of CDM and OPE for error reqid = %lld",
 			ope_req->request_id);
@@ -1702,10 +1708,10 @@ static void cam_ope_ctx_cdm_callback(uint32_t handle, void *userdata,
 			cam_ope_dump_req_data(ope_req);
 			dump_flag = false;
 
-			CAM_INFO(CAM_OPE, "bach_size: %d", ctx->req_list[cookie]->num_batch);
-			for (i = 0; i < ctx->req_list[cookie]->num_batch; i++)
+			CAM_INFO(CAM_OPE, "bach_size: %d", ctx->req_list[req_id]->num_batch);
+			for (i = 0; i < ctx->req_list[req_id]->num_batch; i++)
 				CAM_INFO(CAM_OPE, "i: %d num_stripes: %d",
-					i, ctx->req_list[cookie]->num_stripes[i]);
+					i, ctx->req_list[req_id]->num_stripes[i]);
 		}
 		rc = cam_ope_mgr_reset_hw();
 		evt_id = CAM_CTX_EVT_ID_ERROR;
@@ -1729,12 +1735,16 @@ static void cam_ope_ctx_cdm_callback(uint32_t handle, void *userdata,
 
 	buf_data.request_id = ope_req->request_id;
 	ope_req->request_id = 0;
-	cam_free_clear((void *)ctx->req_list[cookie]->cdm_cmd);
-	ctx->req_list[cookie]->cdm_cmd = NULL;
-	cam_ope_free_io_config(ctx->req_list[cookie]);
-	cam_free_clear((void *)ctx->req_list[cookie]);
-	ctx->req_list[cookie] = NULL;
-	clear_bit(cookie, ctx->bitmap);
+	CAM_MEM_ZFREE((void *)ctx->req_list[req_id]->cdm_cmd,
+			((sizeof(struct cam_cdm_bl_request)) +
+			((OPE_MAX_CDM_BLS - 1) *
+			sizeof(struct cam_cdm_bl_cmd))));
+	ctx->req_list[req_id]->cdm_cmd = NULL;
+	cam_ope_free_io_config(ctx->req_list[req_id]);
+	CAM_MEM_ZFREE((void *)ctx->req_list[req_id],
+			sizeof(struct cam_ope_request));
+	ctx->req_list[req_id] = NULL;
+	clear_bit(req_id, ctx->bitmap);
 	ctx->ctxt_event_cb(ctx->context_priv, evt_id, &buf_data);
 
 end:
@@ -1777,7 +1787,8 @@ int32_t cam_ope_hw_mgr_cb(uint32_t irq_status, void *data)
 static int cam_ope_mgr_create_kmd_buf(struct cam_ope_hw_mgr *hw_mgr,
 	struct cam_packet *packet,
 	struct cam_hw_prepare_update_args *prepare_args,
-	struct cam_ope_ctx *ctx_data, uint32_t req_idx,
+	struct cam_ope_ctx *ctx_data,
+	struct cam_ope_request *ope_req,
 	uintptr_t   ope_cmd_buf_addr)
 {
 	int i, rc = 0;
@@ -1787,12 +1798,12 @@ static int cam_ope_mgr_create_kmd_buf(struct cam_ope_hw_mgr *hw_mgr,
 	prepare_req.hw_mgr = hw_mgr;
 	prepare_req.packet = packet;
 	prepare_req.prepare_args = prepare_args;
-	prepare_req.req_idx = req_idx;
+	prepare_req.req_idx = ope_req->req_idx;
 	prepare_req.kmd_buf_offset = 0;
 	prepare_req.frame_process =
 		(struct ope_frame_process *)ope_cmd_buf_addr;
 
-	for (i = 0; i < ope_hw_mgr->num_ope; i++)
+	for (i = 0; i < ope_hw_mgr->num_ope; i++) {
 		rc = hw_mgr->ope_dev_intf[i]->hw_ops.process_cmd(
 			hw_mgr->ope_dev_intf[i]->hw_priv,
 			OPE_HW_PREPARE, &prepare_req, sizeof(prepare_req));
@@ -1800,6 +1811,19 @@ static int cam_ope_mgr_create_kmd_buf(struct cam_ope_hw_mgr *hw_mgr,
 			CAM_ERR(CAM_OPE, "OPE Dev prepare failed: %d", rc);
 			goto end;
 		}
+	}
+
+	ope_req->genirq_buff_info.handle         = ope_req->ope_kmd_buf.mem_handle;
+	ope_req->genirq_buff_info.cpu_addr       = (uint32_t *)ope_req->ope_kmd_buf.cpu_addr;
+	ope_req->genirq_buff_info.offset         = prepare_req.kmd_buf_offset;
+	ope_req->genirq_buff_info.used_bytes     = 0;
+	ope_req->genirq_buff_info.size           = ope_req->ope_kmd_buf.size -
+		ope_req->ope_kmd_buf.len - prepare_req.kmd_buf_offset;
+
+	if (!ope_req->genirq_buff_info.size) {
+		CAM_ERR(CAM_OPE, "Not enough memory available for CDM GenIRQ Command");
+		return -ENOMEM;
+	}
 
 end:
 	return rc;
@@ -1930,7 +1954,8 @@ static void cam_ope_mgr_print_stripe_info(uint32_t batch,
 
 static int cam_ope_mgr_process_cmd_io_buf_req(struct cam_ope_hw_mgr *hw_mgr,
 	struct cam_packet *packet, struct cam_ope_ctx *ctx_data,
-	uintptr_t frame_process_addr, size_t length, uint32_t req_idx)
+	uintptr_t frame_process_addr, size_t length, struct cam_ope_request *ope_request
+	struct list_head *buf_tracker)
 {
 	int rc = 0;
 	int i, j, k, l;
@@ -1940,7 +1965,6 @@ static int cam_ope_mgr_process_cmd_io_buf_req(struct cam_ope_hw_mgr *hw_mgr,
 	struct ope_frame_set *in_frame_set;
 	struct ope_io_buf_info *in_io_buf;
 	struct ope_stripe_info *in_stripe_info;
-	struct cam_ope_request *ope_request;
 	struct ope_io_buf *io_buf;
 	struct ope_stripe_io *stripe_info;
 	uint32_t alignment;
@@ -1953,7 +1977,6 @@ static int cam_ope_mgr_process_cmd_io_buf_req(struct cam_ope_hw_mgr *hw_mgr,
 
 	in_frame_process = (struct ope_frame_process *)frame_process_addr;
 
-	ope_request = ctx_data->req_list[req_idx];
 	ope_request->num_batch = in_frame_process->batch_size;
 
 	for (i = 0; i < in_frame_process->batch_size; i++) {
@@ -1986,7 +2009,7 @@ static int cam_ope_mgr_process_cmd_io_buf_req(struct cam_ope_hw_mgr *hw_mgr,
 		for (j = 0; j < in_frame_set->num_io_bufs; j++) {
 			in_io_buf = &in_frame_set->io_buf[j];
 			ope_request->io_buf[i][j] =
-				kzalloc(sizeof(struct ope_io_buf), GFP_KERNEL);
+				CAM_MEM_ZALLOC(sizeof(struct ope_io_buf), GFP_KERNEL);
 			if (!ope_request->io_buf[i][j]) {
 				CAM_ERR(CAM_OPE,
 					"IO config allocation failure");
@@ -2043,12 +2066,12 @@ static int cam_ope_mgr_process_cmd_io_buf_req(struct cam_ope_hw_mgr *hw_mgr,
 					rc = cam_mem_get_io_buf(
 						in_io_buf->mem_handle[k],
 						hw_mgr->iommu_sec_hdl,
-						&iova_addr, &len, NULL);
+						&iova_addr, &len, NULL, buf_tracker);
 				else
 					rc = cam_mem_get_io_buf(
 						in_io_buf->mem_handle[k],
 						hw_mgr->iommu_hdl,
-						&iova_addr, &len, NULL);
+						&iova_addr, &len, NULL, buf_tracker);
 
 				if (rc) {
 					CAM_ERR(CAM_OPE, "get buf failed: %d",
@@ -2059,6 +2082,7 @@ static int cam_ope_mgr_process_cmd_io_buf_req(struct cam_ope_hw_mgr *hw_mgr,
 					CAM_ERR(CAM_OPE, "Invalid length");
 					return -EINVAL;
 				}
+
 				iova_addr += in_io_buf->plane_offset[k];
 				CAM_DBG(CAM_OPE,
 					"E rsc %d stripes %d dir %d plane %d",
@@ -2109,7 +2133,8 @@ static int cam_ope_mgr_process_cmd_io_buf_req(struct cam_ope_hw_mgr *hw_mgr,
 
 static int cam_ope_mgr_process_cmd_buf_req(struct cam_ope_hw_mgr *hw_mgr,
 	struct cam_packet *packet, struct cam_ope_ctx *ctx_data,
-	uintptr_t frame_process_addr, size_t length, uint32_t req_idx)
+	uintptr_t frame_process_addr, size_t length, struct cam_ope_request *ope_request
+	struct list_head *buf_tracker)
 {
 	int rc = 0;
 	int i, j;
@@ -2119,7 +2144,6 @@ static int cam_ope_mgr_process_cmd_buf_req(struct cam_ope_hw_mgr *hw_mgr,
 	size_t len;
 	struct ope_frame_process *frame_process;
 	struct ope_cmd_buf_info *cmd_buf;
-	struct cam_ope_request *ope_request;
 	bool is_kmd_buf_valid = false;
 
 	frame_process = (struct ope_frame_process *)frame_process_addr;
@@ -2158,7 +2182,6 @@ static int cam_ope_mgr_process_cmd_buf_req(struct cam_ope_hw_mgr *hw_mgr,
 		}
 	}
 
-	ope_request = ctx_data->req_list[req_idx];
 	ope_request->num_batch = frame_process->batch_size;
 
 	for (i = 0; i < frame_process->batch_size; i++) {
@@ -2168,21 +2191,25 @@ static int cam_ope_mgr_process_cmd_buf_req(struct cam_ope_hw_mgr *hw_mgr,
 			switch (cmd_buf->cmd_buf_scope) {
 			case OPE_CMD_BUF_SCOPE_FRAME: {
 				rc = cam_mem_get_io_buf(cmd_buf->mem_handle,
-					hw_mgr->iommu_hdl, &iova_addr, &len, NULL);
+					hw_mgr->iommu_hdl, &iova_addr, &len, NULL,
+						buf_tracker);
 				if (rc) {
 					CAM_ERR(CAM_OPE, "get cmd buffailed %x",
 						hw_mgr->iommu_hdl);
 					goto end;
 				}
+
 				iova_addr = iova_addr + cmd_buf->offset;
 
 				rc = cam_mem_get_io_buf(cmd_buf->mem_handle,
-					hw_mgr->iommu_cdm_hdl, &iova_cdm_addr, &len, NULL);
+					hw_mgr->iommu_cdm_hdl, &iova_cdm_addr, &len, NULL,
+					buf_tracker);
 				if (rc) {
 					CAM_ERR(CAM_OPE, "get cmd buffailed %x",
 						hw_mgr->iommu_hdl);
 					goto end;
 				}
+
 				iova_cdm_addr = iova_cdm_addr + cmd_buf->offset;
 
 				rc = cam_mem_get_cpu_buf(cmd_buf->mem_handle,
@@ -2288,7 +2315,8 @@ end:
 
 static int cam_ope_mgr_process_cmd_desc(struct cam_ope_hw_mgr *hw_mgr,
 	struct cam_packet *packet, struct cam_ope_ctx *ctx_data,
-	uintptr_t *ope_cmd_buf_addr, uint32_t req_idx)
+	uintptr_t *ope_cmd_buf_addr, struct cam_ope_request *ope_request
+	struct list_head *buf_tracker)
 {
 	int rc = 0;
 	int i;
@@ -2296,7 +2324,6 @@ static int cam_ope_mgr_process_cmd_desc(struct cam_ope_hw_mgr *hw_mgr,
 	size_t len;
 	struct cam_cmd_buf_desc *cmd_desc = NULL;
 	uintptr_t cpu_addr = 0;
-	struct cam_ope_request *ope_request;
 
 	cmd_desc = (struct cam_cmd_buf_desc *)
 		((uint32_t *) &packet->payload_flex + packet->cmd_buf_offset/4);
@@ -2310,7 +2337,6 @@ static int cam_ope_mgr_process_cmd_desc(struct cam_ope_hw_mgr *hw_mgr,
 		if (cmd_desc[i].type != CAM_CMD_BUF_GENERIC ||
 			cmd_desc[i].meta_data == OPE_CMD_META_GENERIC_BLOB)
 			continue;
-
 		rc = cam_mem_get_cpu_buf(cmd_desc[i].mem_handle,
 			&cpu_addr, &len);
 		if (rc || !cpu_addr) {
@@ -2335,19 +2361,17 @@ static int cam_ope_mgr_process_cmd_desc(struct cam_ope_hw_mgr *hw_mgr,
 		return -EINVAL;
 	}
 
-	ope_request = ctx_data->req_list[req_idx];
 	ope_request->request_id = packet->header.request_id;
-	ope_request->req_idx = req_idx;
 
 	rc = cam_ope_mgr_process_cmd_buf_req(hw_mgr, packet, ctx_data,
-		cpu_addr, len, req_idx);
+		cpu_addr, len, ope_request, buf_tracker);
 	if (rc) {
 		CAM_ERR(CAM_OPE, "Process OPE cmd request is failed: %d", rc);
 		goto end;
 	}
 
 	rc = cam_ope_mgr_process_cmd_io_buf_req(hw_mgr, packet, ctx_data,
-		cpu_addr, len, req_idx);
+		cpu_addr, len, ope_request, buf_tracker);
 	if (rc) {
 		CAM_ERR(CAM_OPE, "Process OPE cmd io request is failed: %d",
 			rc);
@@ -2582,6 +2606,13 @@ static int cam_ope_mgr_get_hw_caps(void *hw_priv, void *hw_caps_args)
 		return -EINVAL;
 	}
 
+	if (sizeof(struct ope_query_cap_cmd) != query_cap->size) {
+		CAM_ERR(CAM_OPE,
+			"Input query cap size:%u does not match expected query cap size: %u",
+			query_cap->size, sizeof(struct ope_query_cap_cmd));
+		return -EFAULT;
+	}
+
 	hw_mgr = hw_priv;
 	mutex_lock(&hw_mgr->hw_mgr_mutex);
 	if (copy_from_user(&hw_mgr->ope_caps,
@@ -2668,12 +2699,12 @@ static int cam_ope_mgr_acquire_hw(void *hw_priv, void *hw_acquire_args)
 		goto end;
 	}
 
-	cdm_acquire = kzalloc(sizeof(struct cam_cdm_acquire_data), GFP_KERNEL);
+	cdm_acquire = CAM_MEM_ZALLOC(sizeof(struct cam_cdm_acquire_data), GFP_KERNEL);
 	if (!cdm_acquire) {
 		CAM_ERR(CAM_ISP, "Out of memory");
 		goto end;
 	}
-	strlcpy(cdm_acquire->identifier, "ope", sizeof("ope"));
+	strscpy(cdm_acquire->identifier, "ope", sizeof("ope"));
 	if (ctx->ope_acquire.dev_type == OPE_DEV_TYPE_OPE_RT) {
 		cdm_acquire->priority = CAM_CDM_BL_FIFO_3;
 		ctx->req_timer_timeout = OPE_REQUEST_RT_TIMEOUT;
@@ -2784,7 +2815,7 @@ static int cam_ope_mgr_acquire_hw(void *hw_priv, void *hw_acquire_args)
 		}
 	}
 
-	bw_update = kzalloc(sizeof(struct cam_ope_dev_bw_update), GFP_KERNEL);
+	bw_update = CAM_MEM_ZALLOC(sizeof(struct cam_ope_dev_bw_update), GFP_KERNEL);
 	if (!bw_update) {
 		CAM_ERR(CAM_OPE, "Out of memory");
 		goto ope_clk_update_failed;
@@ -2819,9 +2850,9 @@ static int cam_ope_mgr_acquire_hw(void *hw_priv, void *hw_acquire_args)
 	ctx->ctxt_event_cb = args->event_cb;
 	cam_ope_ctx_clk_info_init(ctx);
 	ctx->ctx_state = OPE_CTX_STATE_ACQUIRED;
-	kzfree(cdm_acquire);
+	CAM_MEM_FREE(cdm_acquire);
 	cdm_acquire = NULL;
-	kzfree(bw_update);
+	CAM_MEM_FREE(bw_update);
 	bw_update = NULL;
 
 	mutex_unlock(&ctx->ctx_mutex);
@@ -2831,7 +2862,7 @@ static int cam_ope_mgr_acquire_hw(void *hw_priv, void *hw_acquire_args)
 	return rc;
 
 free_bw_update:
-	cam_free_clear((void *)bw_update);
+	CAM_MEM_ZFREE((void *)bw_update, sizeof(struct cam_ope_dev_bw_update));
 	bw_update = NULL;
 ope_clk_update_failed:
 	ope_dev_release.ctx_id = ctx_id;
@@ -2875,7 +2906,7 @@ cdm_stream_on_failure:
 
 cdm_acquire_failed:
 free_cdm_acquire:
-	cam_free_clear((void *)cdm_acquire);
+	CAM_MEM_ZFREE((void *)cdm_acquire, sizeof(struct cam_cdm_acquire_data));
 	cdm_acquire = NULL;
 end:
 	args->ctxt_to_hw_map = NULL;
@@ -2987,11 +3018,15 @@ static int cam_ope_mgr_release_ctx(struct cam_ope_hw_mgr *hw_mgr, int ctx_id)
 			continue;
 
 		if (hw_mgr->ctx[ctx_id].req_list[i]->cdm_cmd) {
-			cam_free_clear((void *)hw_mgr->ctx[ctx_id].req_list[i]->cdm_cmd);
+			CAM_MEM_ZFREE((void *)hw_mgr->ctx[ctx_id].req_list[i]->cdm_cmd,
+					((sizeof(struct cam_cdm_bl_request)) +
+					((OPE_MAX_CDM_BLS - 1) *
+					sizeof(struct cam_cdm_bl_cmd))));
 			hw_mgr->ctx[ctx_id].req_list[i]->cdm_cmd = NULL;
 		}
 		cam_ope_free_io_config(hw_mgr->ctx[ctx_id].req_list[i]);
-		cam_free_clear((void *)hw_mgr->ctx[ctx_id].req_list[i]);
+		CAM_MEM_ZFREE((void *)hw_mgr->ctx[ctx_id].req_list[i],
+				sizeof(struct cam_ope_request));
 		hw_mgr->ctx[ctx_id].req_list[i] = NULL;
 		clear_bit(i, hw_mgr->ctx[ctx_id].bitmap);
 	}
@@ -3106,7 +3141,7 @@ static int cam_ope_packet_generic_blob_handler(void *user_data,
 	struct cam_ope_ctx *ctx_data;
 	uint32_t index;
 	size_t clk_update_size;
-	int rc = 0;
+	int rc = 0, i;
 
 	if (!blob_data || (blob_size == 0)) {
 		CAM_ERR(CAM_OPE, "Invalid blob info %pK %d", blob_data,
@@ -3160,8 +3195,25 @@ static int cam_ope_packet_generic_blob_handler(void *user_data,
 
 		clk_info = &ctx_data->req_list[index]->clk_info;
 		clk_info_v2 = &ctx_data->req_list[index]->clk_info_v2;
+		clk_info_v2->budget_ns = soc_req_v2->budget_ns;
+		clk_info_v2->frame_cycles = soc_req_v2->frame_cycles;
+		clk_info_v2->rt_flag = soc_req_v2->rt_flag;
+		clk_info_v2->num_paths = soc_req_v2->num_paths;
 
-		memcpy(clk_info_v2, soc_req_v2, clk_update_size);
+		for (i = 0; i < soc_req_v2->num_paths; i++) {
+			clk_info_v2->axi_path[i].usage_data =
+				soc_req_v2->axi_path_flex[i].usage_data;
+			clk_info_v2->axi_path[i].transac_type =
+				soc_req_v2->axi_path_flex[i].transac_type;
+			clk_info_v2->axi_path[i].path_data_type =
+				soc_req_v2->axi_path_flex[i].path_data_type;
+			clk_info_v2->axi_path[i].vote_level = 0;
+			clk_info_v2->axi_path[i].camnoc_bw = soc_req_v2->axi_path_flex[i].camnoc_bw;
+			clk_info_v2->axi_path[i].mnoc_ab_bw =
+				soc_req_v2->axi_path_flex[i].mnoc_ab_bw;
+			clk_info_v2->axi_path[i].mnoc_ib_bw =
+				soc_req_v2->axi_path_flex[i].mnoc_ib_bw;
+		}
 
 		/* Use v1 structure for clk fields */
 		clk_info->budget_ns = clk_info_v2->budget_ns;
@@ -3270,8 +3322,8 @@ static int cam_ope_mgr_prepare_hw_update(void *hw_priv,
 		return -EINVAL;
 	}
 
-	rc = cam_packet_util_process_patches(packet, hw_mgr->iommu_cdm_hdl,
-		hw_mgr->iommu_sec_cdm_hdl);
+	rc = cam_packet_util_process_patches(packet, prepare_args->buf_tracker,
+		hw_mgr->iommu_cdm_hdl, hw_mgr->iommu_sec_cdm_hdl, false);
 	if (rc) {
 		mutex_unlock(&ctx_data->ctx_mutex);
 		CAM_ERR(CAM_OPE, "Patching failed: %d req_id: %d ctx: %d",
@@ -3287,7 +3339,7 @@ static int cam_ope_mgr_prepare_hw_update(void *hw_priv,
 	}
 
 	ctx_data->req_list[request_idx] =
-		kzalloc(sizeof(struct cam_ope_request), GFP_KERNEL);
+		CAM_MEM_ZALLOC(sizeof(struct cam_ope_request), GFP_KERNEL);
 	if (!ctx_data->req_list[request_idx]) {
 		CAM_ERR(CAM_OPE, "mem allocation failed ctx:%d req_idx:%d",
 			ctx_data->ctx_id, request_idx);
@@ -3296,8 +3348,9 @@ static int cam_ope_mgr_prepare_hw_update(void *hw_priv,
 	}
 
 	ope_req = ctx_data->req_list[request_idx];
+	ope_req->req_idx = request_idx;
 	ope_req->cdm_cmd =
-		kzalloc(((sizeof(struct cam_cdm_bl_request)) +
+		CAM_MEM_ZALLOC(((sizeof(struct cam_cdm_bl_request)) +
 			((OPE_MAX_CDM_BLS - 1) *
 			sizeof(struct cam_cdm_bl_cmd))),
 			GFP_KERNEL);
@@ -3309,7 +3362,7 @@ static int cam_ope_mgr_prepare_hw_update(void *hw_priv,
 	}
 
 	rc = cam_ope_mgr_process_cmd_desc(hw_mgr, packet,
-		ctx_data, &ope_cmd_buf_addr, request_idx);
+		ctx_data, &ope_cmd_buf_addr, ope_req, prepare_args->buf_tracker);
 	if (rc) {
 		CAM_ERR(CAM_OPE,
 			"cmd desc processing failed :%d ctx: %d req_id:%d",
@@ -3327,7 +3380,7 @@ static int cam_ope_mgr_prepare_hw_update(void *hw_priv,
 	}
 
 	rc = cam_ope_mgr_create_kmd_buf(hw_mgr, packet, prepare_args,
-		ctx_data, request_idx, ope_cmd_buf_addr);
+		ctx_data, ope_req, ope_cmd_buf_addr);
 	if (rc) {
 		CAM_ERR(CAM_OPE,
 			"create kmd buf failed: %d ctx: %d request_id:%d",
@@ -3343,17 +3396,17 @@ static int cam_ope_mgr_prepare_hw_update(void *hw_priv,
 			request_idx);
 		goto end;
 	}
-	prepare_args->num_hw_update_entries = 1;
-	prepare_args->hw_update_entries[0].addr =
-		(uintptr_t)ctx_data->req_list[request_idx]->cdm_cmd;
-	prepare_args->priv = ctx_data->req_list[request_idx];
-	prepare_args->pf_data->packet = packet;
-	prepare_args->pf_data->req    = ope_req;
+
+	ope_req->cdm_cmd->genirq_buff             = &ope_req->genirq_buff_info;
+	ope_req->hang_data.packet                 = packet;
+	prepare_args->num_hw_update_entries       = 1;
+	prepare_args->hw_update_entries[0].addr   = (uintptr_t)ope_req->cdm_cmd;
+	prepare_args->priv                        = ope_req;
+
 	CAM_INFO(CAM_REQ, "OPE req %x num_batch %d", ope_req, ope_req->num_batch);
-	ope_req->hang_data.packet = packet;
+
 	ktime_get_boottime_ts64(&ts);
-	ctx_data->last_req_time = (uint64_t)((ts.tv_sec * 1000000000) +
-		ts.tv_nsec);
+	ctx_data->last_req_time = (uint64_t)((ts.tv_sec * 1000000000) + ts.tv_nsec);
 	CAM_DBG(CAM_REQ, "req_id= %llu ctx_id= %d lrt=%llu",
 		packet->header.request_id, ctx_data->ctx_id,
 		ctx_data->last_req_time);
@@ -3367,10 +3420,14 @@ static int cam_ope_mgr_prepare_hw_update(void *hw_priv,
 
 end:
 	cam_ope_mgr_put_cmd_buf(packet);
-	cam_free_clear((void *)ctx_data->req_list[request_idx]->cdm_cmd);
+	CAM_MEM_ZFREE((void *)ctx_data->req_list[request_idx]->cdm_cmd,
+				((sizeof(struct cam_cdm_bl_request)) +
+				((OPE_MAX_CDM_BLS - 1) *
+				sizeof(struct cam_cdm_bl_cmd))));
 	ctx_data->req_list[request_idx]->cdm_cmd = NULL;
 req_cdm_mem_alloc_failed:
-	cam_free_clear((void *)ctx_data->req_list[request_idx]);
+	CAM_MEM_ZFREE((void *)ctx_data->req_list[request_idx],
+				sizeof(struct cam_ope_request));
 	ctx_data->req_list[request_idx] = NULL;
 req_mem_alloc_failed:
 	clear_bit(request_idx, ctx_data->bitmap);
@@ -3395,10 +3452,14 @@ static int cam_ope_mgr_handle_config_err(
 
 	req_idx = ope_req->req_idx;
 	ope_req->request_id = 0;
-	cam_free_clear((void *)ctx_data->req_list[req_idx]->cdm_cmd);
+	CAM_MEM_ZFREE((void *)ctx_data->req_list[req_idx]->cdm_cmd,
+			((sizeof(struct cam_cdm_bl_request)) +
+			((OPE_MAX_CDM_BLS - 1) *
+			sizeof(struct cam_cdm_bl_cmd))));
 	ctx_data->req_list[req_idx]->cdm_cmd = NULL;
 	cam_ope_free_io_config(ctx_data->req_list[req_idx]);
-	cam_free_clear((void *)ctx_data->req_list[req_idx]);
+	CAM_MEM_ZFREE((void *)ctx_data->req_list[req_idx],
+			sizeof(struct cam_ope_request));
 	ctx_data->req_list[req_idx] = NULL;
 	clear_bit(req_idx, ctx_data->bitmap);
 
@@ -3472,8 +3533,7 @@ static int cam_ope_mgr_config_hw(void *hw_priv, void *hw_config_args)
 	}
 
 	ope_req = config_args->priv;
-	cdm_cmd = (struct cam_cdm_bl_request *)
-		config_args->hw_update_entries->addr;
+	cdm_cmd = (struct cam_cdm_bl_request *) config_args->hw_update_entries->addr;
 	cdm_cmd->cookie = ope_req->req_idx;
 
 	cam_ope_mgr_ope_clk_update(hw_mgr, ctx_data, ope_req->req_idx);
@@ -3583,10 +3643,14 @@ static int cam_ope_mgr_flush_req(struct cam_ope_ctx *ctx_data,
 			continue;
 
 		ctx_data->req_list[idx]->request_id = 0;
-		cam_free_clear((void *)ctx_data->req_list[idx]->cdm_cmd);
+		CAM_MEM_ZFREE((void *)ctx_data->req_list[idx]->cdm_cmd,
+				((sizeof(struct cam_cdm_bl_request)) +
+				((OPE_MAX_CDM_BLS - 1) *
+				sizeof(struct cam_cdm_bl_cmd))));
 		ctx_data->req_list[idx]->cdm_cmd = NULL;
 		cam_ope_free_io_config(ctx_data->req_list[idx]);
-		cam_free_clear((void *)ctx_data->req_list[idx]);
+		CAM_MEM_ZFREE((void *)ctx_data->req_list[idx],
+				sizeof(struct cam_ope_request));
 		ctx_data->req_list[idx] = NULL;
 		clear_bit(idx, ctx_data->bitmap);
 	}
@@ -3616,10 +3680,14 @@ static int cam_ope_mgr_flush_all(struct cam_ope_ctx *ctx_data,
 			continue;
 
 		ctx_data->req_list[i]->request_id = 0;
-		cam_free_clear((void *)ctx_data->req_list[i]->cdm_cmd);
+		CAM_MEM_ZFREE((void *)ctx_data->req_list[i]->cdm_cmd,
+				((sizeof(struct cam_cdm_bl_request)) +
+				((OPE_MAX_CDM_BLS - 1) *
+				sizeof(struct cam_cdm_bl_cmd))));
 		ctx_data->req_list[i]->cdm_cmd = NULL;
 		cam_ope_free_io_config(ctx_data->req_list[i]);
-		cam_free_clear((void *)ctx_data->req_list[i]);
+		CAM_MEM_ZFREE((void *)ctx_data->req_list[i],
+				sizeof(struct cam_ope_request));
 		ctx_data->req_list[i] = NULL;
 		clear_bit(i, ctx_data->bitmap);
 	}
@@ -3679,7 +3747,8 @@ static int cam_ope_mgr_hw_dump(void *hw_priv, void *hw_dump_args)
 	req_ts = ktime_to_timespec64(ctx_data->req_list[idx]->submit_timestamp);
 
 	if (diff < (ctx_data->req_timer_timeout * 1000)) {
-		CAM_INFO(CAM_OPE, "No Error req %llu %ld:%06ld %ld:%06ld",
+		CAM_INFO(CAM_OPE,
+			"No Error req %llu req timestamp:[%lld.%06lld] curr timestamp:[%lld.%06lld]",
 			dump_args->request_id,
 			req_ts.tv_sec,
 			req_ts.tv_nsec/NSEC_PER_USEC,
@@ -3690,7 +3759,7 @@ static int cam_ope_mgr_hw_dump(void *hw_priv, void *hw_dump_args)
 		return 0;
 	}
 
-	CAM_ERR(CAM_OPE, "Error req %llu %ld:%06ld %ld:%06ld",
+	CAM_ERR(CAM_OPE, "Error req %llu req timestamp:[%lld.%06lld] curr timestamp:[%lld.%06lld]",
 		dump_args->request_id,
 		req_ts.tv_sec,
 		req_ts.tv_nsec/NSEC_PER_USEC,
@@ -3769,7 +3838,7 @@ static int cam_ope_mgr_alloc_devs(struct device_node *of_node)
 		return -EINVAL;
 	}
 
-	ope_hw_mgr->devices[OPE_DEV_OPE] = kzalloc(
+	ope_hw_mgr->devices[OPE_DEV_OPE] = CAM_MEM_ZALLOC(
 		sizeof(struct cam_hw_intf *) * num_dev, GFP_KERNEL);
 	if (!ope_hw_mgr->devices[OPE_DEV_OPE])
 		return -ENOMEM;
@@ -3855,7 +3924,7 @@ static int cam_ope_mgr_init_devs(struct device_node *of_node)
 
 	return 0;
 compat_hw_name_failed:
-	kfree(ope_hw_mgr->devices[OPE_DEV_OPE]);
+	CAM_MEM_FREE(ope_hw_mgr->devices[OPE_DEV_OPE]);
 	ope_hw_mgr->devices[OPE_DEV_OPE] = NULL;
 	return rc;
 }
@@ -3906,7 +3975,7 @@ static int cam_ope_mgr_create_wq(void)
 	}
 
 	ope_hw_mgr->cmd_work_data =
-		kzalloc(sizeof(struct ope_cmd_work_data) * OPE_WORKQ_NUM_TASK,
+		CAM_MEM_ZALLOC(sizeof(struct ope_cmd_work_data) * OPE_WORKQ_NUM_TASK,
 		GFP_KERNEL);
 	if (!ope_hw_mgr->cmd_work_data) {
 		rc = -ENOMEM;
@@ -3914,7 +3983,7 @@ static int cam_ope_mgr_create_wq(void)
 	}
 
 	ope_hw_mgr->msg_work_data =
-		kzalloc(sizeof(struct ope_msg_work_data) * OPE_WORKQ_NUM_TASK,
+		CAM_MEM_ZALLOC(sizeof(struct ope_msg_work_data) * OPE_WORKQ_NUM_TASK,
 		GFP_KERNEL);
 	if (!ope_hw_mgr->msg_work_data) {
 		rc = -ENOMEM;
@@ -3922,7 +3991,7 @@ static int cam_ope_mgr_create_wq(void)
 	}
 
 	ope_hw_mgr->timer_work_data =
-		kzalloc(sizeof(struct ope_clk_work_data) * OPE_WORKQ_NUM_TASK,
+		CAM_MEM_ZALLOC(sizeof(struct ope_clk_work_data) * OPE_WORKQ_NUM_TASK,
 		GFP_KERNEL);
 	if (!ope_hw_mgr->timer_work_data) {
 		rc = -ENOMEM;
@@ -3944,9 +4013,9 @@ static int cam_ope_mgr_create_wq(void)
 
 
 timer_work_data_failed:
-	kfree(ope_hw_mgr->msg_work_data);
+	CAM_MEM_FREE(ope_hw_mgr->msg_work_data);
 msg_work_data_failed:
-	kfree(ope_hw_mgr->cmd_work_data);
+	CAM_MEM_FREE(ope_hw_mgr->cmd_work_data);
 cmd_work_data_failed:
 	cam_req_mgr_workq_destroy(&ope_hw_mgr->timer_work);
 timer_work_failed:
@@ -3959,36 +4028,24 @@ cmd_work_failed:
 
 static int cam_ope_create_debug_fs(void)
 {
-	ope_hw_mgr->dentry = debugfs_create_dir("camera_ope",
-		NULL);
+	int rc;
 
-	if (!ope_hw_mgr->dentry) {
+	if (!cam_debugfs_available())
+		return 0;
+
+	rc = cam_debugfs_create_subdir("ope", &ope_hw_mgr->dentry);
+	if (rc) {
 		CAM_ERR(CAM_OPE, "failed to create dentry");
-		return -ENOMEM;
+		return rc;
 	}
 
-	if (!debugfs_create_bool("frame_dump_enable",
-		0644,
-		ope_hw_mgr->dentry,
-		&ope_hw_mgr->frame_dump_enable)) {
-		CAM_ERR(CAM_OPE,
-			"failed to create dump_enable_debug");
-		goto err;
-	}
+	debugfs_create_bool("frame_dump_enable", 0644, ope_hw_mgr->dentry,
+		&ope_hw_mgr->frame_dump_enable);
 
-	if (!debugfs_create_bool("dump_req_data_enable",
-		0644,
-		ope_hw_mgr->dentry,
-		&ope_hw_mgr->dump_req_data_enable)) {
-		CAM_ERR(CAM_OPE,
-			"failed to create dump_enable_debug");
-		goto err;
-	}
+	debugfs_create_bool("dump_req_data_enable", 0644, ope_hw_mgr->dentry,
+		&ope_hw_mgr->dump_req_data_enable);
 
 	return 0;
-err:
-	debugfs_remove_recursive(ope_hw_mgr->dentry);
-	return -ENOMEM;
 }
 
 
@@ -4006,7 +4063,7 @@ int cam_ope_hw_mgr_init(struct device_node *of_node, uint64_t *hw_mgr_hdl,
 	}
 	hw_mgr_intf = (struct cam_hw_mgr_intf *)hw_mgr_hdl;
 
-	ope_hw_mgr = kzalloc(sizeof(struct cam_ope_hw_mgr), GFP_KERNEL);
+	ope_hw_mgr = CAM_MEM_ZALLOC(sizeof(struct cam_ope_hw_mgr), GFP_KERNEL);
 	if (!ope_hw_mgr) {
 		CAM_ERR(CAM_OPE, "Unable to allocate mem for: size = %d",
 			sizeof(struct cam_ope_hw_mgr));
@@ -4038,7 +4095,7 @@ int cam_ope_hw_mgr_init(struct device_node *of_node, uint64_t *hw_mgr_hdl,
 		ope_hw_mgr->ctx[i].bitmap_size =
 			BITS_TO_LONGS(CAM_CTX_REQ_MAX) *
 			sizeof(long);
-		ope_hw_mgr->ctx[i].bitmap = kzalloc(
+		ope_hw_mgr->ctx[i].bitmap = CAM_MEM_ZALLOC(
 			ope_hw_mgr->ctx[i].bitmap_size, GFP_KERNEL);
 		if (!ope_hw_mgr->ctx[i].bitmap) {
 			CAM_ERR(CAM_OPE, "bitmap allocation failed: size = %d",
@@ -4057,7 +4114,7 @@ int cam_ope_hw_mgr_init(struct device_node *of_node, uint64_t *hw_mgr_hdl,
 
 	ope_hw_mgr->ctx_bitmap_size =
 		BITS_TO_LONGS(OPE_CTX_MAX) * sizeof(long);
-	ope_hw_mgr->ctx_bitmap = kzalloc(ope_hw_mgr->ctx_bitmap_size,
+	ope_hw_mgr->ctx_bitmap = CAM_MEM_ZALLOC(ope_hw_mgr->ctx_bitmap_size,
 		GFP_KERNEL);
 	if (!ope_hw_mgr->ctx_bitmap) {
 		rc = -ENOMEM;
@@ -4119,24 +4176,27 @@ secure_hdl_failed:
 	cam_smmu_destroy_handle(ope_hw_mgr->iommu_hdl);
 	ope_hw_mgr->iommu_hdl = -1;
 ope_get_hdl_failed:
-	cam_free_clear((void *)ope_hw_mgr->ctx_bitmap);
+	CAM_MEM_ZFREE((void *)ope_hw_mgr->ctx_bitmap,
+			ope_hw_mgr->ctx_bitmap_size);
 	ope_hw_mgr->ctx_bitmap = NULL;
 	ope_hw_mgr->ctx_bitmap_size = 0;
 	ope_hw_mgr->ctx_bits = 0;
 ctx_bitmap_alloc_failed:
-	cam_free_clear((void *)ope_hw_mgr->devices[OPE_DEV_OPE]);
+	CAM_MEM_ZFREE((void *)ope_hw_mgr->devices[OPE_DEV_OPE],
+			(ope_hw_mgr->num_ope) * (sizeof(struct cam_hw_intf *)));
 	ope_hw_mgr->devices[OPE_DEV_OPE] = NULL;
 dev_init_failed:
 ope_ctx_bitmap_failed:
 	mutex_destroy(&ope_hw_mgr->hw_mgr_mutex);
 	for (j = i - 1; j >= 0; j--) {
 		mutex_destroy(&ope_hw_mgr->ctx[j].ctx_mutex);
-		cam_free_clear((void *)ope_hw_mgr->ctx[j].bitmap);
+		CAM_MEM_ZFREE((void *)ope_hw_mgr->ctx[j].bitmap,
+				ope_hw_mgr->ctx[j].bitmap_size);
 		ope_hw_mgr->ctx[j].bitmap = NULL;
 		ope_hw_mgr->ctx[j].bitmap_size = 0;
 		ope_hw_mgr->ctx[j].bits = 0;
 	}
-	cam_free_clear((void *)ope_hw_mgr);
+	CAM_MEM_ZFREE((void *)ope_hw_mgr, sizeof(struct cam_ope_hw_mgr));
 	ope_hw_mgr = NULL;
 
 	return rc;
@@ -4146,34 +4206,36 @@ static void cam_ope_mgr_dump_pf_data(
 	struct cam_ope_hw_mgr  *hw_mgr,
 	struct cam_hw_cmd_args *hw_cmd_args)
 {
-	struct cam_ope_ctx             *ctx_data;
-	struct cam_packet              *packet;
-	struct cam_buf_io_cfg          *io_cfg = NULL;
-	struct cam_ope_request         *ope_request;
-	struct ope_io_buf              *io_buf = NULL;
-	struct cam_ope_match_pid_args  ope_pid_mid_args;
+	struct cam_ope_ctx                *ctx_data;
+	struct cam_packet                 *packet;
+	struct cam_buf_io_cfg             *io_cfg = NULL;
+	struct cam_ope_request            *ope_request;
+	struct ope_io_buf                 *io_buf = NULL;
+	struct cam_ope_match_pid_args      ope_pid_mid_args;
+	struct cam_hw_dump_pf_args        *pf_args;
+	struct cam_ctx_request            *req_pf;
 
-	dma_addr_t   iova_addr;
 	int          device_idx;
 	bool         *ctx_found;
 	bool         io_buf_found = false;
-	size_t       src_buf_size;
 	int          i, j;
-	int32_t      mmu_hdl;
 	bool         hw_pid_support = true;
 	bool         hw_id_found = false;
 	uint32_t     *resource_type;
 	int          stripe_num;
 	int          rc = 0;
 
-	ctx_data    = (struct cam_ope_ctx *)hw_cmd_args->ctxt_to_hw_map;
-	packet      = hw_cmd_args->u.pf_args.pf_data.packet;
-	ope_request = hw_cmd_args->u.pf_args.pf_data.req;
+	ctx_data = (struct cam_ope_ctx *)hw_cmd_args->ctxt_to_hw_map;
+	pf_args = hw_cmd_args->u.pf_cmd_args->pf_args;
+	req_pf = (struct cam_ctx_request *)
+		hw_cmd_args->u.pf_cmd_args->pf_req_info->req;
+	packet = (struct cam_packet *)req_pf->packet;
+	ope_request = hw_cmd_args->u.pf_cmd_args->pf_req_info->req;
 
-	ope_pid_mid_args.fault_mid = hw_cmd_args->u.pf_args.mid;
-	ope_pid_mid_args.fault_pid = hw_cmd_args->u.pf_args.pid;
-	ctx_found = hw_cmd_args->u.pf_args.ctx_found;
-	resource_type = hw_cmd_args->u.pf_args.resource_type;
+	ope_pid_mid_args.fault_mid =  pf_args->pf_smmu_info->mid;
+	ope_pid_mid_args.fault_pid = pf_args->pf_smmu_info->pid;
+	ctx_found = &(pf_args->pf_context_info.ctx_found);
+	resource_type = &(pf_args->pf_context_info.resource_type);
 
 	if (ctx_data->pf_mid_found)
 		goto stripedump;
@@ -4190,7 +4252,7 @@ static void cam_ope_mgr_dump_pf_data(
 			continue;
 		for (j = 0; j < ope_hw_mgr->ope_dev_data[i]->num_hw_pid; j++) {
 			if (ope_hw_mgr->ope_dev_data[i]->hw_pid[j] ==
-					hw_cmd_args->u.pf_args.pid) {
+					pf_args->pf_smmu_info->pid) {
 				hw_id_found = true;
 				device_idx = i;
 				*ctx_found = true;
@@ -4204,7 +4266,8 @@ static void cam_ope_mgr_dump_pf_data(
 	if (i == ope_hw_mgr->num_ope) {
 		CAM_INFO(CAM_OPE,
 			"PID:%d  is not matching with any OPE HW PIDs ctx id:%d",
-			hw_cmd_args->u.pf_args.pid, ctx_data->ctx_id);
+			pf_args->pf_smmu_info->pid, ctx_data->ctx_id);
+		cam_packet_util_put_packet_addr(pf_req_info->packet_handle);
 		return;
 	}
 
@@ -4217,6 +4280,7 @@ static void cam_ope_mgr_dump_pf_data(
 	if (rc) {
 		CAM_ERR(CAM_OPE,
 			"CAM_OPE_CMD_MATCH_PID_MID failed %d", rc);
+		cam_packet_util_put_packet_addr(pf_req_info->packet_handle);
 		return;
 	}
 
@@ -4246,67 +4310,27 @@ stripedump:
 		if (io_buf_found)
 			break;
 	}
+
 iodump:
-	for (i = 0; i < packet->num_io_configs; i++) {
-		if (hw_pid_support) {
-			if (io_cfg[i].resource_type !=
-				*resource_type)
-				continue;
-		}
+	cam_packet_util_dump_io_bufs(packet, hw_mgr->iommu_hdl,
+		hw_mgr->iommu_sec_hdl, pf_args, hw_pid_support);
 
+	if (io_buf_found) {
 		for (j = 0; j < CAM_PACKET_MAX_PLANES; j++) {
-			if (!io_cfg[i].mem_handle[j])
+			if (j >= OPE_MAX_PLANES) {
+				CAM_INFO(CAM_OPE, "Invalid plane idx: %d", j);
 				break;
-			CAM_INFO(CAM_OPE, "port: %d f: %u format: %d dir %d",
-				io_cfg[i].resource_type,
-				io_cfg[i].fence,
-				io_cfg[i].format,
-				io_cfg[i].direction);
-
-			mmu_hdl = cam_mem_is_secure_buf(
-					io_cfg[i].mem_handle[j]) ?
-					hw_mgr->iommu_sec_hdl :
-					hw_mgr->iommu_hdl;
-			rc = cam_mem_get_io_buf(io_cfg[i].mem_handle[j],
-					mmu_hdl, &iova_addr, &src_buf_size, NULL);
-			if (rc < 0) {
-				CAM_ERR(CAM_UTIL, "get src buf address fail");
-				continue;
-			}
-			if ((iova_addr & 0xFFFFFFFF) != iova_addr) {
-				CAM_ERR(CAM_OPE, "Invalid mapped address");
-				rc = -EINVAL;
-				continue;
 			}
 
-			CAM_INFO(CAM_OPE,
-				"pln %u w %u h %u stride %u slice %u size %zu addr 0x%llx offset 0x%x memh %x",
-				j, io_cfg[i].planes[j].width,
-				io_cfg[i].planes[j].height,
-				io_cfg[i].planes[j].plane_stride,
-				io_cfg[i].planes[j].slice_height,
-				src_buf_size, iova_addr,
-				io_cfg[i].offsets[j],
-				io_cfg[i].mem_handle[j]);
-
-			if (io_buf_found) {
-				if (j >= OPE_MAX_PLANES) {
-					CAM_ERR(CAM_OPE, "Invalid plane idx: %d", j);
-					break;
-				}
-
-				for (stripe_num = 0; stripe_num < io_buf->num_stripes[j];
-						stripe_num++) {
-					CAM_INFO(CAM_OPE,
-						"pln_num %d stripe_num %d width %d height %d stride %d iovaddr 0x%llx",
-						j, stripe_num, io_buf->s_io[j][stripe_num].width,
-						io_buf->s_io[j][stripe_num].height,
-						io_buf->s_io[j][stripe_num].stride,
-						io_buf->s_io[j][stripe_num].iova_addr);
-				}
+			for (stripe_num = 0; stripe_num < io_buf->num_stripes[j]; stripe_num++) {
+				CAM_INFO(CAM_OPE,
+					"pln_num %d stripe_num %d width %d height %d stride %d iovaddr 0x%llx",
+					j, stripe_num, io_buf->s_io[j][stripe_num].width,
+					io_buf->s_io[j][stripe_num].height,
+					io_buf->s_io[j][stripe_num].stride,
+					io_buf->s_io[j][stripe_num].iova_addr);
 			}
 		}
-		if (hw_pid_support)
-			return;
 	}
+	cam_packet_util_put_packet_addr(pf_req_info->packet_handle);
 }

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_VFE_LITE48x_H_
@@ -32,9 +33,9 @@ static struct cam_irq_register_set vfe48x_top_irq_reg_set[3] = {
 static struct cam_irq_controller_reg_info vfe48x_top_irq_reg_info = {
 	.num_registers = 3,
 	.irq_reg_set = vfe48x_top_irq_reg_set,
-	.global_clear_offset  = 0x00000024,
-	.global_clear_bitmask = 0x00000001,
-	.clear_all_bitmask = 0xFFFFFFFF,
+	.global_irq_cmd_offset = 0x00000024,
+	.global_clear_bitmask  = 0x00000001,
+	.clear_all_bitmask     = 0xFFFFFFFF,
 };
 
 static struct cam_vfe_top_ver3_reg_offset_common vfe48x_top_common_reg = {
@@ -222,6 +223,13 @@ static struct cam_irq_register_set vfe48x_bus_irq_reg[2] = {
 	},
 };
 
+static uint32_t vfe48x_out_port_mid[][4] = {
+	{16, 0, 0, 0},
+	{17, 0, 0, 0},
+	{18, 0, 0, 0},
+	{19, 0, 0, 0},
+};
+
 static struct cam_vfe_bus_ver3_hw_info vfe48x_bus_hw_info = {
 	.common_reg = {
 		.hw_version                       = 0x00001A00,
@@ -241,10 +249,15 @@ static struct cam_vfe_bus_ver3_hw_info vfe48x_bus_hw_info = {
 		.debug_status_top                 = 0x00001AD8,
 		.test_bus_ctrl                    = 0x00001ADC,
 		.top_irq_mask_0                   = 0x00000028,
+		.wm_mode_shift                    = 16,
+		.wm_mode_val                      = { 0x0, 0x1, 0x2 },
+		.wm_en_shift                      = 0,
+		.frmheader_en_shift               = 2,
+		.virtual_frm_en_shift		  = 1,
 		.irq_reg_info = {
 			.num_registers            = 2,
 			.irq_reg_set              = vfe48x_bus_irq_reg,
-			.global_clear_offset      = 0x00001A30,
+			.global_irq_cmd_offset    = 0x00001A30,
 			.global_clear_bitmask     = 0x00000001,
 		},
 	},
@@ -278,6 +291,15 @@ static struct cam_vfe_bus_ver3_hw_info vfe48x_bus_hw_info = {
 			.debug_status_1           = 0x00001C80,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_0,
 			.ubwc_regs                = NULL,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_MIPI_RAW_10) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_6) | BIT_ULL(CAM_FORMAT_MIPI_RAW_8) |
+				BIT_ULL(CAM_FORMAT_YUV422) | BIT_ULL(CAM_FORMAT_MIPI_RAW_12) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_14) | BIT_ULL(CAM_FORMAT_MIPI_RAW_16) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_20) | BIT_ULL(CAM_FORMAT_PLAIN128) |
+				BIT_ULL(CAM_FORMAT_PLAIN32_20) | BIT_ULL(CAM_FORMAT_PLAIN8) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10) | BIT_ULL(CAM_FORMAT_PLAIN16_12) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_14) | BIT_ULL(CAM_FORMAT_PLAIN16_16) |
+				BIT_ULL(CAM_FORMAT_PLAIN64) | BIT_ULL(CAM_FORMAT_YUV422_10),
 		},
 		/* RDI 1 */
 		{
@@ -307,6 +329,15 @@ static struct cam_vfe_bus_ver3_hw_info vfe48x_bus_hw_info = {
 			.debug_status_1           = 0x00001D80,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_1,
 			.ubwc_regs                = NULL,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_MIPI_RAW_10) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_6) | BIT_ULL(CAM_FORMAT_MIPI_RAW_8) |
+				BIT_ULL(CAM_FORMAT_YUV422) | BIT_ULL(CAM_FORMAT_MIPI_RAW_12) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_14) | BIT_ULL(CAM_FORMAT_MIPI_RAW_16) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_20) | BIT_ULL(CAM_FORMAT_PLAIN128) |
+				BIT_ULL(CAM_FORMAT_PLAIN32_20) | BIT_ULL(CAM_FORMAT_PLAIN8) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10) | BIT_ULL(CAM_FORMAT_PLAIN16_12) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_14) | BIT_ULL(CAM_FORMAT_PLAIN16_16) |
+				BIT_ULL(CAM_FORMAT_PLAIN64) | BIT_ULL(CAM_FORMAT_YUV422_10),
 		},
 		/* RDI 2 */
 		{
@@ -336,6 +367,15 @@ static struct cam_vfe_bus_ver3_hw_info vfe48x_bus_hw_info = {
 			.debug_status_1           = 0x00001E80,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_2,
 			.ubwc_regs                = NULL,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_MIPI_RAW_10) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_6) | BIT_ULL(CAM_FORMAT_MIPI_RAW_8) |
+				BIT_ULL(CAM_FORMAT_YUV422) | BIT_ULL(CAM_FORMAT_MIPI_RAW_12) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_14) | BIT_ULL(CAM_FORMAT_MIPI_RAW_16) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_20) | BIT_ULL(CAM_FORMAT_PLAIN128) |
+				BIT_ULL(CAM_FORMAT_PLAIN32_20) | BIT_ULL(CAM_FORMAT_PLAIN8) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10) | BIT_ULL(CAM_FORMAT_PLAIN16_12) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_14) | BIT_ULL(CAM_FORMAT_PLAIN16_16) |
+				BIT_ULL(CAM_FORMAT_PLAIN64) | BIT_ULL(CAM_FORMAT_YUV422_10),
 		},
 		/* RDI 3 */
 		{
@@ -365,6 +405,15 @@ static struct cam_vfe_bus_ver3_hw_info vfe48x_bus_hw_info = {
 			.debug_status_1           = 0x00001F80,
 			.comp_group               = CAM_VFE_BUS_VER3_COMP_GRP_3,
 			.ubwc_regs                = NULL,
+			.supported_formats        = BIT_ULL(CAM_FORMAT_MIPI_RAW_10) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_6) | BIT_ULL(CAM_FORMAT_MIPI_RAW_8) |
+				BIT_ULL(CAM_FORMAT_YUV422) | BIT_ULL(CAM_FORMAT_MIPI_RAW_12) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_14) | BIT_ULL(CAM_FORMAT_MIPI_RAW_16) |
+				BIT_ULL(CAM_FORMAT_MIPI_RAW_20) | BIT_ULL(CAM_FORMAT_PLAIN128) |
+				BIT_ULL(CAM_FORMAT_PLAIN32_20) | BIT_ULL(CAM_FORMAT_PLAIN8) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_10) | BIT_ULL(CAM_FORMAT_PLAIN16_12) |
+				BIT_ULL(CAM_FORMAT_PLAIN16_14) | BIT_ULL(CAM_FORMAT_PLAIN16_16) |
+				BIT_ULL(CAM_FORMAT_PLAIN64) | BIT_ULL(CAM_FORMAT_YUV422_10),
 		},
 	},
 	.num_out = 4,
@@ -374,7 +423,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe48x_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_0,
-			.mid[0]        = 16,
+			.mid           = vfe48x_out_port_mid[0],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = {
 				0,
@@ -388,7 +438,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe48x_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_1,
-			.mid[0]        = 17,
+			.mid           = vfe48x_out_port_mid[1],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = {
 				1,
@@ -402,7 +453,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe48x_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_2,
-			.mid[0]        = 18,
+			.mid           = vfe48x_out_port_mid[2],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = {
 				2,
@@ -416,7 +468,8 @@ static struct cam_vfe_bus_ver3_hw_info vfe48x_bus_hw_info = {
 			.max_width     = -1,
 			.max_height    = -1,
 			.source_group  = CAM_VFE_BUS_VER3_SRC_GRP_3,
-			.mid[0]        = 19,
+			.mid           = vfe48x_out_port_mid[3],
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = {
 				3,
@@ -427,7 +480,9 @@ static struct cam_vfe_bus_ver3_hw_info vfe48x_bus_hw_info = {
 		},
 	},
 	.num_comp_grp    = 4,
-	.comp_done_shift = 4,
+	.comp_done_mask = {
+		BIT(4), BIT(5), BIT(6), BIT(7),
+	},
 	.top_irq_shift   = 4,
 	.support_consumed_addr = true,
 	.max_out_res = CAM_ISP_IFE_OUT_RES_BASE + 25,

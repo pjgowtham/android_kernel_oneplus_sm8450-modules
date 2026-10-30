@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_SFE680_H_
@@ -199,27 +199,6 @@ static struct cam_sfe_top_err_irq_desc sfe_680_top_irq_err_desc[] = {
 	},
 };
 
-static struct cam_sfe_bus_wr_err_irq_desc sfe_680_bus_wr_irq_err_desc[] = {
-	{
-		.bitmask = BIT(28),
-		.err_name = "CONS_VIOLATION",
-		.desc = "Programmed registers violated the constraints",
-		.err_handler = cam_sfe_bus_wr_get_constraint_errors,
-	},
-	{
-		.bitmask = BIT(30),
-		.err_name = "CCIF_VIOLATION",
-		.desc = "Clients has a violation in ccif protocol at input",
-		.err_handler = cam_sfe_bus_wr_print_ccif_violation_status,
-	},
-	{
-		.bitmask = BIT(31),
-		.err_name = "IMAGE_SIZE_VIOLATION",
-		.desc = "Programmed image size is not same as image size from the CCIF",
-		.err_handler = cam_sfe_bus_wr_print_violation_info,
-	},
-};
-
 static struct cam_sfe_top_debug_info sfe680_clc_dbg_module_info[CAM_SFE_TOP_DBG_REG_MAX][8] = {
 	SFE_DBG_INFO_ARRAY_4bit(
 		"test_bus_reserved",
@@ -333,6 +312,25 @@ static struct cam_sfe_top_common_reg_offset  sfe680_top_commong_reg  = {
 	.hdr_throttle_cfg              = 0x000000C0,
 	.sfe_op_throttle_cfg           = 0x000000C4,
 	.bus_overflow_status           = 0x00000868,
+	.num_perf_counters             = 2,
+	.perf_count_reg = {
+		{
+			.perf_count_cfg        = 0x00000080,
+			.perf_pix_count        = 0x00000084,
+			.perf_line_count       = 0x00000088,
+			.perf_stall_count      = 0x0000008C,
+			.perf_always_count     = 0x00000090,
+			.perf_count_status     = 0x00000094,
+		},
+		{
+			.perf_count_cfg        = 0x00000098,
+			.perf_pix_count        = 0x0000009C,
+			.perf_line_count       = 0x000000A0,
+			.perf_stall_count      = 0x000000A4,
+			.perf_always_count     = 0x000000A8,
+			.perf_count_status     = 0x000000AC,
+		},
+	},
 	.top_debug_cfg                 = 0x0000007C,
 	.lcr_supported                 = true,
 	.ir_supported                  = false,
@@ -443,7 +441,50 @@ static struct cam_irq_register_set sfe680_bus_rd_irq_reg[1] = {
 		.mask_reg_offset   = 0x00000404,
 		.clear_reg_offset  = 0x00000408,
 		.status_reg_offset = 0x00000410,
+		.set_reg_offset    = 0x00000418,
 	},
+};
+
+static struct cam_sfe_bus_rd_constraint_error_desc
+	sfe680_bus_rd_cons_error_desc[CAM_SFE_BUS_RD_CONS_ERR_MAX] = {
+	{
+		.bitmask    = BIT(0),
+		.error_desc = "Image Addr Unalign Latch",
+	},
+	{
+		.bitmask    = BIT(1),
+		.error_desc = "Ubwc Addr Unalign Latch",
+	},
+	{
+		.bitmask    = BIT(2),
+		.error_desc = "Stride Unalign Latch",
+	},
+	{
+		.bitmask    = BIT(3),
+		.error_desc = "Y Unit Unalign Latch",
+	},
+	{
+		.bitmask    = BIT(4),
+		.error_desc = "X Unit Unalign Latch",
+	},
+	{
+		.bitmask    = BIT(5),
+		.error_desc = "Image width Unalign Latch",
+	},
+	{
+		.bitmask    = BIT(6),
+		.error_desc = "Image height Unalign Latch",
+	},
+	{
+		.bitmask    = BIT(7),
+		.error_desc = "Meta Stride Unalign Latch",
+	},
+};
+
+static struct cam_sfe_bus_rd_constraint_error_info sfe680_bus_rd_constraint_error_info = {
+	.constraint_error_list = sfe680_bus_rd_cons_error_desc,
+	.cons_chk_en_val       = 0xC,
+	.num_cons_err          = 8,
 };
 
 static struct cam_sfe_bus_rd_hw_info sfe680_bus_rd_hw_info = {
@@ -456,11 +497,11 @@ static struct cam_sfe_bus_rd_hw_info sfe680_bus_rd_hw_info = {
 		.security_cfg                 = 0x00000420,
 		.cons_violation_status        = 0x00000434,
 		.irq_reg_info = {
-			.num_registers     = 1,
-			.irq_reg_set          = sfe680_bus_rd_irq_reg,
-			.global_clear_offset  = 0x0000040C,
-			.global_clear_bitmask = 0x00000001,
-			.clear_all_bitmask = 0xFFFFFFFF,
+			.num_registers = 1,
+			.irq_reg_set = sfe680_bus_rd_irq_reg,
+			.global_irq_cmd_offset = 0x0000040C,
+			.global_clear_bitmask  = 0x00000001,
+			.clear_all_bitmask     = 0xFFFFFFFF,
 		},
 	},
 	.num_client = 3,
@@ -475,6 +516,10 @@ static struct cam_sfe_bus_rd_hw_info sfe680_bus_rd_hw_info = {
 			.unpacker_cfg             = 0x00000468,
 			.latency_buf_allocation   = 0x0000047C,
 			.system_cache_cfg         = 0x0000049C,
+			.debug_status_cfg         = 0x00000490,
+			.debug_status_0           = 0x00000494,
+			.debug_status_1           = 0x00000498,
+			.name                     = "Fetch0",
 		},
 		/* BUS Client 1 */
 		{
@@ -486,6 +531,10 @@ static struct cam_sfe_bus_rd_hw_info sfe680_bus_rd_hw_info = {
 			.unpacker_cfg             = 0x00000508,
 			.latency_buf_allocation   = 0x0000051C,
 			.system_cache_cfg         = 0x0000053C,
+			.debug_status_cfg         = 0x00000530,
+			.debug_status_0           = 0x00000534,
+			.debug_status_1           = 0x00000538,
+			.name                     = "Fetch1",
 		},
 		/* BUS Client 2 */
 		{
@@ -497,6 +546,10 @@ static struct cam_sfe_bus_rd_hw_info sfe680_bus_rd_hw_info = {
 			.unpacker_cfg             = 0x000005A8,
 			.latency_buf_allocation   = 0x000005BC,
 			.system_cache_cfg         = 0x000005DC,
+			.debug_status_cfg         = 0x000005D0,
+			.debug_status_0           = 0x000005D4,
+			.debug_status_1           = 0x000005D8,
+			.name                     = "Fetch2",
 		},
 	},
 	.num_bus_rd_resc = 3,
@@ -528,6 +581,137 @@ static struct cam_sfe_bus_rd_hw_info sfe680_bus_rd_hw_info = {
 	 * the minimum
 	 */
 	.latency_buf_allocation = 2048,
+	.sys_cache_default_val  = 0x20,
+	.irq_err_mask           = 0x1,
+	.fs_sync_shift          = 0x5,
+	.constraint_error_info  = &sfe680_bus_rd_constraint_error_info,
+};
+
+static struct cam_sfe_bus_wr_constraint_error_desc
+	sfe680_bus_wr_cons_error_desc[CAM_SFE_BUS_CONS_ERR_MAX] = {
+	{
+		.bitmask = BIT(0),
+		.error_description = "PPC 1x1 input not supported"
+	},
+	{
+		.bitmask = BIT(1),
+		.error_description = "PPC 1x2 input not supported"
+	},
+	{
+		.bitmask = BIT(2),
+		.error_description = "PPC 2x1 input not supported"
+	},
+	{
+		.bitmask = BIT(3),
+		.error_description = "PPC 2x2 input not supported"
+	},
+	{
+		.bitmask = BIT(4),
+		.error_description = "Pack 8 BPP format not supported"
+	},
+	{
+		.bitmask = BIT(5),
+		.error_description = "Pack 16 format not supported"
+	},
+	{
+		.bitmask = BIT(6),
+		.error_description = "Pack 32 BPP format not supported"
+	},
+	{
+		.bitmask = BIT(7),
+		.error_description = "Pack 64 BPP format not supported"
+	},
+	{
+		.bitmask = BIT(8),
+		.error_description = "Pack MIPI 20 format not supported"
+	},
+	{
+		.bitmask = BIT(9),
+		.error_description = "Pack MIPI 14 format not supported"
+	},
+	{
+		.bitmask = BIT(10),
+		.error_description = "Pack MIPI 12 format not supported"
+	},
+	{
+		.bitmask = BIT(11),
+		.error_description = "Pack MIPI 10 format not supported"
+	},
+	{
+		.bitmask = BIT(12),
+		.error_description = "Pack 128 BPP format not supported"
+	},
+	{
+		.bitmask = BIT(13),
+		.error_description = "UBWC NV12 format not supported"
+	},
+	{
+		.bitmask = BIT(14),
+		.error_description = "UBWC NV12 4R format not supported"
+	},
+	{
+		.bitmask = BIT(15),
+		.error_description = "UBWC TP10 format not supported"
+	},
+	{
+		.bitmask = BIT(16),
+		.error_description = "Frame based Mode not supported"
+	},
+	{
+		.bitmask = BIT(17),
+		.error_description = "Index based Mode not supported"
+	},
+	{
+		.bitmask = BIT(18),
+		.error_description = "FIFO image addr unalign"
+	},
+	{
+		.bitmask = BIT(19),
+		.error_description = "FIFO ubwc addr unalign"
+	},
+	{
+		.bitmask = BIT(20),
+		.error_description = "FIFO frmheader addr unalign"
+	},
+	{
+		.bitmask = BIT(21),
+		.error_description = "Image address unalign"
+	},
+	{
+		.bitmask = BIT(22),
+		.error_description = "UBWC address unalign"
+	},
+	{
+		.bitmask = BIT(23),
+		.error_description = "Frame Header address unalign"
+	},
+	{
+		.bitmask = BIT(24),
+		.error_description = "Stride unalign"
+	},
+	{
+		.bitmask = BIT(25),
+		.error_description = "X Initialization unalign"
+	},
+	{
+		.bitmask = BIT(26),
+		.error_description = "Image Width unalign"
+	},
+	{
+		.bitmask = BIT(27),
+		.error_description = "Image Height unalign"
+	},
+	{
+		.bitmask = BIT(28),
+		.error_description = "Meta Stride unalign"
+	},
+};
+
+static struct cam_sfe_bus_wr_constraint_error_info sfe680_bus_wr_constraint_error_info = {
+	.constraint_error_list   = sfe680_bus_wr_cons_error_desc,
+	.num_cons_err            = 29,
+	.img_addr_unalign_shift  = 21,
+	.img_width_unalign_shift = 26,
 };
 
 static struct cam_irq_register_set sfe680_bus_wr_irq_reg[1] = {
@@ -535,6 +719,7 @@ static struct cam_irq_register_set sfe680_bus_wr_irq_reg[1] = {
 		.mask_reg_offset   = 0x00000818,
 		.clear_reg_offset  = 0x00000820,
 		.status_reg_offset = 0x00000828,
+		.set_reg_offset    = 0x00000850,
 	},
 };
 
@@ -560,11 +745,11 @@ static struct cam_sfe_bus_wr_hw_info sfe680_bus_wr_hw_info = {
 		.test_bus_ctrl                    = 0x000008DC,
 		.top_irq_mask_0                   = 0x00000020,
 		.irq_reg_info = {
-			.num_registers     = 1,
-			.irq_reg_set          = sfe680_bus_wr_irq_reg,
-			.global_clear_offset  = 0x00000830,
-			.global_clear_bitmask = 0x00000001,
-			.clear_all_bitmask = 0xFFFFFFFF,
+			.num_registers = 1,
+			.irq_reg_set = sfe680_bus_wr_irq_reg,
+			.global_irq_cmd_offset = 0x00000830,
+			.global_clear_bitmask  = 0x00000001,
+			.clear_all_bitmask     = 0xFFFFFFFF,
 		},
 	},
 	.num_client = 13,
@@ -968,6 +1153,7 @@ static struct cam_sfe_bus_wr_hw_info sfe680_bus_wr_hw_info = {
 			.max_height    = -1,
 			.source_group  = CAM_SFE_BUS_WR_SRC_GRP_1,
 			.mid[0]        = 25,
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = 8,
 			.en_line_done  = 1,
@@ -979,6 +1165,7 @@ static struct cam_sfe_bus_wr_hw_info sfe680_bus_wr_hw_info = {
 			.max_height    = -1,
 			.source_group  = CAM_SFE_BUS_WR_SRC_GRP_2,
 			.mid[0]        = 26,
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = 9,
 			.en_line_done  = 1,
@@ -990,6 +1177,7 @@ static struct cam_sfe_bus_wr_hw_info sfe680_bus_wr_hw_info = {
 			.max_height    = -1,
 			.source_group  = CAM_SFE_BUS_WR_SRC_GRP_3,
 			.mid[0]        = 27,
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = 10,
 			.en_line_done  = 1,
@@ -1001,6 +1189,7 @@ static struct cam_sfe_bus_wr_hw_info sfe680_bus_wr_hw_info = {
 			.max_height    = -1,
 			.source_group  = CAM_SFE_BUS_WR_SRC_GRP_4,
 			.mid[0]        = 28,
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = 11,
 			.name          = "RDI_3",
@@ -1011,6 +1200,7 @@ static struct cam_sfe_bus_wr_hw_info sfe680_bus_wr_hw_info = {
 			.max_height    = -1,
 			.source_group  = CAM_SFE_BUS_WR_SRC_GRP_4,
 			.mid[0]        = 29,
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = 12,
 			.name          = "RDI_4",
@@ -1022,6 +1212,7 @@ static struct cam_sfe_bus_wr_hw_info sfe680_bus_wr_hw_info = {
 			.source_group  = CAM_SFE_BUS_WR_SRC_GRP_0,
 			.mid[0]        = 16,
 			.mid[1]        = 17,
+			.num_mid       = 2,
 			.num_wm        = 1,
 			.wm_idx        = 0,
 			.name          = "REMOSIAC",
@@ -1042,6 +1233,7 @@ static struct cam_sfe_bus_wr_hw_info sfe680_bus_wr_hw_info = {
 			.max_height    = 5472,
 			.source_group  = CAM_SFE_BUS_WR_SRC_GRP_0,
 			.mid[0]        = 19,
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = 2,
 			.name          = "STATS_BE_0",
@@ -1052,6 +1244,7 @@ static struct cam_sfe_bus_wr_hw_info sfe680_bus_wr_hw_info = {
 			.max_height    = 5472,
 			.source_group  = CAM_SFE_BUS_WR_SRC_GRP_0,
 			.mid[0]        = 20,
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = 3,
 			.name          = "STATS_BHIST_0",
@@ -1062,6 +1255,7 @@ static struct cam_sfe_bus_wr_hw_info sfe680_bus_wr_hw_info = {
 			.max_height    = 5472,
 			.source_group  = CAM_SFE_BUS_WR_SRC_GRP_0,
 			.mid[0]        = 21,
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = 4,
 			.name          = "STATS_BE_1",
@@ -1072,6 +1266,7 @@ static struct cam_sfe_bus_wr_hw_info sfe680_bus_wr_hw_info = {
 			.max_height    = 5472,
 			.source_group  = CAM_SFE_BUS_WR_SRC_GRP_0,
 			.mid[0]        = 22,
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = 5,
 			.name          = "STATS_BHIST_1",
@@ -1082,6 +1277,7 @@ static struct cam_sfe_bus_wr_hw_info sfe680_bus_wr_hw_info = {
 			.max_height    = 5472,
 			.source_group  = CAM_SFE_BUS_WR_SRC_GRP_0,
 			.mid[0]        = 23,
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = 6,
 			.name          = "STATS_BE_2",
@@ -1092,154 +1288,45 @@ static struct cam_sfe_bus_wr_hw_info sfe680_bus_wr_hw_info = {
 			.max_height    = 5472,
 			.source_group  = CAM_SFE_BUS_WR_SRC_GRP_0,
 			.mid[0]        = 24,
+			.num_mid       = 1,
 			.num_wm        = 1,
 			.wm_idx        = 7,
 			.name          = "STATS_BHIST_2",
 		},
 	},
-	.num_cons_err = 29,
-	.constraint_error_list = {
-		{
-			.bitmask = BIT(0),
-			.error_description = "PPC 1x1 input not supported"
-		},
-		{
-			.bitmask = BIT(1),
-			.error_description = "PPC 1x2 input not supported"
-		},
-		{
-			.bitmask = BIT(2),
-			.error_description = "PPC 2x1 input not supported"
-		},
-		{
-			.bitmask = BIT(3),
-			.error_description = "PPC 2x2 input not supported"
-		},
-		{
-			.bitmask = BIT(4),
-			.error_description = "Pack 8 BPP format not supported"
-		},
-		{
-			.bitmask = BIT(5),
-			.error_description = "Pack 16 format not supported"
-		},
-		{
-			.bitmask = BIT(6),
-			.error_description = "Pack 32 BPP format not supported"
-		},
-		{
-			.bitmask = BIT(7),
-			.error_description = "Pack 64 BPP format not supported"
-		},
-		{
-			.bitmask = BIT(8),
-			.error_description = "Pack MIPI 20 format not supported"
-		},
-		{
-			.bitmask = BIT(9),
-			.error_description = "Pack MIPI 14 format not supported"
-		},
-		{
-			.bitmask = BIT(10),
-			.error_description = "Pack MIPI 12 format not supported"
-		},
-		{
-			.bitmask = BIT(11),
-			.error_description = "Pack MIPI 10 format not supported"
-		},
-		{
-			.bitmask = BIT(12),
-			.error_description = "Pack 128 BPP format not supported"
-		},
-		{
-			.bitmask = BIT(13),
-			.error_description = "UBWC NV12 format not supported"
-		},
-		{
-			.bitmask = BIT(14),
-			.error_description = "UBWC NV12 4R format not supported"
-		},
-		{
-			.bitmask = BIT(15),
-			.error_description = "UBWC TP10 format not supported"
-		},
-		{
-			.bitmask = BIT(16),
-			.error_description = "Frame based Mode not supported"
-		},
-		{
-			.bitmask = BIT(17),
-			.error_description = "Index based Mode not supported"
-		},
-		{
-			.bitmask = BIT(18),
-			.error_description = "FIFO image addr unalign"
-		},
-		{
-			.bitmask = BIT(19),
-			.error_description = "FIFO ubwc addr unalign"
-		},
-		{
-			.bitmask = BIT(20),
-			.error_description = "FIFO frmheader addr unalign"
-		},
-		{
-			.bitmask = BIT(21),
-			.error_description = "Image address unalign"
-		},
-		{
-			.bitmask = BIT(22),
-			.error_description = "UBWC address unalign"
-		},
-		{
-			.bitmask = BIT(23),
-			.error_description = "Frame Header address unalign"
-		},
-		{
-			.bitmask = BIT(24),
-			.error_description = "Stride unalign"
-		},
-		{
-			.bitmask = BIT(25),
-			.error_description = "X Initialization unalign"
-		},
-		{
-			.bitmask = BIT(26),
-			.error_description = "Image Width unalign"
-		},
-		{
-			.bitmask = BIT(27),
-			.error_description = "Image Height unalign"
-		},
-		{
-			.bitmask = BIT(28),
-			.error_description = "Meta Stride unalign"
-		},
+	.constraint_error_info = &sfe680_bus_wr_constraint_error_info,
+	.comp_done_mask = {
+		BIT(17), BIT(18), BIT(19), BIT(20), BIT(21), BIT(22), BIT(23),
+		BIT(24), BIT(25), BIT(26),
 	},
-	.num_comp_grp         = 10,
-	.comp_done_shift      = 17,
-	.line_done_cfg        = 0x11,
-	.top_irq_shift        = 0x0,
-	.pack_align_shift     = 0x5,
-	.max_bw_counter_limit = 0xFF,
-	.num_bus_wr_errors    = ARRAY_SIZE(sfe_680_bus_wr_irq_err_desc),
-	.bus_wr_err_desc      = sfe_680_bus_wr_irq_err_desc,
+	.num_comp_grp          = 10,
+	.line_done_cfg         = 0x11,
+	.top_irq_shift         = 0x0,
+	.max_out_res           = CAM_ISP_SFE_OUT_RES_BASE + 13,
+	.pack_align_shift      = 0x5,
+	.max_bw_counter_limit  = 0xFF,
+	.sys_cache_default_val = 0x20,
+	.irq_err_mask          = 0xD0000000,
 };
 
 static struct cam_irq_register_set sfe680_top_irq_reg_set[1] = {
 	{
-	.mask_reg_offset   = 0x00000020,
-	.clear_reg_offset  = 0x00000024,
-	.status_reg_offset = 0x00000028,
+		.mask_reg_offset   = 0x00000020,
+		.clear_reg_offset  = 0x00000024,
+		.status_reg_offset = 0x00000028,
+		.set_reg_offset    = 0x0000002C,
+		.test_set_val      = BIT(0),
+		.test_sub_val      = BIT(0),
 	},
 };
 
 static struct cam_irq_controller_reg_info sfe680_top_irq_reg_info = {
 	.num_registers = 1,
 	.irq_reg_set = sfe680_top_irq_reg_set,
-	.global_clear_offset  = 0x0000001C,
-	.global_clear_bitmask = 0x00000001,
-	.clear_all_bitmask = 0xFFFFFFFF,
+	.global_irq_cmd_offset = 0x0000001C,
+	.global_clear_bitmask  = 0x00000001,
+	.global_set_bitmask    = 0x00000010,
+	.clear_all_bitmask     = 0xFFFFFFFF,
 };
 
 struct cam_sfe_hw_info cam_sfe680_hw_info = {

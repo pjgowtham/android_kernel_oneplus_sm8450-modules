@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/ratelimit.h>
@@ -22,6 +22,7 @@
 #include "cam_debug_util.h"
 #include "cam_cpas_api.h"
 #include "cam_tfe_csid_hw_intf.h"
+#include "cam_mem_mgr_api.h"
 
 static const char drv_name[] = "tfe_bus";
 
@@ -941,7 +942,7 @@ static int cam_tfe_bus_init_wm_resource(uint32_t index,
 {
 	struct cam_tfe_bus_wm_resource_data *rsrc_data;
 
-	rsrc_data = kzalloc(sizeof(struct cam_tfe_bus_wm_resource_data),
+	rsrc_data = CAM_MEM_ZALLOC(sizeof(struct cam_tfe_bus_wm_resource_data),
 		GFP_KERNEL);
 	if (!rsrc_data) {
 		CAM_DBG(CAM_ISP, "Failed to alloc for WM res priv");
@@ -981,7 +982,7 @@ static int cam_tfe_bus_deinit_wm_resource(
 	wm_res->res_priv = NULL;
 	if (!rsrc_data)
 		return -ENOMEM;
-	kfree(rsrc_data);
+	CAM_MEM_FREE(rsrc_data);
 
 	return 0;
 }
@@ -1260,7 +1261,7 @@ static int cam_tfe_bus_init_comp_grp(uint32_t index,
 {
 	struct cam_tfe_bus_comp_grp_data *rsrc_data = NULL;
 
-	rsrc_data = kzalloc(sizeof(struct cam_tfe_bus_comp_grp_data),
+	rsrc_data = CAM_MEM_ZALLOC(sizeof(struct cam_tfe_bus_comp_grp_data),
 		GFP_KERNEL);
 	if (!rsrc_data)
 		return -ENOMEM;
@@ -1276,7 +1277,7 @@ static int cam_tfe_bus_init_comp_grp(uint32_t index,
 	rsrc_data->max_wm_per_comp_grp =
 		bus_priv->max_wm_per_comp_grp;
 
-	rsrc_data->out_rsrc = kzalloc(sizeof(struct cam_isp_resource_node *) *
+	rsrc_data->out_rsrc = CAM_MEM_ZALLOC(sizeof(struct cam_isp_resource_node *) *
 			rsrc_data->max_wm_per_comp_grp, GFP_KERNEL);
 	if (!rsrc_data->out_rsrc)
 		return -ENOMEM;
@@ -1309,8 +1310,8 @@ static int cam_tfe_bus_deinit_comp_grp(
 		CAM_ERR(CAM_ISP, "comp_grp_priv is NULL");
 		return -ENODEV;
 	}
-	kfree(rsrc_data->out_rsrc);
-	kfree(rsrc_data);
+	CAM_MEM_FREE(rsrc_data->out_rsrc);
+	CAM_MEM_FREE(rsrc_data);
 
 	return 0;
 }
@@ -1412,7 +1413,7 @@ static int cam_tfe_bus_acquire_tfe_out(void *priv, void *acquire_args,
 
 	bus_priv->tasklet_info = acq_args->tasklet;
 	rsrc_data->num_wm = num_wm;
-	rsrc_node->rdi_only_ctx = 0;
+	rsrc_node->is_rdi_primary_res = 0;
 	rsrc_node->res_id = out_acquire_args->out_port_info->res_id;
 	rsrc_node->cdm_ops = out_acquire_args->cdm_ops;
 	rsrc_data->cdm_util_ops = out_acquire_args->cdm_ops;
@@ -1578,7 +1579,7 @@ static int cam_tfe_bus_start_tfe_out(void *hw_priv,
 	rc = cam_tfe_bus_start_comp_grp(rsrc_data->comp_grp);
 
 	if (rsrc_data->is_dual && !rsrc_data->is_master &&
-		!tfe_out->rdi_only_ctx)
+		!tfe_out->is_rdi_primary_res)
 		goto end;
 
 	if (common_data->rup_irq_enable[rup_group_id])
@@ -1668,7 +1669,7 @@ static int cam_tfe_bus_init_tfe_out_resource(uint32_t  index,
 		return -EFAULT;
 	}
 
-	rsrc_data = kzalloc(sizeof(struct cam_tfe_bus_tfe_out_data),
+	rsrc_data = CAM_MEM_ZALLOC(sizeof(struct cam_tfe_bus_tfe_out_data),
 		GFP_KERNEL);
 	if (!rsrc_data) {
 		rc = -ENOMEM;
@@ -1728,7 +1729,7 @@ static int cam_tfe_bus_deinit_tfe_out_resource(
 
 	if (!rsrc_data)
 		return -ENOMEM;
-	kfree(rsrc_data);
+	CAM_MEM_FREE(rsrc_data);
 
 	return 0;
 }
@@ -1837,12 +1838,12 @@ static int cam_tfe_bus_bufdone_bottom_half(
 	struct cam_tfe_bus_priv            *bus_priv,
 	struct cam_tfe_irq_evt_payload *evt_payload)
 {
-	struct cam_tfe_bus_common_data        *common_data;
-	struct cam_tfe_bus_tfe_out_data       *out_rsrc_data;
-	struct cam_isp_hw_event_info           evt_info;
-	struct cam_isp_resource_node          *out_rsrc = NULL;
-	struct cam_tfe_bus_comp_grp_data      *comp_rsrc_data;
-	struct cam_isp_hw_bufdone_event_info   bufdone_evt_info = {0};
+	struct cam_tfe_bus_common_data       *common_data;
+	struct cam_tfe_bus_tfe_out_data      *out_rsrc_data;
+	struct cam_isp_hw_event_info          evt_info;
+	struct cam_isp_resource_node         *out_rsrc = NULL;
+	struct cam_tfe_bus_comp_grp_data     *comp_rsrc_data;
+	struct cam_isp_hw_bufdone_event_info  bufdone_evt_info = {0};
 	uint32_t i;
 
 	common_data = &bus_priv->common_data;
@@ -1878,7 +1879,7 @@ static int cam_tfe_bus_bufdone_bottom_half(
 		}
 
 		evt_payload->bus_irq_val[0] &=
-			~BIT(comp_rsrc_data->comp_grp_id +
+			BIT(comp_rsrc_data->comp_grp_id +
 			bus_priv->common_data.comp_done_shift);
 	}
 
@@ -2035,7 +2036,7 @@ static int cam_tfe_bus_update_wm(void *priv, void *cmd_args,
 	struct cam_buf_io_cfg                *io_cfg;
 	struct cam_tfe_bus_tfe_out_data      *tfe_out_data = NULL;
 	struct cam_tfe_bus_wm_resource_data  *wm_data = NULL;
-	struct cam_cdm_utils_ops             *cdm_util_ops = NULL;
+	struct cam_cdm_utils_ops             *cdm_util_ops;
 	uint32_t *reg_val_pair;
 	uint32_t num_regval_pairs = 0;
 	uint32_t i, j, size = 0;
@@ -2047,12 +2048,12 @@ static int cam_tfe_bus_update_wm(void *priv, void *cmd_args,
 	tfe_out_data = (struct cam_tfe_bus_tfe_out_data *)
 		update_buf->res->res_priv;
 
-	if (!tfe_out_data || !(tfe_out_data->cdm_util_ops)) {
-		CAM_ERR(CAM_ISP, "Failed! invalid data");
+	cdm_util_ops = tfe_out_data->cdm_util_ops;
+
+	if (!tfe_out_data || !cdm_util_ops) {
+		CAM_ERR(CAM_ISP, "Failed! Invalid data");
 		return -EINVAL;
 	}
-
-	cdm_util_ops = tfe_out_data->cdm_util_ops;
 
 	if (update_buf->wm_update->num_buf != tfe_out_data->num_wm) {
 		CAM_ERR(CAM_ISP,
@@ -2156,7 +2157,7 @@ static int cam_tfe_bus_update_hfr(void *priv, void *cmd_args,
 	struct cam_isp_hw_get_cmd_update         *update_hfr;
 	struct cam_tfe_bus_tfe_out_data          *tfe_out_data = NULL;
 	struct cam_tfe_bus_wm_resource_data      *wm_data = NULL;
-	struct cam_cdm_utils_ops                 *cdm_util_ops = NULL;
+	struct cam_cdm_utils_ops                 *cdm_util_ops;
 	struct cam_isp_tfe_port_hfr_config       *hfr_cfg = NULL;
 	uint32_t *reg_val_pair;
 	uint32_t num_regval_pairs = 0;
@@ -2168,12 +2169,13 @@ static int cam_tfe_bus_update_hfr(void *priv, void *cmd_args,
 	tfe_out_data = (struct cam_tfe_bus_tfe_out_data *)
 		update_hfr->res->res_priv;
 
-	if (!tfe_out_data || !(tfe_out_data->cdm_util_ops)) {
-		CAM_ERR(CAM_ISP, "Failed! invalid data");
+	cdm_util_ops = tfe_out_data->cdm_util_ops;
+
+	if (!tfe_out_data || !cdm_util_ops) {
+		CAM_ERR(CAM_ISP, "Failed! Invalid data");
 		return -EINVAL;
 	}
 
-	cdm_util_ops = tfe_out_data->cdm_util_ops;
 	reg_val_pair = &tfe_out_data->common_data->io_buf_update[0];
 	hfr_cfg = (struct cam_isp_tfe_port_hfr_config *)update_hfr->data;
 
@@ -2556,6 +2558,7 @@ static int cam_tfe_bus_process_cmd(void *priv,
 	uint32_t i, val;
 	bool *support_consumed_addr;
 	bool *pdaf_rdi2_mux_en;
+	struct cam_isp_hw_done_event_data *done;
 
 	if (!priv || !cmd_args) {
 		CAM_ERR_RATE_LIMIT(CAM_ISP, "Invalid input arguments");
@@ -2607,6 +2610,12 @@ static int cam_tfe_bus_process_cmd(void *priv,
 	case CAM_ISP_HW_CMD_WM_BW_LIMIT_CONFIG:
 		rc = cam_tfe_bus_update_bw_limiter(priv, cmd_args, arg_size);
 		break;
+	case CAM_ISP_HW_CMD_GET_LAST_CONSUMED_ADDR:
+		bus_priv = (struct cam_tfe_bus_priv  *) priv;
+		done = (struct cam_isp_hw_done_event_data *) cmd_args;
+		done->last_consumed_addr = cam_tfe_bus_get_last_consumed_addr(
+			bus_priv, done->resource_handle);
+		break;
 	default:
 		CAM_ERR_RATE_LIMIT(CAM_ISP, "Invalid camif process command:%d",
 			cmd_type);
@@ -2636,14 +2645,14 @@ int cam_tfe_bus_init(
 		goto end;
 	}
 
-	tfe_bus_local = kzalloc(sizeof(struct cam_tfe_bus), GFP_KERNEL);
+	tfe_bus_local = CAM_MEM_ZALLOC(sizeof(struct cam_tfe_bus), GFP_KERNEL);
 	if (!tfe_bus_local) {
 		CAM_DBG(CAM_ISP, "Failed to alloc for tfe_bus");
 		rc = -ENOMEM;
 		goto end;
 	}
 
-	bus_priv = kzalloc(sizeof(struct cam_tfe_bus_priv),
+	bus_priv = CAM_MEM_ZALLOC(sizeof(struct cam_tfe_bus_priv),
 		GFP_KERNEL);
 	if (!bus_priv) {
 		CAM_DBG(CAM_ISP, "Failed to alloc for tfe_bus_priv");
@@ -2756,10 +2765,10 @@ deinit_wm:
 	for (--i; i >= 0; i--)
 		cam_tfe_bus_deinit_wm_resource(&bus_priv->bus_client[i]);
 
-	kfree(tfe_bus_local->bus_priv);
+	CAM_MEM_FREE(tfe_bus_local->bus_priv);
 
 free_bus_local:
-	kfree(tfe_bus_local);
+	CAM_MEM_FREE(tfe_bus_local);
 
 end:
 	return rc;
@@ -2812,10 +2821,10 @@ int cam_tfe_bus_deinit(
 	INIT_LIST_HEAD(&bus_priv->used_comp_grp);
 
 	mutex_destroy(&bus_priv->common_data.bus_mutex);
-	kfree(tfe_bus_local->bus_priv);
+	CAM_MEM_FREE(tfe_bus_local->bus_priv);
 
 free_bus_local:
-	kfree(tfe_bus_local);
+	CAM_MEM_FREE(tfe_bus_local);
 
 	*tfe_bus = NULL;
 

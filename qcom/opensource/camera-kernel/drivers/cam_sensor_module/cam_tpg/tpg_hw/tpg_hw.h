@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
-
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __TPG_HW_H__
@@ -12,11 +12,15 @@
 #include "cam_soc_util.h"
 #include <cam_cpas_api.h>
 #include <media/cam_sensor.h>
-#define TPG_HW_VERSION_1_0 0x10000000
-#define TPG_HW_VERSION_1_1 0x10000001
-#define TPG_HW_VERSION_1_2 0x10000002
-#define TPG_HW_VERSION_1_3 0x10000003
+#include <linux/spinlock.h>
+#include <linux/completion.h>
 
+#define TPG_HW_VERSION_1_0   0x10000000
+#define TPG_HW_VERSION_1_1   0x10000001
+#define TPG_HW_VERSION_1_2   0x10000002
+#define TPG_HW_VERSION_1_3   0x10000003
+#define TPG_HW_VERSION_1_3_1 0x10000004
+#define TPG_HW_VERSION_1_4   0x10000005
 
 struct tpg_hw;
 
@@ -31,6 +35,7 @@ struct tpg_hw;
  * @write       : tpg hw write register
  * @process_cmd : tpg hw process command
  * @dump_status : dump any status registers
+ * @write_settings : write register settings
  */
 struct tpg_hw_ops {
 	int (*init)(struct tpg_hw *hw, void *data);
@@ -41,6 +46,9 @@ struct tpg_hw_ops {
 	int (*write)(struct tpg_hw *hw, uint32_t *addr, uint32_t *val);
 	int (*process_cmd)(struct tpg_hw *hw, uint32_t cmd, void *arg);
 	int (*dump_status)(struct tpg_hw *hw, void *data);
+	int (*write_settings)(struct tpg_hw *hw,
+		struct tpg_settings_config_t *config, struct tpg_reg_settings *settings);
+	irqreturn_t (*handle_irq)(struct tpg_hw *hw);
 };
 
 /**
@@ -48,10 +56,40 @@ struct tpg_hw_ops {
  *
  * TPG_HW_STATE_HW_DISABLED: tpg hw is not enabled yet
  * TPG_HW_STATE_HW_ENABLED : tpg hw is enabled
+ * TPG_HW_STATE_READY      : tpg hw is ready
+ * TPG_HW_STATE_BUSY       : tpg hw is busy
+ * TPG_HW_STATE_MAX        : tp hw is max
  */
 enum tpg_hw_state {
 	TPG_HW_STATE_HW_DISABLED,
 	TPG_HW_STATE_HW_ENABLED,
+	TPG_HW_STATE_READY,
+	TPG_HW_STATE_BUSY,
+	TPG_HW_STATE_MAX
+};
+
+#define TPG_HW_REQ_TYPE_NOP     0x00
+#define TPG_HW_REQ_TYPE_INIT    0x01
+#define TPG_HW_REQ_TYPE_UPDATE  0x02
+#define TPG_HW_REQ_TYPE_BYPASS  0x03
+
+/**
+ * tpg_hw_request : tpg hw request info
+ *
+ * @request_id        : request id
+ * @request_type      : request type
+ * @global_config     : global configuration
+ * @vc_slots          : vc slots
+ * @vc_count          : vc count
+ * @list              : list
+ */
+struct tpg_hw_request {
+	uint64_t                   request_id;
+	int                        request_type;
+	struct tpg_global_config_t global_config;
+	struct tpg_vc_slot_info    *vc_slots;
+	uint32_t                   vc_count;
+	struct list_head           list;
 };
 
 /**
@@ -75,12 +113,26 @@ struct tpg_vc_slot_info {
  * @max_vc_channels: max number of virtual channels supported by tpg
  * @max_dt_channels_per_vc: max dts supported in each vc
  * @ops:   tpg hw operations
+ * @hw_data: tpg hw data
+ * @hw: hw layer initialization
+ * @xcfa_debug: for xcfa debug
+ * @shdr_overlap: for shdr overlap
+ * @shdr_offset_num_batch: for shdr offset num batch
+ * @shdr_line_offset0: for shdr line offset0
+ * @shdr_line_offset1: for shdr line offset1
  */
 struct tpg_hw_info {
 	uint32_t          version;
 	uint32_t          max_vc_channels;
 	uint32_t          max_dt_channels_per_vc;
 	struct tpg_hw_ops *ops;
+	void              *hw_data;
+	int               (*layer_init)(struct tpg_hw *hw);
+	int               xcfa_debug;
+	int               shdr_overlap;
+	int               shdr_offset_num_batch;
+	int               shdr_line_offset0;
+	int               shdr_line_offset1;
 };
 
 
@@ -96,27 +148,64 @@ struct tpg_hw_stream {
 };
 
 /**
+ * tpg_hw_stream_v3 : tpg hw stream version 2
+ *
+ * @stream : tpg stream version 2
+ * @list   : entry to tpg stream list
+ */
+struct tpg_hw_stream_v3 {
+	struct tpg_stream_config_v3_t stream;
+	struct list_head list;
+};
+
+
+/**
  * tpg_hw : tpg hw
  *
- * @hw_idx        : hw id
- * @state         : tpg hw state
- * @cpas_handle   : handle to cpas
- * @hw_info       : tp hw info
- * @soc_info      : soc info
- * @mutex         : lock
- * @stream_list   : list of tpg stream
- * @global_config : global configuration
+ * @hw_idx                  : hw id
+ * @stream_version          : stream version
+ * @state                   : tpg hw state
+ * @cpas_handle             : handle to cpas
+ * @vc_count                : vc count
+ * @tpg_clock               : tpg clock
+ * @hw_info                 : tp hw info
+ * @soc_info                : soc info
+ * @mutex                   : lock
+ * @complete_rup            : rup done completion
+ * @vc_slots                : vc slots info
+ * @settings_config         : settings configuration
+ * @register_settings       : register settings info
+ * @tpg_hw_irq_handler      : handle hw irq
+ * @waiting_request_q       : queue of waiting requests to be applied
+ * @acitive_request_q       : queue of active requests being applied,
+ * @active_request_q_depth  : active request queue depth
+ * @waiting_request_q_depth : waiting request queue depth
+ * @settings update         : settings update flag
+ * @last_flush_req          : last request id with flush trigger
  */
 struct tpg_hw {
-	uint32_t                   hw_idx;
-	uint32_t                   state;
-	uint32_t                   cpas_handle;
-	uint32_t                   vc_count;
-	struct tpg_hw_info        *hw_info;
-	struct cam_hw_soc_info    *soc_info;
-	struct mutex               mutex;
-	struct tpg_vc_slot_info   *vc_slots;
-	struct tpg_global_config_t global_config;
+	uint32_t                     hw_idx;
+	uint32_t                     stream_version;
+	uint32_t                     state;
+	uint32_t                     cpas_handle;
+	uint32_t                     vc_count;
+	uint64_t                     tpg_clock;
+	struct tpg_hw_info           *hw_info;
+	struct cam_hw_soc_info       *soc_info;
+	struct mutex                 mutex;
+	spinlock_t                   hw_state_lock;
+	struct completion            complete_rup;
+	struct tpg_vc_slot_info      *vc_slots;
+	struct tpg_settings_config_t settings_config;
+	struct tpg_reg_settings      *register_settings;
+	int                          (*tpg_hw_irq_handler)(struct tpg_hw *hw);
+	/* Waiting and active request Queues */
+	struct list_head             waiting_request_q;
+	struct list_head             active_request_q;
+	uint32_t                     active_request_q_depth;
+	uint32_t                     waiting_request_q_depth;
+	uint32_t                     settings_update;
+	int64_t                      last_flush_req;
 };
 
 /**
@@ -176,6 +265,33 @@ struct dt_config_args {
 };
 
 /**
+ * @vc_config_args_v3 : arguments for vc config process cmd version 2
+ *
+ * @vc_slot : slot to configure this vc
+ * @num_dts : number of dts in this vc
+ * @stream  : output stream version 2
+ */
+struct vc_config_args_v3 {
+	uint32_t vc_slot;
+	uint32_t num_dts;
+	struct tpg_stream_config_v3_t *stream;
+};
+
+/**
+ * dt_config_args_v3 : arguments for dt config process cmd version 2
+ *
+ * @vc_slot  : vc slot to configure this dt
+ * @dt_slot  : dt slot to configure this dt
+ * @stream   : stream packet to configure for this dt version 2
+ */
+struct dt_config_args_v3 {
+	uint32_t vc_slot;
+	uint32_t dt_slot;
+	struct tpg_stream_config_v3_t *stream;
+};
+
+
+/**
  * global_config_args : tpg global config args
  *
  * @num_vcs : number of vcs to be configured
@@ -200,6 +316,20 @@ struct tpg_hw_initsettings {
 };
 
 /**
+ * tpg_hw_initsettings_v3 : initial configurations version 2
+ *
+ * @global_config : global configuration
+ * @streamconfigs : array of stream configurations version 2
+ * @num_streams   : number of streams in strea config array
+ */
+struct tpg_hw_initsettings_v3 {
+	struct tpg_global_config_t globalconfig;
+	struct tpg_stream_config_v3_t *streamconfigs;
+	uint32_t num_streams;
+};
+
+
+/**
  * @brief dump the tpg memory info
  *
  * @param soc_info: soc info for soc related info
@@ -216,7 +346,8 @@ int32_t cam_tpg_mem_dmp(struct cam_hw_soc_info *soc_info);
  *
  * @return       : 0 on success
  */
-int dump_global_configs(int idx, struct tpg_global_config_t *global);
+int dump_global_configs(int idx,
+		struct tpg_global_config_t *global);
 
 /**
  * @brief : dump stream config command
@@ -227,7 +358,21 @@ int dump_global_configs(int idx, struct tpg_global_config_t *global);
  *
  * @return : 0 on success
  */
-int dump_stream_configs(int hw_idx, int stream_idx, struct tpg_stream_config_t *stream);
+int dump_stream_configs(int hw_idx,
+		int stream_idx,
+		struct tpg_stream_config_t *stream);
+
+/**
+ * @brief : dump stream config command version 2
+ *
+ * @param hw_idx: hw index
+ * @param stream_idx: stream index
+ * @param stream: stream config command version 2
+ *
+ * @return : 0 on success
+ */
+int dump_stream_configs_v3(int hw_idx, int stream_idx, struct tpg_stream_config_v3_t *stream);
+
 
 /**
  * @brief : dump any hw status registers
@@ -286,15 +431,6 @@ int tpg_hw_release(struct tpg_hw *hw);
 int tpg_hw_config(struct tpg_hw *hw, enum tpg_hw_cmd_t cmd, void *arg);
 
 /**
- * @brief : tpg free streams
- *
- * @param hw: tpg hw instance
- *
- * @return : 0 on success
- */
-int tpg_hw_free_streams(struct tpg_hw *hw);
-
-/**
  * @brief : reset the tpg hw instance
  *
  * @param hw: tpg hw instance
@@ -307,20 +443,107 @@ int tpg_hw_reset(struct tpg_hw *hw);
  * @brief : tp hw add stream
  *
  * @param hw: tpg hw instance
+ * @param req: req instance
  * @param cmd: tpg hw command
  *
  * @return : 0 on success
  */
-int tpg_hw_add_stream(struct tpg_hw *hw, struct tpg_stream_config_t *cmd);
+int tpg_hw_add_stream(
+	struct tpg_hw *hw,
+	struct tpg_hw_request *req,
+	struct tpg_stream_config_t *cmd);
 
 /**
- * @brief : copy global config command
+ * @brief : tp hw add stream version 2
  *
  * @param hw: tpg hw instance
- * @param global: global config command
+ * @param req: req instance
+ * @param cmd: tpg hw command version 2
  *
  * @return : 0 on success
  */
-int tpg_hw_copy_global_config(struct tpg_hw *hw, struct tpg_global_config_t *global);
+int tpg_hw_add_stream_v3(
+	struct tpg_hw *hw,
+	struct tpg_hw_request *req,
+	struct tpg_stream_config_v3_t *cmd);
+
+/**
+ * @brief : hw apply
+ *
+ * @param hw: tpg hw instance
+ * @param request_id: request id
+ *
+ * @return : 0 on success
+ */
+int tpg_hw_apply(
+	struct tpg_hw *hw,
+	uint64_t request_id);
+
+/**
+ * @brief : create hw request
+ *
+ * @param hw: tpg hw instance
+ * @param request_id: request id
+ *
+ * @return : req on success
+ */
+struct tpg_hw_request *tpg_hw_create_request(
+	struct tpg_hw *hw,
+	uint64_t request_id);
+
+/**
+ * @brief : free hw request
+ *
+ * @param hw: tpg hw instance
+ * @param req: request instance
+ *
+ * @return : 0 on success
+ */
+int tpg_hw_free_request(struct tpg_hw *hw,
+		struct tpg_hw_request *req);
+
+/**
+ * @brief : add hw request
+ *
+ * @param hw: tpg hw instance
+ * @param req: request instance
+ *
+ * @return : 0 on success
+ */
+int tpg_hw_add_request(struct tpg_hw *hw,
+	struct tpg_hw_request *req);
+
+/**
+ * @brief : set opcode of request
+ *
+ * @param hw: tpg hw instance
+ * @param opcode: op code
+ *
+ * @return : 0 on success
+ */
+int tpg_hw_request_set_opcode(
+	struct tpg_hw_request *req,
+	uint32_t opcode);
+
+/**
+ * @brief : copy settings config command
+ *
+ * @param hw: tpg hw instance
+ * @param settings: settings config command
+ *
+ * @return : 0 on success
+ */
+int tpg_hw_copy_settings_config(struct tpg_hw *hw, struct tpg_settings_config_t *settings);
+
+/**
+ * @brief : Flush tpg request queues
+ *
+ * @param hw: tpg hw instance
+ * @param last_flush_req: Request number to be flushed
+ * @param is_flush_all: flag indicating flush type
+ *
+ * @return : 0 on success
+ */
+int tpg_hw_flush_requests(struct tpg_hw *hw, uint32_t last_flushed_req, bool is_flush_all);
 
 #endif

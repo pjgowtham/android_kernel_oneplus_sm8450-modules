@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/of.h>
@@ -195,7 +195,7 @@ int cam_ope_init_hw(void *device_priv,
 	}
 	ope_hw = core_info->ope_hw_info->ope_hw;
 
-	cpas_vote = kzalloc(sizeof(struct cam_ope_cpas_vote), GFP_KERNEL);
+	cpas_vote = CAM_MEM_ZALLOC(sizeof(struct cam_ope_cpas_vote), GFP_KERNEL);
 	if (!cpas_vote) {
 		CAM_ERR(CAM_ISP, "Out of memory");
 		rc = -ENOMEM;
@@ -203,7 +203,7 @@ int cam_ope_init_hw(void *device_priv,
 	}
 
 	cpas_vote->ahb_vote.type = CAM_VOTE_ABSOLUTE;
-	cpas_vote->ahb_vote.vote.level = CAM_SVS_VOTE;
+	cpas_vote->ahb_vote.vote.level = CAM_LOWSVS_D1_VOTE;
 	cpas_vote->axi_vote.num_paths = 1;
 	cpas_vote->axi_vote.axi_path[0].path_data_type =
 		CAM_AXI_PATH_DATA_ALL;
@@ -253,7 +253,7 @@ enable_soc_resource_failed:
 	else
 		core_info->cpas_start = false;
 free_cpas_vote:
-	cam_free_clear((void *)cpas_vote);
+	CAM_MEM_ZFREE((void *)cpas_vote, sizeof(struct cam_ope_cpas_vote));
 	cpas_vote = NULL;
 end:
 	return rc;
@@ -390,10 +390,8 @@ static int cam_ope_dev_prepare_cdm_request(
 	cdm_cmd->gen_irq_arb = true;
 
 	i = cdm_cmd->cmd_arrary_count;
-	cdm_cmd->cmd_flex[i].bl_addr.mem_handle =
-		ope_request->ope_kmd_buf.mem_handle;
-	cdm_cmd->cmd_flex[i].offset = kmd_buf_offset +
-		ope_request->ope_kmd_buf.offset;
+	cdm_cmd->cmd_flex[i].bl_addr.mem_handle = ope_request->ope_kmd_buf.mem_handle;
+	cdm_cmd->cmd_flex[i].offset = kmd_buf_offset + ope_request->ope_kmd_buf.offset;
 	cdm_cmd->cmd_flex[i].len = len;
 	cdm_cmd->cmd_flex[i].arbitrate = arbitrate;
 	cdm_cmd->cmd_flex[i].enable_debug_gen_irq = false;
@@ -549,7 +547,7 @@ static uint32_t *ope_create_frame_cmd_batch(struct cam_ope_hw_mgr *hw_mgr,
 
 		rc = cam_mem_get_io_buf(
 			frm_proc->cmd_buf[i][j].mem_handle,
-			hw_mgr->iommu_cdm_hdl, &iova_addr, &buf_len, NULL);
+			hw_mgr->iommu_cdm_hdl, &iova_addr, &buf_len, NULL, NULL);
 		if (rc) {
 			CAM_ERR(CAM_OPE, "get cmd buf failed %x",
 				hw_mgr->iommu_hdl);
@@ -709,7 +707,7 @@ static uint32_t *ope_create_frame_cmd(struct cam_ope_hw_mgr *hw_mgr,
 
 			rc = cam_mem_get_io_buf(
 				frm_proc->cmd_buf[i][j].mem_handle,
-				hw_mgr->iommu_cdm_hdl, &iova_addr, &buf_len, NULL);
+				hw_mgr->iommu_cdm_hdl, &iova_addr, &buf_len, NULL, NULL);
 			if (rc) {
 				CAM_ERR(CAM_OPE, "get cmd buf failed %x",
 					hw_mgr->iommu_hdl);
@@ -828,7 +826,7 @@ static uint32_t *ope_create_stripe_cmd(struct cam_ope_hw_mgr *hw_mgr,
 
 		CAM_DBG(CAM_OPE, "process stripe %d", stripe_idx);
 		rc = cam_mem_get_io_buf(frm_proc->cmd_buf[i][k].mem_handle,
-			hw_mgr->iommu_cdm_hdl, &iova_addr, &buf_len, NULL);
+			hw_mgr->iommu_cdm_hdl, &iova_addr, &buf_len, NULL, NULL);
 		if (rc) {
 			CAM_DBG(CAM_OPE, "get cmd buf fail %x",
 				hw_mgr->iommu_hdl);
@@ -1230,7 +1228,6 @@ end:
 static int cam_ope_dev_create_kmd_buf_nrt(struct cam_ope_hw_mgr *hw_mgr,
 	struct cam_hw_prepare_update_args *prepare_args,
 	struct cam_ope_ctx *ctx_data, uint32_t req_idx,
-	uint32_t kmd_buf_offset,
 	struct cam_ope_dev_prepare_req *ope_dev_prepare_req)
 {
 	int rc = 0;
@@ -1242,11 +1239,12 @@ static int cam_ope_dev_create_kmd_buf_nrt(struct cam_ope_hw_mgr *hw_mgr,
 	struct ope_bus_rd_io_port_cdm_info *rd_cdm_info;
 	struct ope_frame_process *frm_proc;
 	struct cam_cdm_utils_ops *cdm_ops;
+	uint32_t kmd_buff_offset = ope_dev_prepare_req->kmd_buf_offset;
 
 	frm_proc = ope_dev_prepare_req->frame_process;
 	ope_request = ctx_data->req_list[req_idx];
 	kmd_buf = (uint32_t *)ope_request->ope_kmd_buf.cpu_addr +
-		(kmd_buf_offset / sizeof(len));
+		(ope_dev_prepare_req->kmd_buf_offset / sizeof(len));
 	cdm_kmd_start_addr = kmd_buf;
 	wr_cdm_info =
 		&ope_dev_prepare_req->wr_cdm_batch->io_port_cdm[0];
@@ -1296,7 +1294,7 @@ static int cam_ope_dev_create_kmd_buf_nrt(struct cam_ope_hw_mgr *hw_mgr,
 
 	/* Stripes */
 	kmd_buf = ope_create_stripes_nrt(hw_mgr, ctx_data, req_idx, kmd_buf,
-		ope_dev_prepare_req, &kmd_buf_offset, &cdm_kmd_start_addr);
+		ope_dev_prepare_req, &kmd_buff_offset, &cdm_kmd_start_addr);
 	if (!kmd_buf) {
 		rc = -EINVAL;
 		goto end;
@@ -1312,8 +1310,10 @@ static int cam_ope_dev_create_kmd_buf_nrt(struct cam_ope_hw_mgr *hw_mgr,
 	cam_ope_dev_prepare_cdm_request(ope_dev_prepare_req->hw_mgr,
 		ope_dev_prepare_req->prepare_args,
 		ope_dev_prepare_req->ctx_data, ope_dev_prepare_req->req_idx,
-		kmd_buf_offset, ope_dev_prepare_req,
+		ope_dev_prepare_req->kmd_buf_offset, ope_dev_prepare_req,
 		len, false);
+
+	ope_dev_prepare_req->kmd_buf_offset += len;
 end:
 	return rc;
 }
@@ -1321,7 +1321,6 @@ end:
 static int cam_ope_dev_create_kmd_buf_batch(struct cam_ope_hw_mgr *hw_mgr,
 	struct cam_hw_prepare_update_args *prepare_args,
 	struct cam_ope_ctx *ctx_data, uint32_t req_idx,
-	uint32_t kmd_buf_offset,
 	struct cam_ope_dev_prepare_req *ope_dev_prepare_req)
 {
 	int rc = 0, i;
@@ -1337,7 +1336,7 @@ static int cam_ope_dev_create_kmd_buf_batch(struct cam_ope_hw_mgr *hw_mgr,
 	frm_proc = ope_dev_prepare_req->frame_process;
 	ope_request = ctx_data->req_list[req_idx];
 	kmd_buf = (uint32_t *)ope_request->ope_kmd_buf.cpu_addr +
-		(kmd_buf_offset / sizeof(len));
+		(ope_dev_prepare_req->kmd_buf_offset / sizeof(len));
 	cdm_kmd_start_addr = kmd_buf;
 	cdm_ops = ctx_data->ope_cdm.cdm_ops;
 	kmd_buf = cdm_ops->cdm_write_clear_comp_event(kmd_buf,
@@ -1412,8 +1411,10 @@ static int cam_ope_dev_create_kmd_buf_batch(struct cam_ope_hw_mgr *hw_mgr,
 	cam_ope_dev_prepare_cdm_request(ope_dev_prepare_req->hw_mgr,
 		ope_dev_prepare_req->prepare_args,
 		ope_dev_prepare_req->ctx_data, ope_dev_prepare_req->req_idx,
-		kmd_buf_offset, ope_dev_prepare_req,
+		ope_dev_prepare_req->kmd_buf_offset, ope_dev_prepare_req,
 		len, false);
+
+	ope_dev_prepare_req->kmd_buf_offset += len;
 
 end:
 	return rc;
@@ -1422,7 +1423,6 @@ end:
 static int cam_ope_dev_create_kmd_buf(struct cam_ope_hw_mgr *hw_mgr,
 	struct cam_hw_prepare_update_args *prepare_args,
 	struct cam_ope_ctx *ctx_data, uint32_t req_idx,
-	uint32_t kmd_buf_offset,
 	struct cam_ope_dev_prepare_req *ope_dev_prepare_req)
 {
 	int rc = 0;
@@ -1441,7 +1441,6 @@ static int cam_ope_dev_create_kmd_buf(struct cam_ope_hw_mgr *hw_mgr,
 			ope_dev_prepare_req->prepare_args,
 			ope_dev_prepare_req->ctx_data,
 			ope_dev_prepare_req->req_idx,
-			ope_dev_prepare_req->kmd_buf_offset,
 			ope_dev_prepare_req);
 	}
 
@@ -1451,13 +1450,12 @@ static int cam_ope_dev_create_kmd_buf(struct cam_ope_hw_mgr *hw_mgr,
 		ope_dev_prepare_req->prepare_args,
 		ope_dev_prepare_req->ctx_data,
 		ope_dev_prepare_req->req_idx,
-		ope_dev_prepare_req->kmd_buf_offset,
 		ope_dev_prepare_req);
 	}
 
 	ope_request = ctx_data->req_list[req_idx];
 	kmd_buf = (uint32_t *)ope_request->ope_kmd_buf.cpu_addr +
-		(kmd_buf_offset / sizeof(len));
+		(ope_dev_prepare_req->kmd_buf_offset / sizeof(len));
 	cdm_kmd_start_addr = kmd_buf;
 	cdm_ops = ctx_data->ope_cdm.cdm_ops;
 	wr_cdm_info =
@@ -1467,7 +1465,7 @@ static int cam_ope_dev_create_kmd_buf(struct cam_ope_hw_mgr *hw_mgr,
 
 
 	CAM_DBG(CAM_OPE, "kmd_buf:%x req_idx:%d req_id:%lld offset:%d",
-		kmd_buf, req_idx, ope_request->request_id, kmd_buf_offset);
+		kmd_buf, req_idx, ope_request->request_id, ope_dev_prepare_req->kmd_buf_offset);
 
 	kmd_buf = cdm_ops->cdm_write_clear_comp_event(kmd_buf,
 				OPE_WAIT_COMP_IDLE|OPE_WAIT_COMP_RUP, 0x0);
@@ -1533,6 +1531,7 @@ static int cam_ope_dev_create_kmd_buf(struct cam_ope_hw_mgr *hw_mgr,
 		ope_dev_prepare_req->kmd_buf_offset,
 		ope_dev_prepare_req,
 		len, false);
+	ope_dev_prepare_req->kmd_buf_offset += len;
 end:
 	return rc;
 }
@@ -1565,7 +1564,6 @@ static int cam_ope_dev_process_prepare(struct ope_hw *ope_hw, void *cmd_args)
 			ope_dev_prepare_req->prepare_args,
 			ope_dev_prepare_req->ctx_data,
 			ope_dev_prepare_req->req_idx,
-			ope_dev_prepare_req->kmd_buf_offset,
 			ope_dev_prepare_req);
 
 end:
@@ -1700,7 +1698,7 @@ int cam_ope_process_cmd(void *device_priv, uint32_t cmd_type,
 			(struct cam_ope_dev_clk_update *)cmd_args;
 
 		if (core_info->clk_enable == false) {
-			rc = cam_soc_util_clk_enable_default(soc_info,
+			rc = cam_soc_util_clk_enable_default(soc_info, CAM_CLK_SW_CLIENT_IDX,
 				CAM_SVS_VOTE);
 			if (rc) {
 				CAM_ERR(CAM_OPE, "Clock enable is failed");
@@ -1716,7 +1714,7 @@ int cam_ope_process_cmd(void *device_priv, uint32_t cmd_type,
 		break;
 	case OPE_HW_CLK_DISABLE: {
 		if (core_info->clk_enable == true)
-			cam_soc_util_clk_disable_default(soc_info);
+			cam_soc_util_clk_disable_default(soc_info, CAM_CLK_SW_CLIENT_IDX);
 
 		core_info->clk_enable = false;
 		}

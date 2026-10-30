@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/delay.h>
@@ -20,23 +20,60 @@
 #include "cam_debug_util.h"
 #include "cam_smmu_api.h"
 #include "camera_main.h"
+#include "cam_common_util.h"
+#include "cam_context_utils.h"
+#include "cam_vmrm_interface.h"
+#include "cam_mem_mgr_api.h"
+#include "cam_req_mgr_dev.h"
 
 static struct cam_isp_dev g_isp_dev;
 
-static void cam_isp_dev_iommu_fault_handler(struct cam_smmu_pf_info *pf_info)
+static int cam_isp_dev_evt_inject_cb(void *inject_args)
 {
-	int i = 0;
-	struct cam_node *node = NULL;
+	struct cam_common_inject_evt_param *inject_params = inject_args;
+	int i;
 
-	if (!pf_info || !pf_info->token) {
+	for (i = 0; i < g_isp_dev.max_context; i++) {
+		if (g_isp_dev.ctx[i].dev_hdl == inject_params->dev_hdl) {
+			cam_context_add_evt_inject(&g_isp_dev.ctx[i],
+				&inject_params->evt_params);
+			return 0;
+		}
+	}
+
+	CAM_ERR(CAM_ISP, "No dev hdl found %d", inject_params->dev_hdl);
+	return -ENODEV;
+}
+
+static void cam_isp_dev_iommu_fault_handler(struct cam_smmu_pf_info *pf_smmu_info)
+{
+	int i, rc;
+	struct cam_node *node = NULL;
+	struct cam_hw_dump_pf_args pf_args = {0};
+
+	if (!pf_smmu_info || !pf_smmu_info->token) {
 		CAM_ERR(CAM_ISP, "invalid token in page handler cb");
 		return;
 	}
 
-	node = (struct cam_node *)pf_info->token;
+	node = (struct cam_node *)pf_smmu_info->token;
 
-	for (i = 0; i < node->ctx_size; i++)
-		cam_context_dump_pf_info(&(node->ctx_list[i]), pf_info);
+	pf_args.pf_smmu_info = pf_smmu_info;
+
+	for (i = 0; i < node->ctx_size; i++) {
+		cam_context_dump_pf_info(&(node->ctx_list[i]), &pf_args);
+		if (pf_args.pf_context_info.ctx_found)
+			/* Faulted ctx found */
+			break;
+	}
+
+	if (i == node->ctx_size) {
+		/* Faulted ctx not found. Report PF to userspace */
+		rc = cam_context_send_pf_evt(NULL, &pf_args);
+		if (rc)
+			CAM_ERR(CAM_ISP,
+				"Failed to notify PF event to userspace rc: %d", rc);
+	}
 }
 
 static void cam_isp_subdev_handle_message(
@@ -53,6 +90,21 @@ static void cam_isp_subdev_handle_message(
 		if (rc)
 			CAM_ERR(CAM_ISP, "Failed to handle message for %s", node->name);
 	}
+}
+
+static int cam_isp_vmrm_callback_handler(
+	void *cb_data, void *msg, uint32_t size)
+{
+	struct cam_isp_dev *isp_dev;
+	struct cam_vmrm_msg *isp_msg = NULL;
+
+	isp_dev = (struct cam_isp_dev *)cb_data;
+	isp_msg = (struct cam_vmrm_msg *)msg;
+
+	CAM_WARN(CAM_ISP, "isp dev type %d msg type %d",
+		isp_dev->isp_device_type, isp_msg->msg_type);
+
+	return 0;
 }
 
 static const struct of_device_id cam_isp_dt_match[] = {
@@ -124,17 +176,24 @@ static const struct v4l2_subdev_internal_ops cam_isp_subdev_internal_ops = {
 static int cam_isp_dev_component_bind(struct device *dev,
 	struct device *master_dev, void *data)
 {
-	int rc = -1;
-	int i;
+	int                            rc;
+	int                            i;
 	struct cam_hw_mgr_intf         hw_mgr_intf;
 	struct cam_node               *node;
 	const char                    *compat_str = NULL;
-	struct platform_device *pdev = to_platform_device(dev);
+	struct platform_device        *pdev = to_platform_device(dev);
+	struct cam_driver_node         driver_node;
+	int                            iommu_hdl = -1;
+	struct timespec64              ts_start, ts_end;
+	long                           microsec = 0;
 
-	int iommu_hdl = -1;
-
+	CAM_GET_TIMESTAMP(ts_start);
 	rc = of_property_read_string_index(pdev->dev.of_node, "arch-compat", 0,
 		(const char **)&compat_str);
+	if (rc) {
+		CAM_ERR(CAM_ISP, "Error: failed to read arch-compat");
+		goto err;
+	}
 
 	g_isp_dev.sd.internal_ops = &cam_isp_subdev_internal_ops;
 	g_isp_dev.sd.close_seq_prior = CAM_SD_CLOSE_HIGH_PRIORITY;
@@ -143,6 +202,11 @@ static int cam_isp_dev_component_bind(struct device *dev,
 		rc = cam_subdev_probe(&g_isp_dev.sd, pdev, CAM_ISP_DEV_NAME,
 		CAM_IFE_DEVICE_TYPE);
 		g_isp_dev.isp_device_type = CAM_IFE_DEVICE_TYPE;
+		g_isp_dev.max_context = CAM_IFE_CTX_MAX;
+	} else if (strnstr(compat_str, "mc_tfe", strlen(compat_str))) {
+		rc  = cam_subdev_probe(&g_isp_dev.sd, pdev, CAM_ISP_DEV_NAME,
+		CAM_TFE_MC_DEVICE_TYPE);
+		g_isp_dev.isp_device_type = CAM_TFE_MC_DEVICE_TYPE;
 		g_isp_dev.max_context = CAM_IFE_CTX_MAX;
 	} else if (strnstr(compat_str, "tfe", strlen(compat_str))) {
 		rc = cam_subdev_probe(&g_isp_dev.sd, pdev, CAM_ISP_DEV_NAME,
@@ -163,7 +227,7 @@ static int cam_isp_dev_component_bind(struct device *dev,
 	node = (struct cam_node *) g_isp_dev.sd.token;
 
 	memset(&hw_mgr_intf, 0, sizeof(hw_mgr_intf));
-	g_isp_dev.ctx = kcalloc(g_isp_dev.max_context,
+	g_isp_dev.ctx = CAM_MEM_ZALLOC_ARRAY(g_isp_dev.max_context,
 		sizeof(struct cam_context),
 		GFP_KERNEL);
 	if (!g_isp_dev.ctx) {
@@ -172,21 +236,22 @@ static int cam_isp_dev_component_bind(struct device *dev,
 		goto unregister;
 	}
 
-	g_isp_dev.ctx_isp = kcalloc(g_isp_dev.max_context,
+	g_isp_dev.ctx_isp = CAM_MEM_ZALLOC_ARRAY(g_isp_dev.max_context,
 		sizeof(struct cam_isp_context),
 		GFP_KERNEL);
 	if (!g_isp_dev.ctx_isp) {
 		CAM_ERR(CAM_ISP,
 			"Mem Allocation failed for Isp private context");
-		kfree(g_isp_dev.ctx);
+		CAM_MEM_FREE(g_isp_dev.ctx);
 		g_isp_dev.ctx = NULL;
 		goto unregister;
 	}
 
-	rc = cam_isp_hw_mgr_init(compat_str, &hw_mgr_intf, &iommu_hdl);
+	rc = cam_isp_hw_mgr_init(compat_str, &hw_mgr_intf, &iommu_hdl,
+		g_isp_dev.isp_device_type);
 	if (rc != 0) {
 		CAM_ERR(CAM_ISP, "Can not initialized ISP HW manager!");
-		goto kfree;
+		goto free_mem;
 	}
 
 	for (i = 0; i < g_isp_dev.max_context; i++) {
@@ -198,16 +263,19 @@ static int cam_isp_dev_component_bind(struct device *dev,
 			g_isp_dev.isp_device_type, iommu_hdl);
 		if (rc) {
 			CAM_ERR(CAM_ISP, "ISP context init failed!");
-			goto kfree;
+			goto free_mem;
 		}
 	}
+
+	cam_common_register_evt_inject_cb(cam_isp_dev_evt_inject_cb,
+		CAM_COMMON_EVT_INJECT_HW_ISP);
 
 	rc = cam_node_init(node, &hw_mgr_intf, g_isp_dev.ctx,
 			g_isp_dev.max_context, CAM_ISP_DEV_NAME);
 
 	if (rc) {
 		CAM_ERR(CAM_ISP, "ISP node init failed!");
-		goto kfree;
+		goto free_mem;
 	}
 
 	node->sd_handler = cam_isp_subdev_close_internal;
@@ -216,14 +284,29 @@ static int cam_isp_dev_component_bind(struct device *dev,
 
 	mutex_init(&g_isp_dev.isp_mutex);
 
+	driver_node.driver_id = CAM_DRIVER_ID_ISP;
+	scnprintf(driver_node.driver_name,
+		sizeof(driver_node.driver_name), "%s", pdev->name);
+	driver_node.driver_msg_callback = cam_isp_vmrm_callback_handler;
+	driver_node.driver_msg_callback_data = &g_isp_dev;
+
+	rc = cam_vmrm_populate_driver_node_info(&driver_node);
+	if (rc) {
+		CAM_ERR(CAM_VMRM, " isp driver node populate failed: %d", rc);
+		goto free_mem;
+	}
+
 	CAM_DBG(CAM_ISP, "Component bound successfully");
+	CAM_GET_TIMESTAMP(ts_end);
+	CAM_GET_TIMESTAMP_DIFF_IN_MICRO(ts_start, ts_end, microsec);
+	cam_record_bind_latency(pdev->name, microsec);
 
 	return 0;
 
-kfree:
-	kfree(g_isp_dev.ctx);
+free_mem:
+	CAM_MEM_FREE(g_isp_dev.ctx);
 	g_isp_dev.ctx = NULL;
-	kfree(g_isp_dev.ctx_isp);
+	CAM_MEM_FREE(g_isp_dev.ctx_isp);
 	g_isp_dev.ctx_isp = NULL;
 
 unregister:
@@ -235,26 +318,28 @@ err:
 static void cam_isp_dev_component_unbind(struct device *dev,
 	struct device *master_dev, void *data)
 {
-	int rc = 0;
-	int i;
+	int rc, i;
 	const char *compat_str = NULL;
 	struct platform_device *pdev = to_platform_device(dev);
 
 	rc = of_property_read_string_index(pdev->dev.of_node, "arch-compat", 0,
 		(const char **)&compat_str);
+	if (rc) {
+		CAM_ERR(CAM_ISP, "Failed at reading arch-compat");
+		return;
+	}
 
 	cam_isp_hw_mgr_deinit(compat_str);
 	/* clean up resources */
 	for (i = 0; i < g_isp_dev.max_context; i++) {
 		rc = cam_isp_context_deinit(&g_isp_dev.ctx_isp[i]);
 		if (rc)
-			CAM_ERR(CAM_ISP, "ISP context %d deinit failed",
-				 i);
+			CAM_ERR(CAM_ISP, "ISP context %d deinit failed", i);
 	}
 
-	kfree(g_isp_dev.ctx);
+	CAM_MEM_FREE(g_isp_dev.ctx);
 	g_isp_dev.ctx = NULL;
-	kfree(g_isp_dev.ctx_isp);
+	CAM_MEM_FREE(g_isp_dev.ctx_isp);
 	g_isp_dev.ctx_isp = NULL;
 
 	rc = cam_subdev_remove(&g_isp_dev.sd);

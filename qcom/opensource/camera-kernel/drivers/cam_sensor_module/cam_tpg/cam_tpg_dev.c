@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "cam_tpg_dev.h"
@@ -9,6 +10,9 @@
 #include "tpg_hw/tpg_hw_v_1_0/tpg_hw_v_1_0_data.h"
 #include "tpg_hw/tpg_hw_v_1_2/tpg_hw_v_1_2_data.h"
 #include "tpg_hw/tpg_hw_v_1_3/tpg_hw_v_1_3_data.h"
+#include "tpg_hw/tpg_hw_v_1_4/tpg_hw_v_1_4_data.h"
+#include "cam_req_mgr_dev.h"
+#include <linux/of_device.h>
 
 static int cam_tpg_subdev_close(struct v4l2_subdev *sd,
 	struct v4l2_subdev_fh *fh)
@@ -130,12 +134,23 @@ static const struct v4l2_subdev_internal_ops tpg_subdev_intern_ops = {
 	.close = cam_tpg_subdev_close,
 };
 
-irqreturn_t cam_tpg_irq_handler(int irq_num, void *data)
+static irqreturn_t cam_tpg_irq_handler(int irq_num, void *data)
 {
-	CAM_DBG(CAM_TPG, "tpg irq handler");
-	return IRQ_HANDLED;
-}
+	struct cam_tpg_device *tpg_dev =
+		(struct cam_tpg_device *)data;
+	struct tpg_hw *hw = &tpg_dev->tpg_hw;
+	irqreturn_t    rc = IRQ_NONE;
 
+	/* handle the registered irq handler */
+	if (hw &&
+		hw->hw_info &&
+		hw->hw_info->ops &&
+		hw->hw_info->ops->handle_irq) {
+		rc = hw->hw_info->ops->handle_irq(hw);
+	}
+
+	return rc;
+}
 
 static int tpg_subdev_init(struct cam_tpg_device *tpg_dev,
 		struct device *dev)
@@ -165,9 +180,10 @@ static int tpg_subdev_init(struct cam_tpg_device *tpg_dev,
 static int tpg_soc_info_init(struct cam_tpg_device *tpg_dev,
 		struct device *dev)
 {
-	int32_t rc = 0;
+	int32_t rc = 0, i;
 	struct platform_device *pdev = to_platform_device(dev);
 	struct device_node *of_node = NULL;
+	void *irq_data[CAM_SOC_MAX_IRQ_LINES_PER_DEV] = {0};
 
 	if (!dev || !tpg_dev)
 		return -EINVAL;
@@ -191,10 +207,18 @@ static int tpg_soc_info_init(struct cam_tpg_device *tpg_dev,
 		return rc;
 	}
 
-	rc = cam_soc_util_request_platform_resource(
-			&tpg_dev->soc_info,
-			cam_tpg_irq_handler,
-			tpg_dev);
+	for (i = 0; i < tpg_dev->soc_info.irq_count; i++)
+		irq_data[i] = tpg_dev;
+
+	if (!of_property_read_bool(of_node, "hw-no-ops"))
+		tpg_dev->hw_no_ops = false;
+	else
+		tpg_dev->hw_no_ops = true;
+
+	if (!tpg_dev->hw_no_ops)
+		rc = cam_soc_util_request_platform_resource(
+			&tpg_dev->soc_info, cam_tpg_irq_handler,
+			&(irq_data[0]));
 	if (rc)
 		CAM_ERR(CAM_TPG, "unable to request platfrom resources");
 	else
@@ -215,7 +239,7 @@ static int tpg_register_cpas_client(struct cam_tpg_device *tpg_dev,
 	cpas_parms.dev = &pdev->dev;
 	cpas_parms.userdata = tpg_dev;
 
-	strlcpy(cpas_parms.identifier, "tpg", CAM_HW_IDENTIFIER_LENGTH);
+	strscpy(cpas_parms.identifier, "tpg", CAM_HW_IDENTIFIER_LENGTH);
 
 	rc = cam_cpas_register_client(&cpas_parms);
 	if (rc) {
@@ -233,7 +257,6 @@ static int tpg_register_cpas_client(struct cam_tpg_device *tpg_dev,
 static int cam_tpg_hw_layer_init(struct cam_tpg_device *tpg_dev,
 		struct device *dev)
 {
-	int i = 0;
 	/* get top tpg hw information */
 	const struct of_device_id      *match_dev = NULL;
 	struct platform_device *pdev = to_platform_device(dev);
@@ -249,35 +272,31 @@ static int cam_tpg_hw_layer_init(struct cam_tpg_device *tpg_dev,
 	tpg_dev->tpg_hw.hw_info  = (struct tpg_hw_info *)match_dev->data;
 	tpg_dev->tpg_hw.soc_info = &tpg_dev->soc_info;
 	tpg_dev->tpg_hw.cpas_handle = tpg_dev->cpas_handle;
-	tpg_dev->tpg_hw.state    = TPG_HW_STATE_HW_DISABLED;
+	spin_lock_init(&tpg_dev->tpg_hw.hw_state_lock);
+	tpg_dev->tpg_hw.state = TPG_HW_STATE_HW_DISABLED;
 	mutex_init(&tpg_dev->tpg_hw.mutex);
-
-	tpg_dev->tpg_hw.vc_slots = devm_kzalloc(&pdev->dev,
-			sizeof(struct tpg_vc_slot_info) * tpg_dev->tpg_hw.hw_info->max_vc_channels,
-			GFP_KERNEL);
-	if (!tpg_dev->tpg_hw.vc_slots) {
-		CAM_ERR(CAM_TPG, "TPG VC slot allocation failed");
-		mutex_destroy(&tpg_dev->tpg_hw.mutex);
-		return -ENOMEM;
-	}
-
-	for(i = 0; i < tpg_dev->tpg_hw.hw_info->max_vc_channels; i++) {
-		tpg_dev->tpg_hw.vc_slots[i].slot_id      =  i;
-		tpg_dev->tpg_hw.vc_slots[i].vc           = -1;
-		tpg_dev->tpg_hw.vc_slots[i].stream_count =  0;
-		INIT_LIST_HEAD(&(tpg_dev->tpg_hw.vc_slots[i].head));
-	}
-
+	init_completion(&tpg_dev->tpg_hw.complete_rup);
+	/*Initialize the waiting queue and active queues*/
+	INIT_LIST_HEAD(&(tpg_dev->tpg_hw.waiting_request_q));
+	INIT_LIST_HEAD(&(tpg_dev->tpg_hw.active_request_q));
+	tpg_dev->tpg_hw.waiting_request_q_depth = 0;
+	tpg_dev->tpg_hw.active_request_q_depth  = 0;
+	tpg_dev->tpg_hw.settings_update         = 0;
+	tpg_dev->tpg_hw.tpg_clock               = 0;
+	tpg_dev->tpg_hw.hw_info->layer_init(&tpg_dev->tpg_hw);
 	return 0;
 }
 
 static int cam_tpg_component_bind(struct device *dev,
 	struct device *master_dev, void *data)
 {
-	int rc = 0;
-	struct cam_tpg_device  *tpg_dev = NULL;
-	struct platform_device *pdev = to_platform_device(dev);
+	int                      rc = 0;
+	struct cam_tpg_device   *tpg_dev = NULL;
+	struct platform_device  *pdev = to_platform_device(dev);
+	struct timespec64        ts_start, ts_end;
+	long                     microsec = 0;
 
+	CAM_GET_TIMESTAMP(ts_start);
 	tpg_dev = devm_kzalloc(&pdev->dev,
 		sizeof(struct cam_tpg_device), GFP_KERNEL);
 	if (!tpg_dev) {
@@ -285,7 +304,7 @@ static int cam_tpg_component_bind(struct device *dev,
 		return -ENOMEM;
 	}
 
-	strlcpy(tpg_dev->device_name, CAMX_TPG_DEV_NAME,
+	strscpy(tpg_dev->device_name, CAMX_TPG_DEV_NAME,
 		sizeof(tpg_dev->device_name));
 	mutex_init(&tpg_dev->mutex);
 	tpg_dev->tpg_subdev.pdev = pdev;
@@ -315,6 +334,9 @@ static int cam_tpg_component_bind(struct device *dev,
 	}
 
 	platform_set_drvdata(pdev, tpg_dev);
+	CAM_GET_TIMESTAMP(ts_end);
+	CAM_GET_TIMESTAMP_DIFF_IN_MICRO(ts_start, ts_end, microsec);
+	cam_record_bind_latency(pdev->name, microsec);
 
 	return rc;
 
@@ -329,7 +351,14 @@ static void cam_tpg_component_unbind(struct device *dev,
 	struct device *master_dev, void *data)
 {
 	struct platform_device *pdev = to_platform_device(dev);
-	struct cam_tpg_device  *tpg_dev = platform_get_drvdata(pdev);
+	struct cam_tpg_device  *tpg_dev = NULL;
+
+	tpg_dev = platform_get_drvdata(pdev);
+
+	if (!tpg_dev) {
+		CAM_ERR(CAM_TPG, "Error No data in tpg_dev");
+		return;
+	}
 
 	CAM_INFO(CAM_TPG, "Unbind TPG component");
 	cam_cpas_unregister_client(tpg_dev->cpas_handle);
@@ -377,6 +406,14 @@ static const struct of_device_id cam_tpg_dt_match[] = {
 	{
 		.compatible = "qcom,cam-tpg103",
 		.data = &tpg_v_1_3_hw_info,
+	},
+	{
+		.compatible = "qcom,cam-tpg1031",
+		.data = &tpg_v_1_3_1_hw_info,
+	},
+	{
+		.compatible = "qcom,cam-tpg104",
+		.data = &tpg_v_1_4_hw_info,
 	},
 	{}
 };

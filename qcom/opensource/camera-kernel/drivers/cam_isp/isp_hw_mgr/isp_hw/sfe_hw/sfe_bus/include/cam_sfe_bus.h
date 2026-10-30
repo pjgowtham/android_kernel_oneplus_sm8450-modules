@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_SFE_BUS_H_
@@ -11,12 +12,6 @@
 #define CAM_SFE_BUS_WR_VER_1_0          0x1000
 #define CAM_SFE_BUS_RD_VER_1_0          0x1000
 #define CAM_SFE_BUS_MAX_MID_PER_PORT    4
-
-#define CAM_SFE_ADD_REG_VAL_PAIR(buf_array, index, offset, val)    \
-	do {                                               \
-		buf_array[(index)++] = offset;             \
-		buf_array[(index)++] = val;                \
-	} while (0)
 
 #define ALIGNUP(value, alignment) \
 	((value + alignment - 1) / alignment * alignment)
@@ -37,6 +32,7 @@
 #define CACHE_BUF_RD_ALLOC_SHIFT          12
 #define CACHE_BUF_WR_ALLOC_SHIFT          16
 #define CACHE_BUF_DEBUG_SHIFT             20
+#define CACHE_BUF_PRINT_DBG_SHIFT         26
 
 enum cam_sfe_bus_plane_type {
 	PLANE_Y,
@@ -55,24 +51,24 @@ enum cam_sfe_bus_type {
  *
  * @Brief:                   Bus cache debug cfg
  *
+ * @scratch_alloc:           Alloc type for scratch
+ * @buf_alloc:               Alloc type for actual buffer
  * @disable_all:             Disable caching for all [scratch/snapshot]
  * @disable_for_scratch:     Disable caching for scratch
  * @scratch_dbg_cfg:         Scratch alloc configured
- * @scratch_alloc:           Alloc type for scratch
  * @disable_for_buf:         Disable caching for buffer
  * @buf_dbg_cfg:             Buf alloc configured
- * @buf_alloc:               Alloc type for actual buffer
+ * @print_cache_cfg:         Print cache cfg
  */
 struct cam_sfe_bus_cache_dbg_cfg {
+	uint32_t scratch_alloc;
+	uint32_t buf_alloc;
 	bool disable_all;
-
 	bool disable_for_scratch;
 	bool scratch_dbg_cfg;
-	uint32_t scratch_alloc;
-
 	bool disable_for_buf;
 	bool buf_dbg_cfg;
-	uint32_t buf_alloc;
+	bool print_cache_cfg;
 };
 
 /*

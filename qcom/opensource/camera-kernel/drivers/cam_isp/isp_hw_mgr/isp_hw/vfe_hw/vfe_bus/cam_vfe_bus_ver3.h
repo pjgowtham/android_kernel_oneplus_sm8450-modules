@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 
@@ -9,11 +10,19 @@
 
 #include "cam_irq_controller.h"
 #include "cam_vfe_bus.h"
+#include "cam_vfe_hw_intf.h"
 
 #define CAM_VFE_BUS_VER3_MAX_SUB_GRPS        6
 #define CAM_VFE_BUS_VER3_MAX_MID_PER_PORT    4
 #define CAM_VFE_BUS_VER3_CONS_ERR_MAX        32
 #define CAM_VFE_BUS_VER3_MAX_CLIENTS         28
+
+enum cam_vfe_bus_wr_wm_mode {
+	CAM_VFE_WM_LINE_BASED_MODE,
+	CAM_VFE_WM_FRAME_BASED_MODE,
+	CAM_VFE_WM_INDEX_BASED_MODE,
+	CAM_VFE_WM_MODE_MAX,
+};
 
 enum cam_vfe_bus_ver3_vfe_core_id {
 	CAM_VFE_BUS_VER3_VFE_CORE_0,
@@ -28,6 +37,7 @@ enum cam_vfe_bus_ver3_src_grp {
 	CAM_VFE_BUS_VER3_SRC_GRP_3,
 	CAM_VFE_BUS_VER3_SRC_GRP_4,
 	CAM_VFE_BUS_VER3_SRC_GRP_5,
+	CAM_VFE_BUS_VER3_SRC_GRP_6,
 	CAM_VFE_BUS_VER3_SRC_GRP_MAX,
 };
 
@@ -57,6 +67,7 @@ enum cam_vfe_bus_ver3_vfe_out_type {
 	CAM_VFE_BUS_VER3_VFE_OUT_RDI1,
 	CAM_VFE_BUS_VER3_VFE_OUT_RDI2,
 	CAM_VFE_BUS_VER3_VFE_OUT_RDI3,
+	CAM_VFE_BUS_VER3_VFE_OUT_RDI4,
 	CAM_VFE_BUS_VER3_VFE_OUT_FULL,
 	CAM_VFE_BUS_VER3_VFE_OUT_DS4,
 	CAM_VFE_BUS_VER3_VFE_OUT_DS16,
@@ -88,7 +99,24 @@ enum cam_vfe_bus_ver3_vfe_out_type {
 	CAM_VFE_BUS_VER3_VFE_OUT_STATS_CAF,
 	CAM_VFE_BUS_VER3_VFE_OUT_STATS_BAYER_RS,
 	CAM_VFE_BUS_VER3_VFE_OUT_PDAF_PARSED,
+	CAM_VFE_BUS_VER3_VFE_OUT_STATS_ALSC,
+	CAM_VFE_BUS_VER3_VFE_OUT_DS2,
+	CAM_VFE_BUS_VER3_VFE_OUT_IR,
+	CAM_VFE_BUS_VER3_VFE_OUT_STATS_AF_BHIST,
+	CAM_VFE_BUS_VER3_VFE_OUT_STATS_TMC_BHIST,
+	CAM_VFE_BUS_VER3_VFE_OUT_STATS_AEC_BHIST,
 	CAM_VFE_BUS_VER3_VFE_OUT_MAX,
+};
+
+/*
+ * struct cam_vfe_bus_ver3_err_irq_desc:
+ *
+ * @Brief:        Bus error irq description
+ */
+struct cam_vfe_bus_ver3_err_irq_desc {
+	uint32_t  bitmask;
+	char     *err_name;
+	char     *desc;
 };
 
 /*
@@ -101,6 +129,11 @@ struct cam_vfe_constraint_error_info {
 	char     *error_description;
 };
 
+struct cam_vfe_bus_perf_cnt_hw_info {
+	uint32_t perf_cnt_cfg;
+	uint32_t perf_cnt_val;
+};
+
 /*
  * struct cam_vfe_bus_ver3_reg_offset_common:
  *
@@ -111,6 +144,7 @@ struct cam_vfe_bus_ver3_reg_offset_common {
 	uint32_t cgc_ovd;
 	uint32_t comp_cfg_0;
 	uint32_t comp_cfg_1;
+	uint32_t ctxt_sel;
 	uint32_t if_frameheader_cfg[CAM_VFE_BUS_VER3_MAX_SUB_GRPS];
 	uint32_t ubwc_static_ctrl;
 	uint32_t pwr_iso_cfg;
@@ -121,8 +155,19 @@ struct cam_vfe_bus_ver3_reg_offset_common {
 	uint32_t debug_status_top_cfg;
 	uint32_t debug_status_top;
 	uint32_t test_bus_ctrl;
+	uint32_t mc_read_sel_shift;
+	uint32_t mc_write_sel_shift;
+	uint32_t mc_ctxt_mask;
+	uint32_t wm_mode_shift;
+	uint32_t wm_mode_val[CAM_VFE_WM_MODE_MAX];
+	uint32_t wm_en_shift;
+	uint32_t frmheader_en_shift;
+	uint32_t virtual_frm_en_shift;
 	uint32_t top_irq_mask_0;
 	struct cam_irq_controller_reg_info irq_reg_info;
+	uint32_t num_perf_counters;
+	uint32_t perf_cnt_status;
+	struct cam_vfe_bus_perf_cnt_hw_info perf_cnt_reg[CAM_VFE_PERF_CNT_MAX];
 };
 
 /*
@@ -167,6 +212,7 @@ struct cam_vfe_bus_ver3_reg_offset_bus_client {
 	uint32_t mmu_prefetch_cfg;
 	uint32_t mmu_prefetch_max_offset;
 	uint32_t addr_cfg;
+	uint32_t ctxt_cfg;
 	uint32_t burst_limit;
 	uint32_t system_cache_cfg;
 	void    *ubwc_regs;
@@ -177,8 +223,12 @@ struct cam_vfe_bus_ver3_reg_offset_bus_client {
 	uint32_t debug_status_cfg;
 	uint32_t debug_status_0;
 	uint32_t debug_status_1;
+	uint32_t debug_status_ctxt;
+	uint32_t hw_ctxt_cfg;
 	uint32_t bw_limiter_addr;
 	uint32_t comp_group;
+	uint64_t supported_formats;
+	uint32_t rcs_en_mask;
 };
 
 /*
@@ -191,13 +241,19 @@ struct cam_vfe_bus_ver3_vfe_out_hw_info {
 	uint32_t                            max_width;
 	uint32_t                            max_height;
 	uint32_t                            source_group;
-	uint32_t                         mid[CAM_VFE_BUS_VER3_MAX_MID_PER_PORT];
+	uint32_t                           *mid;
+	uint32_t                            num_mid;
 	uint32_t                            num_wm;
 	uint32_t                            line_based;
-	uint32_t                            bufdone_shift;
 	uint32_t                            wm_idx[PLANE_MAX];
+	uint32_t                            mc_grp_shift;
+	uint32_t                            early_done_mask;
 	uint8_t                            *name[PLANE_MAX];
+	uint64_t                            pid_mask;
+	bool                                mc_based;
+	bool                                cntxt_cfg_except;
 };
+
 
 /*
  * struct cam_vfe_bus_ver3_hw_info:
@@ -211,7 +267,8 @@ struct cam_vfe_bus_ver3_vfe_out_hw_info {
  * @num_cons_err:          Number of constraint errors in list
  * @constraint_error_list: Static list of all constraint errors
  * @num_comp_grp:          Number of composite groups
- * @comp_done_shift:       Mask shift for comp done mask
+ * @comp_done_mask:        Mask shift for comp done mask
+ * @mc_comp_done_mask:     Mask shift for hw multi-context comp done irq
  * @top_irq_shift:         Mask shift for top level BUS WR irq
  * @support_consumed_addr: Indicate if bus support consumed address
  * @max_out_res:           Max vfe out resource value supported for hw
@@ -231,8 +288,13 @@ struct cam_vfe_bus_ver3_hw_info {
 	uint32_t num_cons_err;
 	struct cam_vfe_constraint_error_info
 		constraint_error_list[CAM_VFE_BUS_VER3_CONS_ERR_MAX];
+	uint32_t num_bus_errors_0;
+	uint32_t num_bus_errors_1;
+	struct cam_vfe_bus_ver3_err_irq_desc *bus_err_desc_0;
+	struct cam_vfe_bus_ver3_err_irq_desc *bus_err_desc_1;
 	uint32_t num_comp_grp;
-	uint32_t comp_done_shift;
+	uint32_t comp_done_mask[CAM_VFE_BUS_VER3_COMP_GRP_MAX];
+	uint32_t mc_comp_done_mask[CAM_VFE_BUS_VER3_COMP_GRP_MAX];
 	uint32_t top_irq_shift;
 	bool support_consumed_addr;
 	uint32_t max_out_res;
@@ -240,6 +302,10 @@ struct cam_vfe_bus_ver3_hw_info {
 	bool comp_cfg_needed;
 	uint32_t pack_align_shift;
 	uint32_t max_bw_counter_limit;
+	bool support_burst_limit;
+	bool skip_regdump;
+	uint32_t skip_regdump_start_offset;
+	uint32_t skip_regdump_stop_offset;
 };
 
 /**

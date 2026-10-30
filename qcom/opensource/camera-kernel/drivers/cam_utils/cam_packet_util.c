@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/types.h>
@@ -31,6 +31,7 @@ int cam_packet_util_get_cmd_mem_addr(int handle, uint32_t **buf_addr,
 	rc = cam_mem_get_cpu_buf(handle, &kmd_buf_addr, len);
 	if (rc) {
 		CAM_ERR(CAM_UTIL, "Unable to get the virtual address %d", rc);
+		rc = -EINVAL;
 	} else {
 		if (kmd_buf_addr && *len) {
 			*buf_addr = (uint32_t *)kmd_buf_addr;
@@ -61,6 +62,9 @@ int cam_packet_util_validate_cmd_desc(struct cam_cmd_buf_desc *cmd_desc)
 
 	return 0;
 }
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+EXPORT_SYMBOL(cam_packet_util_validate_cmd_desc);
+#endif
 
 int cam_packet_util_validate_packet(struct cam_packet *packet,
 	size_t remain_len)
@@ -68,18 +72,19 @@ int cam_packet_util_validate_packet(struct cam_packet *packet,
 	size_t sum_cmd_desc = 0;
 	size_t sum_io_cfgs = 0;
 	size_t sum_patch_desc = 0;
-	size_t pkt_wo_payload = 0;
+	size_t pkt_wo_payload = offsetof(struct cam_packet, payload);
 
 	if (!packet)
 		return -EINVAL;
 
-	if ((size_t)packet->header.size > remain_len) {
+	if (!(packet->header.size) ||
+		(size_t)packet->header.size > remain_len ||
+		(size_t)packet->header.size <= pkt_wo_payload) {
 		CAM_ERR(CAM_UTIL,
 			"Invalid packet size: %zu, CPU buf length: %zu",
 			(size_t)packet->header.size, remain_len);
 		return -EINVAL;
 	}
-
 
 	CAM_DBG(CAM_UTIL, "num cmd buf:%d num of io config:%d kmd buf index:%d",
 		packet->num_cmd_buf, packet->num_io_configs,
@@ -88,16 +93,13 @@ int cam_packet_util_validate_packet(struct cam_packet *packet,
 	sum_cmd_desc = packet->num_cmd_buf * sizeof(struct cam_cmd_buf_desc);
 	sum_io_cfgs = packet->num_io_configs * sizeof(struct cam_buf_io_cfg);
 	sum_patch_desc = packet->num_patches * sizeof(struct cam_patch_desc);
-	pkt_wo_payload = offsetof(struct cam_packet, payload);
 
-	if ((!packet->header.size) ||
-		((size_t)packet->header.size <= pkt_wo_payload) ||
-		((pkt_wo_payload + (size_t)packet->cmd_buf_offset +
+	if (((pkt_wo_payload + (size_t)packet->cmd_buf_offset +
 		sum_cmd_desc) > (size_t)packet->header.size) ||
 		((pkt_wo_payload + (size_t)packet->io_configs_offset +
-		sum_io_cfgs) > (size_t)packet->header.size) ||
+			sum_io_cfgs) > (size_t)packet->header.size) ||
 		((pkt_wo_payload + (size_t)packet->patch_offset +
-		sum_patch_desc) > (size_t)packet->header.size)) {
+			sum_patch_desc) > (size_t)packet->header.size)) {
 		CAM_ERR(CAM_UTIL, "params not within mem len:%zu %zu %zu %zu",
 			(size_t)packet->header.size, sum_cmd_desc,
 			sum_io_cfgs, sum_patch_desc);
@@ -105,6 +107,45 @@ int cam_packet_util_validate_packet(struct cam_packet *packet,
 	}
 
 	return 0;
+}
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+EXPORT_SYMBOL(cam_packet_util_validate_packet);
+#endif
+
+int cam_packet_util_copy_pkt_to_kmd(struct cam_packet *packet_u, struct cam_packet **packet,
+		size_t remain_len)
+{
+	int rc = 0;
+	uint32_t packet_size;
+
+	packet_size = packet_u->header.size;
+	if (packet_size >= sizeof(struct cam_packet) && packet_size <= remain_len) {
+		rc = cam_common_mem_kdup((void **) packet,
+			packet_u, packet_size);
+		if (rc) {
+			CAM_ERR(CAM_UTIL, "Alloc and copy request %lld packet fail",
+				packet_u->header.request_id);
+			return -EINVAL;
+		}
+		(*packet)->header.size = packet_size;
+	} else {
+		CAM_ERR(CAM_UTIL, "Invalid packet header size %u",
+			packet_size);
+		return -EINVAL;
+	}
+
+	if (cam_packet_util_validate_packet(*packet, remain_len)) {
+		CAM_ERR(CAM_UTIL, "Invalid packet params");
+		rc = -EINVAL;
+		goto free_packet;
+	}
+	return rc;
+
+free_packet:
+	cam_common_mem_free(*packet);
+	*packet = NULL;
+
+	return rc;
 }
 
 int cam_packet_util_get_kmd_buffer(struct cam_packet *packet,
@@ -126,8 +167,7 @@ int cam_packet_util_get_kmd_buffer(struct cam_packet *packet,
 		return -EINVAL;
 	}
 
-	if ((packet->kmd_cmd_buf_index < 0) ||
-		(packet->kmd_cmd_buf_index >= packet->num_cmd_buf)) {
+	if (packet->kmd_cmd_buf_index >= packet->num_cmd_buf) {
 		CAM_ERR(CAM_UTIL, "Invalid kmd buf index: %d",
 			packet->kmd_cmd_buf_index);
 		return -EINVAL;
@@ -177,16 +217,18 @@ int cam_packet_util_get_kmd_buffer(struct cam_packet *packet,
 	kmd_buf->offset     = cmd_desc->offset + packet->kmd_cmd_buf_offset;
 	kmd_buf->size       = cmd_desc->size - cmd_desc->length;
 	kmd_buf->used_bytes = 0;
+	return rc;
 
 rel_kmd_buf:
 	cam_mem_put_cpu_buf(cmd_desc->mem_handle);
 	return rc;
 }
 
-void cam_packet_dump_patch_info(struct cam_packet *packet,
-	int32_t iommu_hdl, int32_t sec_mmu_hdl)
+void cam_packet_util_dump_patch_info(struct cam_packet *packet,
+	int32_t iommu_hdl, int32_t sec_iommu_hdl, struct cam_hw_dump_pf_args *pf_args)
 {
 	struct cam_patch_desc *patch_desc = NULL;
+	struct cam_context_pf_info *pf_context_info  = NULL;
 	dma_addr_t iova_addr;
 	size_t     dst_buf_len;
 	size_t     src_buf_size;
@@ -194,26 +236,54 @@ void cam_packet_dump_patch_info(struct cam_packet *packet,
 	int32_t    hdl;
 	uintptr_t  cpu_addr = 0;
 	uint32_t  *dst_cpu_addr;
-	uint32_t   flags;
-	uint64_t   value = 0;
+	uint32_t   flags, buf_fd;
+	uint32_t   value = 0;
+
+	if (!packet) {
+		CAM_ERR(CAM_UTIL, "Invalid packet");
+		return;
+	}
 
 	patch_desc = (struct cam_patch_desc *)
 			((uint32_t *) &packet->payload_flex +
 			packet->patch_offset/4);
+
+	if (pf_args) {
+		pf_context_info = &(pf_args->pf_context_info);
+		buf_fd = pf_args->pf_smmu_info->buf_info;
+	}
 
 	CAM_INFO(CAM_UTIL, "Total num of patches : %d",
 		packet->num_patches);
 
 	for (i = 0; i < packet->num_patches; i++) {
 		hdl = cam_mem_is_secure_buf(patch_desc[i].src_buf_hdl) ?
-			sec_mmu_hdl : iommu_hdl;
+			sec_iommu_hdl : iommu_hdl;
 		rc = cam_mem_get_io_buf(patch_desc[i].src_buf_hdl,
-			hdl, &iova_addr, &src_buf_size, &flags);
+			hdl, &iova_addr, &src_buf_size, &flags, NULL);
 		if (rc < 0) {
 			CAM_ERR(CAM_UTIL,
 				"unable to get src buf address for hdl 0x%x",
 				hdl);
 			return;
+		}
+
+		if (pf_args &&
+			GET_FD_FROM_HANDLE(patch_desc[i].src_buf_hdl) == buf_fd &&
+			pf_context_info->mem_type == CAM_FAULT_BUF_NOT_FOUND) {
+			/* found PF at this hdl */
+			pf_context_info->mem_type = CAM_FAULT_PATCH_BUF;
+			pf_context_info->patch_idx = i;
+			pf_context_info->buf_hdl = patch_desc[i].src_buf_hdl;
+			pf_context_info->offset = patch_desc[i].src_offset;
+			pf_context_info->mem_flag = flags;
+			pf_context_info->delta =
+				CAM_SMMU_GET_IOVA_DELTA(pf_args->pf_smmu_info->iova, iova_addr);
+			pf_context_info->req_id = packet->header.request_id;
+			pf_context_info->ctx_found = true;
+
+			CAM_ERR(CAM_UTIL, "Found PF at patch: %d src buf hdl: 0x%llx",
+				i, patch_desc[i].src_buf_hdl);
 		}
 
 		rc = cam_mem_get_cpu_buf(patch_desc[i].dst_buf_hdl,
@@ -226,9 +296,9 @@ void cam_packet_dump_patch_info(struct cam_packet *packet,
 		dst_cpu_addr = (uint32_t *)cpu_addr;
 		dst_cpu_addr = (uint32_t *)((uint8_t *)dst_cpu_addr +
 			patch_desc[i].dst_offset);
-		value = *((uint64_t *)dst_cpu_addr);
+		value = *dst_cpu_addr;
 		CAM_INFO(CAM_UTIL,
-			"i = %d src_buf 0x%llx src_hdl 0x%x src_buf_with_offset 0x%llx src_size 0x%llx src_flags: %x dst %p dst_offset %u dst_hdl 0x%x value 0x%llx",
+			"i = %d src_buf 0x%llx src_hdl 0x%x src_buf_with_offset 0x%llx src_size 0x%llx src_flags: %x dst %p dst_offset %u dst_hdl 0x%x value 0x%x",
 			i, iova_addr, patch_desc[i].src_buf_hdl,
 			(iova_addr + patch_desc[i].src_offset),
 			src_buf_size, flags, dst_cpu_addr,
@@ -245,7 +315,7 @@ void cam_packet_dump_patch_info(struct cam_packet *packet,
 static int cam_packet_util_get_patch_iova(
 	struct cam_patch_unique_src_buf_tbl *tbl,
 	int32_t hdl, uint32_t buf_hdl, dma_addr_t *iova,
-	size_t *buf_size, uint32_t *flags)
+	size_t *buf_size, uint32_t *flags, struct list_head *mapped_io_list)
 {
 	int idx = 0;
 	int rc = 0;
@@ -276,7 +346,8 @@ static int cam_packet_util_get_patch_iova(
 	if (!is_found) {
 		CAM_DBG(CAM_UTIL, "src_hdl 0x%x not found in table entries",
 			buf_hdl);
-		rc = cam_mem_get_io_buf(buf_hdl, hdl, &iova_addr, &src_buf_size, flags);
+		rc = cam_mem_get_io_buf(buf_hdl, hdl, &iova_addr, &src_buf_size, flags,
+			mapped_io_list);
 		if (rc < 0) {
 			CAM_ERR(CAM_UTIL,
 				"unable to get iova for src_hdl: 0x%x",
@@ -301,7 +372,8 @@ static int cam_packet_util_get_patch_iova(
 }
 
 int cam_packet_util_process_patches(struct cam_packet *packet,
-	int32_t iommu_hdl, int32_t sec_mmu_hdl)
+	struct list_head *mapped_io_list, int32_t iommu_hdl, int32_t sec_mmu_hdl,
+	bool exp_mem)
 {
 	struct cam_patch_desc *patch_desc = NULL;
 	dma_addr_t iova_addr;
@@ -313,7 +385,7 @@ int cam_packet_util_process_patches(struct cam_packet *packet,
 	int        i  = 0;
 	int        rc = 0;
 	uint32_t   flags = 0;
-	int32_t    hdl;
+	int32_t hdl;
 	struct cam_patch_unique_src_buf_tbl
 		tbl[CAM_UNIQUE_SRC_HDL_MAX];
 
@@ -332,8 +404,9 @@ int cam_packet_util_process_patches(struct cam_packet *packet,
 		hdl = cam_mem_is_secure_buf(patch_desc[i].src_buf_hdl) ?
 			sec_mmu_hdl : iommu_hdl;
 
-		rc = cam_packet_util_get_patch_iova(&tbl[0], hdl,
-			patch_desc[i].src_buf_hdl, &iova_addr, &src_buf_size, &flags);
+		rc = cam_packet_util_get_patch_iova(&tbl[0], hdl, patch_desc[i].src_buf_hdl,
+			&iova_addr, &src_buf_size, &flags, mapped_io_list);
+
 		if (rc) {
 			CAM_ERR(CAM_UTIL,
 				"get_iova failed for patch[%d], src_buf_hdl: 0x%x: rc: %d",
@@ -375,19 +448,173 @@ int cam_packet_util_process_patches(struct cam_packet *packet,
 			patch_desc[i].dst_offset);
 		temp += patch_desc[i].src_offset;
 
-		if ((flags & CAM_MEM_FLAG_HW_SHARED_ACCESS) ||
-			(flags & CAM_MEM_FLAG_CMD_BUF_TYPE))
+		if (exp_mem && cam_smmu_is_expanded_memory()) {
+			if ((flags & CAM_MEM_FLAG_HW_SHARED_ACCESS) ||
+				(flags & CAM_MEM_FLAG_CMD_BUF_TYPE)) {
+				*dst_cpu_addr = temp;
+			} else {
+				if (CAM_36BIT_INTF_GET_IOVA_OFFSET(temp))
+					CAM_ERR(CAM_UTIL,
+						"Buffer address 0x%lx not aligned to 256bytes",
+						temp);
+
+				*dst_cpu_addr = CAM_36BIT_INTF_GET_IOVA_BASE(temp);
+			}
+		} else {
 			*dst_cpu_addr = temp;
-		else
-			*dst_cpu_addr = cam_smmu_is_expanded_memory() ?
-				CAM_36BIT_INTF_GET_IOVA_BASE(temp) : temp;
+		}
 
 		CAM_DBG(CAM_UTIL,
-			"patch is done for dst %pk with src 0x%llx value 0x%llx",
-			dst_cpu_addr, iova_addr, *((uint64_t *)dst_cpu_addr));
+			"patch is done for dst %pK with base iova 0x%lx final iova 0x%lx patched value 0x%x, shared=%s, cmd=%s, HwAndCDM %s",
+			dst_cpu_addr, iova_addr, temp, *dst_cpu_addr,
+			CAM_BOOL_TO_YESNO(flags & CAM_MEM_FLAG_HW_SHARED_ACCESS),
+			CAM_BOOL_TO_YESNO(flags & CAM_MEM_FLAG_CMD_BUF_TYPE),
+			CAM_BOOL_TO_YESNO(flags & CAM_MEM_FLAG_HW_AND_CDM_OR_SHARED));
 		cam_mem_put_cpu_buf((int32_t)patch_desc[i].dst_buf_hdl);
 	}
 
+	return rc;
+}
+
+void cam_packet_util_dump_io_bufs(struct cam_packet *packet,
+	int32_t iommu_hdl, int32_t sec_mmu_hdl,
+	struct cam_hw_dump_pf_args *pf_args, bool res_id_support)
+{
+	struct cam_buf_io_cfg      *io_cfg;
+	struct cam_context_pf_info *pf_context_info;
+	int32_t        mmu_hdl, buf_fd;
+	dma_addr_t     iova_addr;
+	size_t         src_buf_size;
+	int            i, j, rc = 0;
+	uint32_t       resource_type;
+
+	if (!packet) {
+		CAM_ERR(CAM_UTIL, "Invalid packet");
+		return;
+	}
+
+	io_cfg = (struct cam_buf_io_cfg *)((uint32_t *)&packet->payload_flex +
+		packet->io_configs_offset / 4);
+
+	buf_fd = pf_args->pf_smmu_info->buf_info;
+	pf_context_info = &(pf_args->pf_context_info);
+	resource_type = pf_context_info->resource_type;
+
+	for (i = 0; i < packet->num_io_configs; i++) {
+		if (res_id_support && io_cfg[i].resource_type !=
+			pf_context_info->resource_type)
+			continue;
+
+		for (j = 0; j < CAM_PACKET_MAX_PLANES; j++) {
+			if (!io_cfg[i].mem_handle[j])
+				break;
+
+			CAM_INFO(CAM_UTIL, "port: 0x%x f: %u format: %d dir %d",
+				io_cfg[i].resource_type,
+				io_cfg[i].fence,
+				io_cfg[i].format,
+				io_cfg[i].direction);
+
+			mmu_hdl = cam_mem_is_secure_buf(
+				io_cfg[i].mem_handle[j]) ? sec_mmu_hdl :
+				iommu_hdl;
+			rc = cam_mem_get_io_buf(io_cfg[i].mem_handle[j],
+				mmu_hdl, &iova_addr, &src_buf_size, NULL, NULL);
+			if (rc < 0) {
+				CAM_ERR(CAM_UTIL,
+					"get src buf address fail mem_handle 0x%x",
+					io_cfg[i].mem_handle[j]);
+				continue;
+			}
+			if (GET_FD_FROM_HANDLE(io_cfg[i].mem_handle[j]) == buf_fd) {
+				pf_context_info->mem_type = CAM_FAULT_IO_CFG_BUF;
+				pf_context_info->buf_hdl = io_cfg[i].mem_handle[j];
+				pf_context_info->offset = io_cfg[i].offsets[j];
+				pf_context_info->resource_type = io_cfg[i].resource_type;
+				pf_context_info->delta =
+					CAM_SMMU_GET_IOVA_DELTA(pf_args->pf_smmu_info->iova,
+						iova_addr);
+				pf_context_info->req_id = packet->header.request_id;
+				pf_context_info->ctx_found = true;
+
+				resource_type = pf_context_info->resource_type;
+				CAM_INFO(CAM_UTIL,
+					"Found PF at port: 0x%x mem 0x%x fd: %d plane id: %d delta: %llu",
+					io_cfg[i].resource_type,
+					io_cfg[i].mem_handle[j],
+					buf_fd,
+					j, pf_context_info->delta);
+			}
+			CAM_INFO(CAM_UTIL,
+				"pln %d w %d h %d s %u size %zu addr 0x%llx end_addr 0x%llx offset %u memh 0x%x",
+				j, io_cfg[i].planes[j].width,
+				io_cfg[i].planes[j].height,
+				io_cfg[i].planes[j].plane_stride,
+				src_buf_size, iova_addr,
+				iova_addr + src_buf_size,
+				io_cfg[i].offsets[j],
+				io_cfg[i].mem_handle[j]);
+		}
+
+		if (res_id_support)
+			return;
+	}
+
+	if (res_id_support)
+		CAM_ERR(CAM_UTIL,
+			"getting io port for mid resource id failed req id: %llu res id: 0x%x",
+			packet->header.request_id, resource_type);
+
+}
+
+int cam_packet_util_process_generic_blob(uint32_t length, uint32_t *blob_ptr,
+	cam_packet_generic_blob_handler blob_handler_cb, void *user_data)
+{
+	int         rc = 0;
+	uint32_t  blob_type, blob_size, blob_block_size, len_read;
+
+	len_read = 0;
+	while (len_read + sizeof(uint32_t) < length) {
+		blob_type =
+			((*blob_ptr) & CAM_GENERIC_BLOB_CMDBUFFER_TYPE_MASK) >>
+			CAM_GENERIC_BLOB_CMDBUFFER_TYPE_SHIFT;
+		blob_size =
+			((*blob_ptr) & CAM_GENERIC_BLOB_CMDBUFFER_SIZE_MASK) >>
+			CAM_GENERIC_BLOB_CMDBUFFER_SIZE_SHIFT;
+
+		if (!blob_size)
+			goto end;
+
+		blob_block_size = sizeof(uint32_t) +
+			(((blob_size + sizeof(uint32_t) - 1) /
+			sizeof(uint32_t)) * sizeof(uint32_t));
+
+		CAM_DBG(CAM_UTIL,
+			"Blob type=%d size=%d block_size=%d len_read=%d total=%d",
+			blob_type, blob_size, blob_block_size, len_read,
+			length);
+
+		if (len_read + blob_block_size > length) {
+			CAM_ERR(CAM_UTIL, "Invalid Blob %d %d %d %d",
+				blob_type, blob_size, len_read,
+				length);
+			rc = -EINVAL;
+			goto end;
+		}
+
+		len_read += blob_block_size;
+
+		rc = blob_handler_cb(user_data, blob_type, blob_size,
+			(uint8_t *)(blob_ptr + 1));
+		if (rc) {
+			CAM_ERR(CAM_UTIL, "Error in handling blob type %d %d",
+				blob_type, blob_size);
+			goto end;
+		}
+
+		blob_ptr += (blob_block_size / sizeof(uint32_t));
+	}
+end:
 	return rc;
 }
 
@@ -396,11 +623,9 @@ int cam_packet_util_process_generic_cmd_buffer(
 	cam_packet_generic_blob_handler blob_handler_cb, void *user_data)
 {
 	int       rc = 0;
-	uintptr_t  cpu_addr = 0;
-	size_t    buf_size;
-	size_t    remain_len = 0;
-	uint32_t *blob_ptr;
-	uint32_t  blob_type, blob_size, blob_block_size, len_read;
+	uintptr_t cpu_addr = 0;
+	size_t    buf_size, remain_len = 0, blob_size;
+	uint32_t *blob_ptr, *blob_ptr_u;
 
 	if (!cmd_buf || !blob_handler_cb) {
 		CAM_ERR(CAM_UTIL, "Invalid args %pK %pK",
@@ -427,64 +652,38 @@ int cam_packet_util_process_generic_cmd_buffer(
 		CAM_ERR(CAM_UTIL, "Invalid offset for cmd buf: %zu",
 			(size_t)cmd_buf->offset);
 		rc = -EINVAL;
-		goto end;
+		goto put_cpu_buf;
 	}
 	remain_len -= (size_t)cmd_buf->offset;
-
-	if (remain_len < (size_t)cmd_buf->length) {
-		CAM_ERR(CAM_UTIL, "Invalid length for cmd buf: %zu",
-			(size_t)cmd_buf->length);
-		rc = -EINVAL;
-		goto end;
-	}
-
-	blob_ptr = (uint32_t *)(((uint8_t *)cpu_addr) +
+	blob_ptr_u = (uint32_t *)(((uint8_t *)cpu_addr) +
 		cmd_buf->offset);
+	blob_size = cmd_buf->length;
+
+	if (blob_size <= remain_len) {
+		rc = cam_common_mem_kdup((void **)&blob_ptr,
+			blob_ptr_u, blob_size);
+		if (rc) {
+			CAM_ERR(CAM_UTIL, "Alloc and copy blob buffer failed");
+			goto put_cpu_buf;
+		}
+	} else {
+		CAM_ERR(CAM_UTIL, "Invalid blob size %u", blob_size);
+		rc = -EINVAL;
+		goto put_cpu_buf;
+	}
 
 	CAM_DBG(CAM_UTIL,
 		"GenericCmdBuffer cpuaddr=%pK, blobptr=%pK, len=%d",
-		(void *)cpu_addr, (void *)blob_ptr, cmd_buf->length);
+		(void *)cpu_addr, (void *)blob_ptr, blob_size);
 
-	len_read = 0;
-	while (len_read < cmd_buf->length) {
-		blob_type =
-			((*blob_ptr) & CAM_GENERIC_BLOB_CMDBUFFER_TYPE_MASK) >>
-			CAM_GENERIC_BLOB_CMDBUFFER_TYPE_SHIFT;
-		blob_size =
-			((*blob_ptr) & CAM_GENERIC_BLOB_CMDBUFFER_SIZE_MASK) >>
-			CAM_GENERIC_BLOB_CMDBUFFER_SIZE_SHIFT;
+	rc = cam_packet_util_process_generic_blob(blob_size, blob_ptr,
+			blob_handler_cb, user_data);
+	if (rc)
+		CAM_ERR(CAM_UTIL, "Error in parse of blob type blob data %d",
+			rc);
 
-		blob_block_size = sizeof(uint32_t) +
-			(((blob_size + sizeof(uint32_t) - 1) /
-			sizeof(uint32_t)) * sizeof(uint32_t));
-
-		CAM_DBG(CAM_UTIL,
-			"Blob type=%d size=%d block_size=%d len_read=%d total=%d",
-			blob_type, blob_size, blob_block_size, len_read,
-			cmd_buf->length);
-
-		if (len_read + blob_block_size > cmd_buf->length) {
-			CAM_ERR(CAM_UTIL, "Invalid Blob %d %d %d %d",
-				blob_type, blob_size, len_read,
-				cmd_buf->length);
-			rc = -EINVAL;
-			goto end;
-		}
-
-		len_read += blob_block_size;
-
-		rc = blob_handler_cb(user_data, blob_type, blob_size,
-			(uint8_t *)(blob_ptr + 1));
-		if (rc) {
-			CAM_ERR(CAM_UTIL, "Error in handling blob type %d %d",
-				blob_type, blob_size);
-			goto end;
-		}
-
-		blob_ptr += (blob_block_size / sizeof(uint32_t));
-	}
-
-end:
+	cam_common_mem_free(blob_ptr);
+put_cpu_buf:
 	cam_mem_put_cpu_buf(cmd_buf->mem_handle);
 	return rc;
 }
@@ -516,7 +715,7 @@ int cam_presil_retrieve_buffers_from_packet(struct cam_packet *packet, int iommu
 				break;
 
 			rc = cam_mem_get_io_buf(io_cfg[i].mem_handle[j], iommu_hdl, &io_addr[j],
-				&size, NULL);
+				&size, NULL, NULL);
 			if (rc) {
 				CAM_ERR(CAM_PRESIL, "no io addr for plane%d", j);
 				rc = -ENOMEM;

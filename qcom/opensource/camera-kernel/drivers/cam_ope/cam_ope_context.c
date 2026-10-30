@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/debugfs.h>
@@ -24,27 +24,18 @@
 
 static const char ope_dev_name[] = "cam-ope";
 
-static int cam_ope_context_dump_active_request(void *data,
-	struct cam_smmu_pf_info *pf_info)
+static int cam_ope_context_dump_active_request(void *data, void *args)
 {
-	struct cam_context *ctx = (struct cam_context *)data;
-	struct cam_ctx_request          *req = NULL;
-	struct cam_ctx_request          *req_temp = NULL;
-	struct cam_hw_mgr_dump_pf_data  *pf_dbg_entry = NULL;
-	uint32_t  resource_type = 0;
+	struct cam_context         *ctx = (struct cam_context *)data;
+	struct cam_ctx_request     *req = NULL;
+	struct cam_ctx_request     *req_temp = NULL;
+	struct cam_hw_dump_pf_args *pf_args = (struct cam_hw_dump_pf_args *)args;
 	int rc = 0;
-	bool b_mem_found = false, b_ctx_found = false;
 
-	if (!ctx) {
-		CAM_ERR(CAM_OPE, "Invalid ctx");
+	if (!ctx || !pf_args) {
+		CAM_ERR(CAM_OPE, "Invalid ctx %pK or pf args %pK",
+			ctx, pf_args);
 		return -EINVAL;
-	}
-
-	mutex_lock(&ctx->ctx_mutex);
-	if (ctx->state < CAM_CTX_ACQUIRED || ctx->state > CAM_CTX_ACTIVATED) {
-		CAM_ERR(CAM_OPE, "Invalid state ope ctx %d state %d",
-			ctx->ctx_id, ctx->state);
-		goto end;
 	}
 
 	CAM_INFO(CAM_OPE, "iommu fault for ope ctx %d state %d",
@@ -52,30 +43,32 @@ static int cam_ope_context_dump_active_request(void *data,
 
 	list_for_each_entry_safe(req, req_temp,
 			&ctx->active_req_list, list) {
-		pf_dbg_entry = &(req->pf_data);
-		CAM_INFO(CAM_OPE, "req_id : %lld", req->request_id);
+		CAM_INFO(CAM_OPE, "Active req_id: %llu ctx_id: %u",
+			req->request_id, ctx->ctx_id);
 
-		rc = cam_context_dump_pf_info_to_hw(ctx, pf_dbg_entry,
-			&b_mem_found, &b_ctx_found, &resource_type, pf_info);
+		rc = cam_context_dump_pf_info_to_hw(ctx, pf_args, &req->pf_data);
 		if (rc)
-			CAM_ERR(CAM_OPE, "Failed to dump pf info");
-
-		if (b_mem_found)
-			CAM_ERR(CAM_OPE, "Found page fault in req %lld %d",
-				req->request_id, rc);
+			CAM_ERR(CAM_OPE, "Failed to dump pf info ctx_id: %u state: %d",
+				ctx->ctx_id, ctx->state);
 	}
 
-end:
-	mutex_unlock(&ctx->ctx_mutex);
+	if (pf_args->pf_context_info.ctx_found) {
+		/* Send PF notification to UMD if PF found on current CTX */
+		rc = cam_context_send_pf_evt(ctx, pf_args);
+		if (rc)
+			CAM_ERR(CAM_OPE,
+				"Failed to notify PF event to userspace rc: %d", rc);
+	}
+
 	return rc;
 }
 
 static int __cam_ope_acquire_dev_in_available(struct cam_context *ctx,
-	struct cam_acquire_dev_cmd *cmd)
+	struct cam_acquire_dev_cmd_unified *args)
 {
 	int rc;
 
-	rc = cam_context_acquire_dev_to_hw(ctx, cmd);
+	rc = cam_context_acquire_dev_to_hw(ctx, args);
 	if (!rc) {
 		ctx->state = CAM_CTX_ACQUIRED;
 		trace_cam_context_state("OPE", ctx);
@@ -116,8 +109,12 @@ static int __cam_ope_flush_dev_in_ready(struct cam_context *ctx,
 	struct cam_flush_dev_cmd *cmd)
 {
 	int rc;
+	struct cam_context_utils_flush_args flush_args;
 
-	rc = cam_context_flush_dev_to_hw(ctx, cmd);
+	flush_args.cmd = cmd;
+	flush_args.flush_active_req = false;
+
+	rc = cam_context_flush_dev_to_hw(ctx, &flush_args);
 	if (rc)
 		CAM_ERR(CAM_OPE, "Failed to flush device");
 

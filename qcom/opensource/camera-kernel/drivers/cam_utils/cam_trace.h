@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2024  Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #if !defined(_CAM_TRACE_H) || defined(TRACE_HEADER_MULTI_READ)
@@ -111,19 +111,21 @@ TRACE_EVENT(cam_log_debug,
 
 
 TRACE_EVENT(cam_icp_fw_dbg,
-	TP_PROTO(char *dbg_message, uint64_t timestamp),
-	TP_ARGS(dbg_message, timestamp),
+	TP_PROTO(char *dbg_message, uint64_t timestamp, char *dev_name),
+	TP_ARGS(dbg_message, timestamp, dev_name),
 	TP_STRUCT__entry(
 		__string(dbg_message, dbg_message)
 		__field(uint64_t, timestamp)
+		__string(dev_name, dev_name)
 	),
 	TP_fast_assign(
 		__assign_str(dbg_message, dbg_message);
 		__entry->timestamp = timestamp;
+		__assign_str(dev_name, dev_name);
 	),
 	TP_printk(
-		"%llu %s: ",
-		 __entry->timestamp, __get_str(dbg_message)
+		"[%s] %llu %s: ",
+		__get_str(dev_name), __entry->timestamp, __get_str(dbg_message)
 	)
 );
 
@@ -402,6 +404,55 @@ TRACE_EVENT(cam_cdm_cb,
 			__get_str(entity), __entry->status
 	)
 );
+
+TRACE_EVENT(cam_cci_burst,
+	TP_PROTO(const int32_t idx, int32_t m,
+		int32_t q, const char *msg,
+		uint32_t val),
+	TP_ARGS(idx, m, q, msg, val),
+	TP_STRUCT__entry(
+		__field(int32_t, index)
+		__field(int32_t, master)
+		__field(int32_t, queue)
+		__string(msg, msg)
+		__field(uint32_t, value)
+	),
+	TP_fast_assign(
+		__entry->index = idx;
+		__entry->master = m;
+		__entry->queue = q;
+		__assign_str(msg, msg);
+		__entry->value = val;
+	),
+	TP_printk(
+		"CCI%d_M%d_Q%d %s : 0x%x",
+		__entry->index, __entry->master, __entry->queue, __get_str(msg), __entry->value
+	)
+);
+
+TRACE_EVENT(cam_perf,
+	TP_PROTO(const char *entity,
+	const char *msg, unsigned long val),
+	TP_ARGS(entity, msg, val),
+	TP_STRUCT__entry(
+		__string(entity, entity)
+		__string(msg, msg)
+		__field(unsigned long, value)
+	),
+	TP_fast_assign(
+		__assign_str(entity, entity);
+		__assign_str(msg, msg);
+		__entry->value = val;
+	),
+	TP_printk(
+		"%s: %s: %lu (usec)",
+		__get_str(entity), __get_str(msg), __entry->value
+	)
+);
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#include <cam_trace_custom.h>
+#endif
 
 #endif /* _CAM_TRACE_H */
 

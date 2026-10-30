@@ -1,26 +1,23 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CPASTOP_V780_100_H_
 #define _CPASTOP_V780_100_H_
 
-#define TEST_IRQ_ENABLE 0
-
 static struct cam_camnoc_irq_sbm cam_cpas_v780_100_irq_sbm = {
 	.sbm_enable = {
 		.access_type = CAM_REG_TYPE_READ_WRITE,
 		.enable = true,
-		.offset = 0x240, /* CAM_NOC_SBM_FAULTINEN0_LOW */
-		.value = 0x2 |    /* SBM_FAULTINEN0_LOW_PORT1_MASK */
-			0x04 |     /* SBM_FAULTINEN0_LOW_PORT2_MASK */
-			0x08 |     /* SBM_FAULTINEN0_LOW_PORT3_MASK */
+		.offset = 0x240,  /* CAM_NOC_SBM_FAULTINEN0_LOW */
+		.value = 0x01 | /* SBM_FAULTINEN0_LOW_PORT0_MASK */
+			0x02 |    /* SBM_FAULTINEN0_LOW_PORT1_MASK */
+			0x04 |    /* SBM_FAULTINEN0_LOW_PORT2_MASK */
+			0x08 |    /* SBM_FAULTINEN0_LOW_PORT3_MASK */
 			0x10 |    /* SBM_FAULTINEN0_LOW_PORT4_MASK */
-			0x20 |    /* SBM_FAULTINEN0_LOW_PORT5_MASK */
-			(TEST_IRQ_ENABLE ?
-			0x80 :    /* SBM_FAULTINEN0_LOW_PORT7_MASK */
-			0x0),
+			0x20,     /* SBM_FAULTINEN0_LOW_PORT5_MASK */
 	},
 	.sbm_status = {
 		.access_type = CAM_REG_TYPE_READ,
@@ -31,7 +28,7 @@ static struct cam_camnoc_irq_sbm cam_cpas_v780_100_irq_sbm = {
 		.access_type = CAM_REG_TYPE_WRITE,
 		.enable = true,
 		.offset = 0x280, /* CAM_NOC_SBM_FLAGOUTCLR0_LOW */
-		.value = TEST_IRQ_ENABLE ? 0x5 : 0x1,
+		.value = 0x1,
 	}
 };
 
@@ -39,7 +36,7 @@ static struct cam_camnoc_irq_err
 	cam_cpas_v780_100_irq_err[] = {
 	{
 		.irq_type = CAM_CAMNOC_HW_IRQ_SLAVE_ERROR,
-		.enable = false,
+		.enable = true,
 		.sbm_port = 0x1, /* SBM_FAULTINSTATUS0_LOW_PORT0_MASK */
 		.err_enable = {
 			.access_type = CAM_REG_TYPE_READ_WRITE,
@@ -198,13 +195,13 @@ static struct cam_camnoc_irq_err
 	},
 	{
 		.irq_type = CAM_CAMNOC_HW_IRQ_CAMNOC_TEST,
-		.enable = TEST_IRQ_ENABLE ? true : false,
+		.enable = false,
 		.sbm_port = 0x80, /* SBM_FAULTINSTATUS0_LOW_PORT7_MASK */
 		.err_enable = {
 			.access_type = CAM_REG_TYPE_READ_WRITE,
 			.enable = true,
 			.offset = 0x288, /* CAM_NOC_SBM_FLAGOUTSET0_LOW */
-			.value = 0x5,
+			.value = 0x3,
 		},
 		.err_status = {
 			.access_type = CAM_REG_TYPE_READ,
@@ -1196,6 +1193,9 @@ static struct cam_cpas_hw_errata_wa_list cam780_cpas100_errata_wa_list = {
 			.value = 0, /* expected to be 0 */
 		},
 	},
+	.enable_icp_clk_for_qchannel = {
+		.enable = true,
+	},
 };
 
 static struct cam_camnoc_info cam780_cpas100_camnoc_info = {
@@ -1206,10 +1206,43 @@ static struct cam_camnoc_info cam780_cpas100_camnoc_info = {
 	.irq_err_size = ARRAY_SIZE(cam_cpas_v780_100_irq_err),
 	.err_logger = &cam780_cpas100_err_logger_offsets,
 	.errata_wa_list = &cam780_cpas100_errata_wa_list,
+	.test_irq_info = {
+		.sbm_enable_mask = 0x80,
+		.sbm_clear_mask = 0x2,
+	}
 };
 
 static struct cam_cpas_camnoc_qchannel cam780_cpas100_qchannel_info = {
 	.qchannel_ctrl   = 0x5C,
 	.qchannel_status = 0x60,
 };
+
+static struct cam_cpas_subpart_info cam780_cpas_camera_subpart_info = {
+	.num_bits = 8,
+	/*
+	 * Below fuse indexing is based on software fuse definition which is in SMEM and provided
+	 * by XBL team.
+	 */
+	.hw_bitmap_mask = {
+		{CAM_CPAS_CAM_FUSE, BIT(0)},
+		{CAM_CPAS_ISP_FUSE, BIT(1)},
+		{CAM_CPAS_ISP_FUSE, BIT(2)},
+		{CAM_CPAS_ISP_FUSE, BIT(0)},
+		{CAM_CPAS_SFE_FUSE, BIT(0)},
+		{CAM_CPAS_SFE_FUSE, BIT(1)},
+		{CAM_CPAS_SFE_FUSE, BIT(2)},
+		{CAM_CPAS_CUSTOM_FUSE, BIT(0)},
+	}
+};
+
+static struct cam_cpas_info cam780_cpas100_cpas_info = {
+	.hw_caps_info = {
+		.num_caps_registers = 1,
+		.hw_caps_offsets = {0x8},
+	},
+	.qchannel_info = {&cam780_cpas100_qchannel_info},
+	.num_qchannel = 1,
+	.subpart_info = &cam780_cpas_camera_subpart_info,
+};
+
 #endif /* _CPASTOP_V780_100_H_ */

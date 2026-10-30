@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "cam_ois_dev.h"
@@ -10,6 +10,22 @@
 #include "cam_ois_core.h"
 #include "cam_debug_util.h"
 #include "camera_main.h"
+#include "cam_compat.h"
+#include "cam_mem_mgr_api.h"
+
+static struct cam_i3c_ois_data {
+	struct cam_ois_ctrl_t                       *o_ctrl;
+	struct completion                            probe_complete;
+} g_i3c_ois_data[MAX_CAMERAS];
+
+struct completion *cam_ois_get_i3c_completion(uint32_t index)
+{
+	return &g_i3c_ois_data[index].probe_complete;
+}
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+EXPORT_SYMBOL(cam_ois_get_i3c_completion);
+#endif
+
 
 static int cam_ois_subdev_close_internal(struct v4l2_subdev *sd,
 	struct v4l2_subdev_fh *fh)
@@ -87,7 +103,18 @@ static int32_t cam_ois_update_i2c_info(struct cam_ois_ctrl_t *o_ctrl,
 		cci_client->sid = (i2c_info->slave_addr) >> 1;
 		cci_client->retries = 3;
 		cci_client->id_map = 0;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		if(o_ctrl->soc_info.i2c_freq_mode != 0xFF){
+			cci_client->i2c_freq_mode = o_ctrl->soc_info.i2c_freq_mode;
+			CAM_INFO(CAM_OIS, "iic-freq-mode override as %d ",cci_client->i2c_freq_mode);
+		}
+		else{
+			CAM_INFO(CAM_OIS, "iic-freq-mode not found ");
+			cci_client->i2c_freq_mode = i2c_info->i2c_freq_mode;
+		}
+#else
 		cci_client->i2c_freq_mode = i2c_info->i2c_freq_mode;
+#endif
 	}
 
 	return 0;
@@ -137,16 +164,30 @@ static long cam_ois_init_subdev_do_ioctl(struct v4l2_subdev *sd,
 }
 #endif
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+struct v4l2_subdev_internal_ops cam_ois_internal_ops = {
+#else
 static const struct v4l2_subdev_internal_ops cam_ois_internal_ops = {
+#endif
 	.close = cam_ois_subdev_close,
 };
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+EXPORT_SYMBOL(cam_ois_internal_ops);
+#endif
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+struct v4l2_subdev_core_ops cam_ois_subdev_core_ops = {
+#else
 static struct v4l2_subdev_core_ops cam_ois_subdev_core_ops = {
+#endif
 	.ioctl = cam_ois_subdev_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl32 = cam_ois_init_subdev_do_ioctl,
 #endif
 };
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+EXPORT_SYMBOL(cam_ois_subdev_core_ops);
+#endif
 
 static struct v4l2_subdev_ops cam_ois_subdev_ops = {
 	.core = &cam_ois_subdev_core_ops,
@@ -158,7 +199,7 @@ static int cam_ois_init_subdev_param(struct cam_ois_ctrl_t *o_ctrl)
 
 	o_ctrl->v4l2_dev_str.internal_ops = &cam_ois_internal_ops;
 	o_ctrl->v4l2_dev_str.ops = &cam_ois_subdev_ops;
-	strlcpy(o_ctrl->device_name, CAM_OIS_NAME,
+	strscpy(o_ctrl->device_name, CAM_OIS_NAME,
 		sizeof(o_ctrl->device_name));
 	o_ctrl->v4l2_dev_str.name = o_ctrl->device_name;
 	o_ctrl->v4l2_dev_str.sd_flags =
@@ -181,7 +222,12 @@ static int cam_ois_i2c_component_bind(struct device *dev,
 	struct i2c_client           *client = NULL;
 	struct cam_ois_ctrl_t       *o_ctrl = NULL;
 	struct cam_ois_soc_private  *soc_private = NULL;
+	struct timespec64            ts_start, ts_end;
+	long                         microsec = 0;
+	struct device_node          *np = NULL;
+	const char                  *drv_name;
 
+	CAM_GET_TIMESTAMP(ts_start);
 	client = container_of(dev, struct i2c_client, dev);
 	if (client == NULL) {
 		CAM_ERR(CAM_OIS, "Invalid Args client: %pK",
@@ -189,11 +235,18 @@ static int cam_ois_i2c_component_bind(struct device *dev,
 		return -EINVAL;
 	}
 
-	o_ctrl = kzalloc(sizeof(*o_ctrl), GFP_KERNEL);
+	o_ctrl = CAM_MEM_ZALLOC(sizeof(*o_ctrl), GFP_KERNEL);
 	if (!o_ctrl) {
-		CAM_ERR(CAM_OIS, "kzalloc failed");
+		CAM_ERR(CAM_OIS, "CAM_MEM_ZALLOC failed");
 		rc = -ENOMEM;
 		goto probe_failure;
+	}
+
+	o_ctrl->io_master_info.qup_client = CAM_MEM_ZALLOC(sizeof(
+		struct cam_sensor_qup_client), GFP_KERNEL);
+	if (!(o_ctrl->io_master_info.qup_client)) {
+		rc = -ENOMEM;
+		goto octrl_free;
 	}
 
 	i2c_set_clientdata(client, o_ctrl);
@@ -202,13 +255,16 @@ static int cam_ois_i2c_component_bind(struct device *dev,
 	o_ctrl->soc_info.dev_name = client->name;
 	o_ctrl->ois_device_type = MSM_CAMERA_I2C_DEVICE;
 	o_ctrl->io_master_info.master_type = I2C_MASTER;
-	o_ctrl->io_master_info.client = client;
+	o_ctrl->io_master_info.qup_client->i2c_client = client;
 
-	soc_private = kzalloc(sizeof(struct cam_ois_soc_private),
+	np = of_node_get(client->dev.of_node);
+	drv_name = of_node_full_name(np);
+
+	soc_private = CAM_MEM_ZALLOC(sizeof(struct cam_ois_soc_private),
 		GFP_KERNEL);
 	if (!soc_private) {
 		rc = -ENOMEM;
-		goto octrl_free;
+		goto free_qup;
 	}
 
 	o_ctrl->soc_info.soc_private = soc_private;
@@ -222,14 +278,23 @@ static int cam_ois_i2c_component_bind(struct device *dev,
 	if (rc)
 		goto soc_free;
 
+	cam_sensor_module_add_i2c_device((void *) o_ctrl, CAM_SENSOR_OIS);
+
+	mutex_init(&(o_ctrl->ois_mutex));
 	o_ctrl->cam_ois_state = CAM_OIS_INIT;
+	CAM_GET_TIMESTAMP(ts_end);
+	CAM_GET_TIMESTAMP_DIFF_IN_MICRO(ts_start, ts_end, microsec);
+	cam_record_bind_latency(drv_name, microsec);
+	of_node_put(np);
 
 	return rc;
 
 soc_free:
-	kfree(soc_private);
+	CAM_MEM_FREE(soc_private);
+free_qup:
+	CAM_MEM_FREE(o_ctrl->io_master_info.qup_client);
 octrl_free:
-	kfree(o_ctrl);
+	CAM_MEM_FREE(o_ctrl);
 probe_failure:
 	return rc;
 }
@@ -241,8 +306,6 @@ static void cam_ois_i2c_component_unbind(struct device *dev,
 	struct i2c_client              *client = NULL;
 	struct cam_ois_ctrl_t          *o_ctrl = NULL;
 	struct cam_hw_soc_info         *soc_info;
-	struct cam_ois_soc_private     *soc_private;
-	struct cam_sensor_power_ctrl_t *power_info;
 
 	client = container_of(dev, struct i2c_client, dev);
 	if (!client) {
@@ -260,21 +323,24 @@ static void cam_ois_i2c_component_unbind(struct device *dev,
 	CAM_INFO(CAM_OIS, "i2c driver remove invoked");
 	soc_info = &o_ctrl->soc_info;
 
-	for (i = 0; i < soc_info->num_clk; i++)
+	for (i = 0; i < soc_info->num_clk; i++) {
+		if (!soc_info->clk[i]) {
+			CAM_DBG(CAM_OIS, "%s handle is NULL skip put",
+				soc_info->clk_name[i]);
+			continue;
+		}
 		devm_clk_put(soc_info->dev, soc_info->clk[i]);
+	}
 
 	mutex_lock(&(o_ctrl->ois_mutex));
 	cam_ois_shutdown(o_ctrl);
 	mutex_unlock(&(o_ctrl->ois_mutex));
 	cam_unregister_subdev(&(o_ctrl->v4l2_dev_str));
 
-	soc_private =
-		(struct cam_ois_soc_private *)soc_info->soc_private;
-	power_info = &soc_private->power_info;
-
-	kfree(o_ctrl->soc_info.soc_private);
+	CAM_MEM_FREE(o_ctrl->soc_info.soc_private);
 	v4l2_set_subdevdata(&o_ctrl->v4l2_dev_str.sd, NULL);
-	kfree(o_ctrl);
+	CAM_MEM_FREE(o_ctrl->io_master_info.qup_client);
+	CAM_MEM_FREE(o_ctrl);
 }
 
 const static struct component_ops cam_ois_i2c_component_ops = {
@@ -353,9 +419,17 @@ static int cam_ois_component_bind(struct device *dev,
 	int32_t                         rc = 0;
 	struct cam_ois_ctrl_t          *o_ctrl = NULL;
 	struct cam_ois_soc_private     *soc_private = NULL;
-	struct platform_device *pdev = to_platform_device(dev);
+	bool                            i3c_i2c_target;
+	struct platform_device         *pdev = to_platform_device(dev);
+	struct timespec64               ts_start, ts_end;
+	long                            microsec = 0;
 
-	o_ctrl = kzalloc(sizeof(struct cam_ois_ctrl_t), GFP_KERNEL);
+	CAM_GET_TIMESTAMP(ts_start);
+	i3c_i2c_target = of_property_read_bool(pdev->dev.of_node, "i3c-i2c-target");
+	if (i3c_i2c_target)
+		return 0;
+
+	o_ctrl = CAM_MEM_ZALLOC(sizeof(struct cam_ois_ctrl_t), GFP_KERNEL);
 	if (!o_ctrl)
 		return -ENOMEM;
 
@@ -367,12 +441,12 @@ static int cam_ois_component_bind(struct device *dev,
 	o_ctrl->ois_device_type = MSM_CAMERA_PLATFORM_DEVICE;
 
 	o_ctrl->io_master_info.master_type = CCI_MASTER;
-	o_ctrl->io_master_info.cci_client = kzalloc(
+	o_ctrl->io_master_info.cci_client = CAM_MEM_ZALLOC(
 		sizeof(struct cam_sensor_cci_client), GFP_KERNEL);
 	if (!o_ctrl->io_master_info.cci_client)
 		goto free_o_ctrl;
 
-	soc_private = kzalloc(sizeof(struct cam_ois_soc_private),
+	soc_private = CAM_MEM_ZALLOC(sizeof(struct cam_ois_soc_private),
 		GFP_KERNEL);
 	if (!soc_private) {
 		rc = -ENOMEM;
@@ -380,12 +454,6 @@ static int cam_ois_component_bind(struct device *dev,
 	}
 	o_ctrl->soc_info.soc_private = soc_private;
 	soc_private->power_info.dev  = &pdev->dev;
-
-	INIT_LIST_HEAD(&(o_ctrl->i2c_init_data.list_head));
-	INIT_LIST_HEAD(&(o_ctrl->i2c_calib_data.list_head));
-	INIT_LIST_HEAD(&(o_ctrl->i2c_fwinit_data.list_head));
-	INIT_LIST_HEAD(&(o_ctrl->i2c_mode_data.list_head));
-	INIT_LIST_HEAD(&(o_ctrl->i2c_time_data.list_head));
 	mutex_init(&(o_ctrl->ois_mutex));
 	rc = cam_ois_driver_soc_init(o_ctrl);
 	if (rc) {
@@ -404,18 +472,27 @@ static int cam_ois_component_bind(struct device *dev,
 	}
 	o_ctrl->bridge_intf.device_hdl = -1;
 
+	cam_sensor_module_add_i2c_device((void *) o_ctrl, CAM_SENSOR_OIS);
+
 	platform_set_drvdata(pdev, o_ctrl);
 	o_ctrl->cam_ois_state = CAM_OIS_INIT;
+
+	g_i3c_ois_data[o_ctrl->soc_info.index].o_ctrl = o_ctrl;
+	init_completion(&g_i3c_ois_data[o_ctrl->soc_info.index].probe_complete);
+	CAM_GET_TIMESTAMP(ts_end);
+	CAM_GET_TIMESTAMP_DIFF_IN_MICRO(ts_start, ts_end, microsec);
+	cam_record_bind_latency(pdev->name, microsec);
+
 	CAM_DBG(CAM_OIS, "Component bound successfully");
 	return rc;
 unreg_subdev:
 	cam_unregister_subdev(&(o_ctrl->v4l2_dev_str));
 free_soc:
-	kfree(soc_private);
+	CAM_MEM_FREE(soc_private);
 free_cci_client:
-	kfree(o_ctrl->io_master_info.cci_client);
+	CAM_MEM_FREE(o_ctrl->io_master_info.cci_client);
 free_o_ctrl:
-	kfree(o_ctrl);
+	CAM_MEM_FREE(o_ctrl);
 	return rc;
 }
 
@@ -424,10 +501,13 @@ static void cam_ois_component_unbind(struct device *dev,
 {
 	int                             i;
 	struct cam_ois_ctrl_t          *o_ctrl;
-	struct cam_ois_soc_private     *soc_private;
-	struct cam_sensor_power_ctrl_t *power_info;
 	struct cam_hw_soc_info         *soc_info;
+	bool                            i3c_i2c_target;
 	struct platform_device *pdev = to_platform_device(dev);
+
+	i3c_i2c_target = of_property_read_bool(pdev->dev.of_node, "i3c-i2c-target");
+	if (i3c_i2c_target)
+		return;
 
 	o_ctrl = platform_get_drvdata(pdev);
 	if (!o_ctrl) {
@@ -437,23 +517,25 @@ static void cam_ois_component_unbind(struct device *dev,
 
 	CAM_INFO(CAM_OIS, "platform driver remove invoked");
 	soc_info = &o_ctrl->soc_info;
-	for (i = 0; i < soc_info->num_clk; i++)
+	for (i = 0; i < soc_info->num_clk; i++) {
+		if (!soc_info->clk[i]) {
+			CAM_DBG(CAM_OIS, "%s handle is NULL skip put",
+				soc_info->clk_name[i]);
+			continue;
+		}
 		devm_clk_put(soc_info->dev, soc_info->clk[i]);
+	}
 
 	mutex_lock(&(o_ctrl->ois_mutex));
 	cam_ois_shutdown(o_ctrl);
 	mutex_unlock(&(o_ctrl->ois_mutex));
 	cam_unregister_subdev(&(o_ctrl->v4l2_dev_str));
 
-	soc_private =
-		(struct cam_ois_soc_private *)o_ctrl->soc_info.soc_private;
-	power_info = &soc_private->power_info;
-
-	kfree(o_ctrl->soc_info.soc_private);
-	kfree(o_ctrl->io_master_info.cci_client);
+	CAM_MEM_FREE(o_ctrl->soc_info.soc_private);
+	CAM_MEM_FREE(o_ctrl->io_master_info.cci_client);
 	platform_set_drvdata(pdev, NULL);
 	v4l2_set_subdevdata(&o_ctrl->v4l2_dev_str.sd, NULL);
-	kfree(o_ctrl);
+	CAM_MEM_FREE(o_ctrl);
 }
 
 const static struct component_ops cam_ois_component_ops = {
@@ -519,39 +601,218 @@ struct i2c_driver cam_ois_i2c_driver = {
 	},
 };
 
-static struct cam_ois_registered_driver_t registered_driver = {
-	0, 0};
+static struct i3c_device_id ois_i3c_id[MAX_I3C_DEVICE_ID_ENTRIES + 1];
+
+static int cam_ois_i3c_driver_probe(struct i3c_device *client)
+{
+	int32_t rc = 0;
+	struct cam_ois_ctrl_t            *o_ctrl = NULL;
+	uint32_t                          index;
+	struct device                    *dev;
+
+	if (!client) {
+		CAM_INFO(CAM_OIS, "Null Client pointer");
+		return -EINVAL;
+	}
+
+	dev = &client->dev;
+
+	CAM_DBG(CAM_OIS, "Probe for I3C Slave %s", dev_name(dev));
+
+	rc = of_property_read_u32(dev->of_node, "cell-index", &index);
+	if (rc) {
+		CAM_ERR(CAM_OIS, "device %s failed to read cell-index", dev_name(dev));
+		return rc;
+	}
+
+	if (index >= MAX_CAMERAS) {
+		CAM_ERR(CAM_OIS, "Invalid Cell-Index: %u for %s", index, dev_name(dev));
+		return -EINVAL;
+	}
+
+	o_ctrl = g_i3c_ois_data[index].o_ctrl;
+	if (!o_ctrl) {
+		CAM_ERR(CAM_OIS, "o_ctrl is null. I3C Probe before platfom driver probe for %s",
+			dev_name(dev));
+		return -EINVAL;
+	}
+	cam_sensor_utils_parse_pm_ctrl_flag(dev->of_node, &(o_ctrl->io_master_info));
+
+	CAM_INFO(CAM_SENSOR,
+		"master: %d (1-CCI, 2-I2C, 3-SPI, 4-I3C) pm_ctrl_client_enable: %d",
+		o_ctrl->io_master_info.master_type,
+		o_ctrl->io_master_info.qup_client->pm_ctrl_client_enable);
+
+	o_ctrl->io_master_info.qup_client->i3c_client = client;
+	o_ctrl->io_master_info.qup_client->i3c_wait_for_hotjoin = false;
+
+	complete_all(&g_i3c_ois_data[index].probe_complete);
+
+	CAM_DBG(CAM_OIS, "I3C Probe Finished for %s", dev_name(dev));
+	return rc;
+}
+
+#if (KERNEL_VERSION(5, 15, 0) <= LINUX_VERSION_CODE)
+static void cam_i3c_driver_remove(struct i3c_device *client)
+{
+	int32_t                        rc = 0;
+	uint32_t                       index;
+	struct cam_ois_ctrl_t          *o_ctrl = NULL;
+	struct device                  *dev;
+
+	if (!client) {
+		CAM_ERR(CAM_SENSOR, "I3C Driver Remove: Invalid input args");
+		return;
+	}
+
+	dev = &client->dev;
+
+	CAM_DBG(CAM_SENSOR, "driver remove for I3C Slave %s", dev_name(dev));
+
+	rc = of_property_read_u32(dev->of_node, "cell-index", &index);
+	if (rc) {
+		CAM_ERR(CAM_UTIL, "device %s failed to read cell-index", dev_name(dev));
+		return;
+	}
+
+	if (index >= MAX_CAMERAS) {
+		CAM_ERR(CAM_SENSOR, "Invalid Cell-Index: %u for %s", index, dev_name(dev));
+		return;
+	}
+
+	o_ctrl = g_i3c_ois_data[index].o_ctrl;
+	if (!o_ctrl) {
+		CAM_ERR(CAM_SENSOR, "S_ctrl is null. I3C Probe before platfom driver probe for %s",
+			dev_name(dev));
+		return;
+	}
+
+	CAM_DBG(CAM_SENSOR, "I3C remove invoked for %s",
+		(client ? dev_name(&client->dev) : "none"));
+	CAM_MEM_FREE(o_ctrl->io_master_info.qup_client);
+	o_ctrl->io_master_info.qup_client = NULL;
+}
+#else
+static int cam_i3c_driver_remove(struct i3c_device *client)
+{
+	int32_t                        rc = 0;
+	uint32_t                       index;
+	struct cam_ois_ctrl_t          *o_ctrl = NULL;
+	struct device                  *dev;
+
+	if (!client) {
+		CAM_ERR(CAM_SENSOR, "I3C Driver Remove: Invalid input args");
+		return -EINVAL;
+	}
+
+	dev = &client->dev;
+
+	CAM_DBG(CAM_SENSOR, "driver remove for I3C Slave %s", dev_name(dev));
+
+	rc = of_property_read_u32(dev->of_node, "cell-index", &index);
+	if (rc) {
+		CAM_ERR(CAM_UTIL, "device %s failed to read cell-index", dev_name(dev));
+		return -EINVAL;
+	}
+
+	if (index >= MAX_CAMERAS) {
+		CAM_ERR(CAM_SENSOR, "Invalid Cell-Index: %u for %s", index, dev_name(dev));
+		return -EINVAL;
+	}
+
+	o_ctrl = g_i3c_ois_data[index].o_ctrl;
+	if (!o_ctrl) {
+		CAM_ERR(CAM_SENSOR, "S_ctrl is null. I3C Probe before platfom driver probe for %s",
+			dev_name(dev));
+		return -EINVAL;
+	}
+
+	CAM_DBG(CAM_SENSOR, "I3C remove invoked for %s",
+		(client ? dev_name(&client->dev) : "none"));
+	CAM_MEM_FREE(o_ctrl->io_master_info.qup_client);
+	o_ctrl->io_master_info.qup_client = NULL;
+	return 0;
+}
+#endif
+
+static struct i3c_driver cam_ois_i3c_driver = {
+	.id_table = ois_i3c_id,
+	.probe = cam_ois_i3c_driver_probe,
+	.remove = cam_i3c_driver_remove,
+	.driver = {
+		.owner = THIS_MODULE,
+		.name = OIS_DRIVER_I3C,
+		.of_match_table = cam_ois_dt_match,
+		.suppress_bind_attrs = true,
+	},
+};
 
 int cam_ois_driver_init(void)
 {
 	int rc = 0;
+	struct device_node                      *dev;
+	int num_entries = 0;
 
 	rc = platform_driver_register(&cam_ois_platform_driver);
 	if (rc) {
-		CAM_ERR(CAM_OIS, "platform_driver_register failed rc = %d",
-			rc);
+		CAM_ERR(CAM_OIS, "platform_driver_register failed rc = %d", rc);
 		return rc;
 	}
-
-	registered_driver.platform_driver = 1;
 
 	rc = i2c_add_driver(&cam_ois_i2c_driver);
 	if (rc) {
 		CAM_ERR(CAM_OIS, "i2c_add_driver failed rc = %d", rc);
-		return rc;
+		goto i2c_register_err;
 	}
 
-	registered_driver.i2c_driver = 1;
+	memset(ois_i3c_id, 0, sizeof(struct i3c_device_id) * (MAX_I3C_DEVICE_ID_ENTRIES + 1));
+
+	dev = of_find_node_by_path(I3C_SENSOR_DEV_ID_DT_PATH);
+	if (!dev) {
+		CAM_DBG(CAM_OIS, "Couldnt Find the i3c-id-table dev node");
+		return 0;
+	}
+
+	rc = cam_sensor_count_elems_i3c_device_id(dev, &num_entries,
+		"i3c-ois-id-table");
+	if (rc)
+		return 0;
+
+	rc = cam_sensor_fill_i3c_device_id(dev, num_entries,
+		"i3c-ois-id-table", ois_i3c_id);
+	if (rc)
+		goto i3c_register_err;
+
+	rc = i3c_driver_register_with_owner(&cam_ois_i3c_driver, THIS_MODULE);
+	if (rc) {
+		CAM_ERR(CAM_OIS, "i3c_driver registration failed, rc: %d", rc);
+		goto i3c_register_err;
+	}
+
+	return 0;
+
+i3c_register_err:
+	i2c_del_driver(&cam_ois_i2c_driver);
+i2c_register_err:
+	platform_driver_unregister(&cam_ois_platform_driver);
+
 	return rc;
 }
 
 void cam_ois_driver_exit(void)
 {
-	if (registered_driver.platform_driver)
-		platform_driver_unregister(&cam_ois_platform_driver);
+	struct device_node *dev;
 
-	if (registered_driver.i2c_driver)
-		i2c_del_driver(&cam_ois_i2c_driver);
+	platform_driver_unregister(&cam_ois_platform_driver);
+	i2c_del_driver(&cam_ois_i2c_driver);
+
+	dev = of_find_node_by_path(I3C_SENSOR_DEV_ID_DT_PATH);
+	if (!dev) {
+		CAM_DBG(CAM_EEPROM, "Couldnt Find the i3c-id-table dev node");
+		return;
+	}
+
+	i3c_driver_unregister(&cam_ois_i3c_driver);
 }
 
 MODULE_DESCRIPTION("CAM OIS driver");

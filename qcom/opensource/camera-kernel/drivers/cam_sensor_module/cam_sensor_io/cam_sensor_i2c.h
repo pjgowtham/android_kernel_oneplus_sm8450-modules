@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_SENSOR_I2C_H_
@@ -18,20 +19,25 @@
 #define I2C_COMPARE_MATCH 0
 #define I2C_COMPARE_MISMATCH 1
 
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 #define I2C_REG_DATA_MAX (20*1024)
-
+#else
+#define I2C_REG_DATA_MAX (35*1024)
+#endif
 /**
  * @client: CCI client structure
  * @data: I2C data
  * @addr_type: I2c address type
  * @data_type: I2C data type
+ * @is_probing: Is probing a sensor
  *
  * This API handles CCI read
  */
 int32_t cam_cci_i2c_read(struct cam_sensor_cci_client *client,
 	uint32_t addr, uint32_t *data,
 	enum camera_sensor_i2c_type addr_type,
-	enum camera_sensor_i2c_type data_type);
+	enum camera_sensor_i2c_type data_type,
+	bool is_probing);
 
 /**
  * @client: CCI client structure

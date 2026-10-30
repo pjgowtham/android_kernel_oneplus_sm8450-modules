@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #include <linux/module.h>
 #include <linux/build_bug.h>
 
 #include "cam_req_mgr_dev.h"
+#ifdef CONFIG_SPECTRA_VMRM
+#include "cam_vmrm.h"
+#endif
 #include "cam_sync_api.h"
 #include "cam_smmu_api.h"
 #include "cam_cpas_hw_intf.h"
@@ -26,10 +30,11 @@
 #include "cam_tpg_dev.h"
 #include "cam_flash_dev.h"
 
-#include "a5_core.h"
-#include "lx7_dev.h"
+#include "cam_icp_v1_dev.h"
+#include "cam_icp_v2_dev.h"
 #include "ipe_core.h"
 #include "bps_core.h"
+#include "ofe_core.h"
 #include "cam_icp_subdev.h"
 
 #include "jpeg_dma_core.h"
@@ -58,6 +63,15 @@
 #include "cam_tfe_csid.h"
 #include "cam_csid_ppi100.h"
 #include "camera_main.h"
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#include "cam_common_util.h"
+#endif
+#ifndef CAMERA_COMPILE_BY
+#include "cam_generated_h"
+#endif
+
+char camera_banner[] = "Camera-Banner: (" CAMERA_COMPILE_BY "@"
+	CAMERA_COMPILE_HOST ") (" CAMERA_COMPILE_TIME ")";
 
 #ifdef CONFIG_CAM_PRESIL
 extern int cam_presil_framework_dev_init_from_main(void);
@@ -77,6 +91,9 @@ struct camera_submodule {
 
 static const struct camera_submodule_component camera_base[] = {
 	{&cam_req_mgr_init, &cam_req_mgr_exit},
+#ifdef CONFIG_SPECTRA_VMRM
+	{&cam_vmrm_module_init, &cam_vmrm_module_exit},
+#endif
 	{&cam_sync_init, &cam_sync_exit},
 	{&cam_smmu_init_module, &cam_smmu_exit_module},
 	{&cam_cpas_dev_init_module, &cam_cpas_dev_exit_module},
@@ -118,10 +135,11 @@ static const struct camera_submodule_component camera_sensor[] = {
 
 static const struct camera_submodule_component camera_icp[] = {
 #ifdef CONFIG_SPECTRA_ICP
-	{&cam_a5_init_module, &cam_a5_exit_module},
-	{&cam_lx7_init_module, &cam_lx7_exit_module},
+	{&cam_icp_v1_init_module, &cam_icp_v1_exit_module},
+	{&cam_icp_v2_init_module, &cam_icp_v2_exit_module},
 	{&cam_ipe_init_module, &cam_ipe_exit_module},
 	{&cam_bps_init_module, &cam_bps_exit_module},
+	{&cam_ofe_init_module, &cam_ofe_exit_module},
 	{&cam_icp_init_module, &cam_icp_exit_module},
 #endif
 };
@@ -284,9 +302,19 @@ static int camera_init(void)
 	int rc;
 	uint i, j, num_inits;
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	common_mem_pools_init();
+#endif
+	CAM_INFO(CAM_UTIL, "%s", camera_banner);
 	rc = camera_verify_submodules();
 	if (rc)
 		goto end_init;
+
+	cam_debugfs_init();
+
+	rc = cam_soc_util_create_debugfs();
+	if (rc)
+		CAM_ERR(CAM_UTIL, "Failed to create soc_util debugfs directory");
 
 	/* For Probing all available submodules */
 	for (i = 0; i < ARRAY_SIZE(submodule_table); i++) {
@@ -316,6 +344,7 @@ end_init:
 static void camera_exit(void)
 {
 	__camera_exit(ARRAY_SIZE(submodule_table), 0);
+	cam_debugfs_deinit();
 
 	CAM_INFO(CAM_UTIL, "Spectra camera driver exited!");
 }

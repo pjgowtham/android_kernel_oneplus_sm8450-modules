@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -19,6 +19,7 @@
 #include "cam_debug_util.h"
 #include "cam_cdm_util.h"
 #include "cam_cpas_api.h"
+#include "cam_mem_mgr_api.h"
 
 struct cam_vfe_mux_camif_lite_data {
 	void __iomem                                *mem_base;
@@ -84,9 +85,9 @@ static int cam_vfe_camif_lite_put_evt_payload(
 		return -EINVAL;
 	}
 
+	CAM_COMMON_SANITIZE_LIST_ENTRY((*evt_payload), struct cam_vfe_top_irq_evt_payload);
 	spin_lock_irqsave(&camif_lite_priv->spin_lock, flags);
-	list_add_tail(&(*evt_payload)->list,
-		&camif_lite_priv->free_payload_list);
+	list_add_tail(&(*evt_payload)->list, &camif_lite_priv->free_payload_list);
 	*evt_payload = NULL;
 	spin_unlock_irqrestore(&camif_lite_priv->spin_lock, flags);
 
@@ -232,10 +233,10 @@ int cam_vfe_camif_lite_ver3_acquire_resource(
 		camif_lite_res->res_priv;
 	acquire_data = (struct cam_vfe_acquire_args *)acquire_param;
 
-	camif_lite_data->sync_mode   = acquire_data->vfe_in.sync_mode;
-	camif_lite_data->event_cb    = acquire_data->event_cb;
-	camif_lite_data->priv        = acquire_data->priv;
-	camif_lite_res->rdi_only_ctx = 0;
+	camif_lite_data->sync_mode         = acquire_data->vfe_in.sync_mode;
+	camif_lite_data->event_cb          = acquire_data->event_cb;
+	camif_lite_data->priv              = acquire_data->priv;
+	camif_lite_res->is_rdi_primary_res = false;
 	CAM_DBG(CAM_ISP, "Acquired VFE:%d CAMIF LITE:%d %s sync_mode=%d",
 		camif_lite_res->hw_intf->hw_idx,
 		camif_lite_res->res_id,
@@ -330,7 +331,7 @@ skip_core_cfg:
 	val |= rsrc_data->reg_data->top_debug_cfg_en;
 	cam_io_w_mb(val, rsrc_data->mem_base + rsrc_data->common_reg->top_debug_cfg);
 
-	if (!camif_lite_res->rdi_only_ctx)
+	if (!camif_lite_res->is_rdi_primary_res)
 		goto subscribe_err;
 
 	irq_mask[CAM_IFE_IRQ_CAMIF_REG_STATUS1] =
@@ -498,16 +499,16 @@ dump_rdi_1:
 		camif_lite_priv->hw_intf->hw_idx);
 	if (!soc_private->is_ife_lite) {
 		for (offset = 0x9C00; offset <= 0x9DFC; offset += 0x4) {
-			if (offset == 0x9A08)
-				offset = 0x9A60;
+			if (offset == 0x9C08)
+				offset = 0x9C60;
 			val = cam_soc_util_r(camif_lite_priv->soc_info,
 				0, offset);
 			CAM_INFO(CAM_ISP, "offset 0x%X value 0x%X",
 				offset, val);
-			if (offset == 0x9A60)
-				offset = 0x9A64;
-			else if (offset == 0x9A70)
-				offset = 0x9BEC;
+			if (offset == 0x9C60)
+				offset = 0x9C64;
+			else if (offset == 0x9C70)
+				offset = 0x9DEC;
 		}
 	} else {
 		for (offset = 0x1400; offset <= 0x15FC; offset += 0x4) {
@@ -542,7 +543,7 @@ dump_rdi_2:
 				offset, val);
 			if (offset == 0x9E60)
 				offset = 0x9E64;
-			else if (offset == 0x9E80)
+			else if (offset == 0x9E70)
 				offset = 0x9FEC;
 		}
 	} else {
@@ -888,7 +889,7 @@ static void cam_vfe_camif_lite_print_status(uint32_t *status,
 
 		if (status_0 & 0x40000000) {
 			CAM_INFO(CAM_ISP, "PD PIPE OVERFLOW");
-			cam_cpas_log_votes();
+			cam_cpas_log_votes(false);
 		}
 	}
 
@@ -1020,7 +1021,7 @@ print_state:
 
 	if ((err_type == CAM_VFE_IRQ_STATUS_OVERFLOW) &&
 		bus_overflow_status)
-		cam_cpas_log_votes();
+		cam_cpas_log_votes(false);
 
 }
 
@@ -1173,16 +1174,16 @@ static int cam_vfe_camif_lite_handle_irq_bottom_half(
 		evt_info.event_data = (void *)&err_evt_info;
 		ktime_get_boottime_ts64(&ts);
 		CAM_INFO(CAM_ISP,
-			"current monotonic time stamp seconds %lld:%lld",
+			"current monotonic timestamp:[%lld.%09lld]",
 			ts.tv_sec, ts.tv_nsec);
 		CAM_INFO(CAM_ISP,
-			"ERROR time %lld:%lld",
+			"ERROR timestamp:[%lld.%09lld]",
 			camif_lite_priv->error_ts.tv_sec,
 			camif_lite_priv->error_ts.tv_nsec);
 
-		if (camif_lite_node->rdi_only_ctx)
+		if (camif_lite_node->is_rdi_primary_res)
 			CAM_INFO(CAM_ISP,
-				"SOF %lld:%lld EPOCH %lld:%lld EOF %lld:%lld",
+				"SOF timestamp:[%lld.%09lld] EPOCH timestamp:[%lld.%09lld] EOF timestamp:[%lld.%09lld]",
 				camif_lite_priv->sof_ts.tv_sec,
 				camif_lite_priv->sof_ts.tv_nsec,
 				camif_lite_priv->epoch_ts.tv_sec,
@@ -1260,7 +1261,7 @@ int cam_vfe_camif_lite_ver3_init(
 		camif_lite_node->res_id, camif_lite_node->res_id,
 		camif_lite_node->res_name);
 
-	camif_lite_priv = kzalloc(sizeof(*camif_lite_priv),
+	camif_lite_priv = CAM_MEM_ZALLOC(sizeof(*camif_lite_priv),
 		GFP_KERNEL);
 	if (!camif_lite_priv)
 		return -ENOMEM;
@@ -1304,6 +1305,11 @@ int cam_vfe_camif_lite_ver3_deinit(
 		camif_lite_node->res_priv;
 	int                                 i = 0;
 
+	if (!camif_lite_priv) {
+		CAM_ERR(CAM_ISP, "Error! camif_priv is NULL");
+		return -ENODEV;
+	}
+
 	CAM_DBG(CAM_ISP, "VFE:%d CAMIF LITE:%d %s Deinit",
 		camif_lite_node->hw_intf->hw_idx, camif_lite_node->res_id,
 		camif_lite_node->res_name);
@@ -1320,12 +1326,7 @@ int cam_vfe_camif_lite_ver3_deinit(
 
 	camif_lite_node->res_priv = NULL;
 
-	if (!camif_lite_priv) {
-		CAM_ERR(CAM_ISP, "Error. camif_priv is NULL");
-		return -ENODEV;
-	}
-
-	kfree(camif_lite_priv);
+	CAM_MEM_FREE(camif_lite_priv);
 
 	return 0;
 }

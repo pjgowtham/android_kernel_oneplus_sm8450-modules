@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -11,6 +11,7 @@
 #include "cam_context.h"
 #include "cam_debug_util.h"
 #include "cam_node.h"
+#include "cam_context_utils.h"
 
 static int cam_context_handle_hw_event(void *context, uint32_t evt_id,
 	void *evt_data)
@@ -228,7 +229,7 @@ int cam_context_handle_crm_flush_req(struct cam_context *ctx,
 			rc = ctx->state_machine[ctx->state].crm_ops.flush_req(ctx,
 				flush);
 		} else {
-			CAM_ERR(CAM_CORE, "No crm flush req in dev %d, state %d, name %s",
+			CAM_INFO(CAM_CORE, "No crm flush req in dev %d, state %d, name %s",
 				ctx->dev_hdl, ctx->state, ctx->dev_name);
 			rc = -EPROTO;
 		}
@@ -311,10 +312,27 @@ int cam_context_mini_dump_from_hw(struct cam_context *ctx,
 	return rc;
 }
 
-int cam_context_dump_pf_info(struct cam_context *ctx,
-	struct cam_smmu_pf_info *pf_info)
+int cam_context_dump_pf_info(void *data, void *args)
 {
+	struct cam_context *ctx = data;
+	struct cam_hw_dump_pf_args *pf_args = args;
 	int rc = 0;
+
+	if (!pf_args) {
+		CAM_ERR(CAM_CORE, "PF args is NULL");
+		return -EINVAL;
+	}
+
+	if (!ctx) {
+		CAM_ERR(CAM_CORE, "Context is NULL");
+		if (pf_args->pf_context_info.force_send_pf_evt) {
+			rc = cam_context_send_pf_evt(ctx, pf_args);
+			if (rc)
+				CAM_ERR(CAM_CORE,
+					"Failed to notify PF event to userspace rc: %d", rc);
+		}
+		return -EINVAL;
+	}
 
 	if (!ctx->state_machine) {
 		CAM_ERR(CAM_CORE, "Context is not ready");
@@ -326,7 +344,7 @@ int cam_context_dump_pf_info(struct cam_context *ctx,
 		(ctx->state < CAM_CTX_STATE_MAX)) {
 		if (ctx->state_machine[ctx->state].pagefault_ops) {
 			rc = ctx->state_machine[ctx->state].pagefault_ops(
-				ctx, pf_info);
+				ctx, pf_args);
 		} else {
 			CAM_WARN(CAM_CORE, "No dump ctx in dev %d, state %d",
 				ctx->dev_hdl, ctx->state);
@@ -363,7 +381,7 @@ int cam_context_handle_message(struct cam_context *ctx,
 }
 
 int cam_context_handle_acquire_dev(struct cam_context *ctx,
-	struct cam_acquire_dev_cmd *cmd)
+	struct cam_acquire_dev_cmd_unified *cmd)
 {
 	int rc;
 	int i;
@@ -384,7 +402,7 @@ int cam_context_handle_acquire_dev(struct cam_context *ctx,
 			ctx, cmd);
 	} else {
 		CAM_ERR(CAM_CORE, "No acquire device in dev %d, state %d",
-			cmd->dev_handle, ctx->state);
+				cmd->dev_handle, ctx->state);
 		rc = -EPROTO;
 	}
 
@@ -394,6 +412,12 @@ int cam_context_handle_acquire_dev(struct cam_context *ctx,
 	INIT_LIST_HEAD(&ctx->free_req_list);
 
 	for (i = 0; i < ctx->req_size; i++) {
+		if (ctx->req_list[i].packet) {
+			CAM_ERR(CAM_CORE, "%s: req_list[%d] isn't clean, packet isn't NULL(%p)",
+				ctx->ctx_id_string, i, ctx->req_list[i].packet);
+			rc = -EINVAL;
+		}
+
 		INIT_LIST_HEAD(&ctx->req_list[i].list);
 		list_add_tail(&ctx->req_list[i].list, &ctx->free_req_list);
 	}
@@ -539,7 +563,7 @@ int cam_context_handle_config_dev(struct cam_context *ctx,
 		rc = ctx->state_machine[ctx->state].ioctl_ops.config_dev(
 			ctx, cmd);
 	} else {
-		CAM_ERR(CAM_CORE, "No config device in dev %d, state %d",
+		CAM_INFO(CAM_CORE, "No config device in dev %d, state %d",
 			ctx->dev_hdl, ctx->state);
 		rc = -EPROTO;
 	}
@@ -722,7 +746,7 @@ int cam_context_init(struct cam_context *ctx,
 	mutex_init(&ctx->sync_mutex);
 	spin_lock_init(&ctx->lock);
 
-	strlcpy(ctx->dev_name, dev_name, CAM_CTX_DEV_NAME_MAX_LENGTH);
+	strscpy(ctx->dev_name, dev_name, CAM_CTX_DEV_NAME_MAX_LENGTH);
 	ctx->dev_id = dev_id;
 	ctx->ctx_id = ctx_id;
 	ctx->last_flush_req = 0;
@@ -793,4 +817,32 @@ void cam_context_getref(struct cam_context *ctx)
 		"ctx device hdl %ld, ref count %d, dev_name %s",
 		ctx->dev_hdl, refcount_read(&(ctx->refcount.refcount)),
 		ctx->dev_name);
+}
+
+int cam_context_add_evt_inject(struct cam_context *ctx, void *evt_args)
+{
+	int rc = 0;
+
+	if (!ctx->state_machine) {
+		CAM_ERR(CAM_CORE, "Context is not ready");
+		return -EINVAL;
+	}
+
+	mutex_lock(&ctx->ctx_mutex);
+	if ((ctx->state > CAM_CTX_AVAILABLE) &&
+		(ctx->state < CAM_CTX_STATE_MAX)) {
+		if (ctx->state_machine[ctx->state].evt_inject_ops) {
+			rc = ctx->state_machine[ctx->state].evt_inject_ops(
+				ctx, evt_args);
+		} else {
+			CAM_WARN(CAM_CORE, "No evt inject ops in dev %d, state %d",
+				ctx->dev_hdl, ctx->state);
+		}
+	} else {
+		rc = -EINVAL;
+	}
+
+	mutex_unlock(&ctx->ctx_mutex);
+
+	return rc;
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022,2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/delay.h>
@@ -24,10 +24,14 @@
 #include "cam_cdm_hw_reg_1_2.h"
 #include "cam_cdm_hw_reg_2_0.h"
 #include "cam_cdm_hw_reg_2_1.h"
+#include "cam_cdm_hw_reg_2_2.h"
 #include "camera_main.h"
 #include "cam_trace.h"
 #include "cam_req_mgr_workq.h"
 #include "cam_common_util.h"
+#include "cam_vmrm_interface.h"
+#include "cam_mem_mgr_api.h"
+#include "cam_req_mgr_dev.h"
 
 #define CAM_CDM_BL_FIFO_WAIT_TIMEOUT         2000
 #define CAM_CDM_DBG_GEN_IRQ_USR_DATA         0xff
@@ -81,6 +85,10 @@ static const struct of_device_id msm_cam_hw_cdm_dt_match[] = {
 		.compatible = CAM_HW_CDM_OPE_NAME_2_1,
 		.data = &cam_cdm_2_1_reg_offset,
 	},
+	{
+		.compatible  = CAM_HW_CDM_RT_NAME_2_2,
+		.data = &cam_cdm_2_2_reg_offset,
+	},
 	{},
 };
 
@@ -116,7 +124,9 @@ static enum cam_cdm_id cam_hw_cdm_get_id_by_name(char *name)
 	if (strnstr(name, CAM_HW_CDM_OPE_NAME_2_1,
 			strlen(CAM_HW_CDM_OPE_NAME_2_1)))
 		return CAM_CDM_OPE;
-
+	if (strnstr(name, CAM_HW_CDM_RT_NAME_2_2,
+			strlen(CAM_HW_CDM_RT_NAME_2_2)))
+		return CAM_CDM_RT;
 	return CAM_CDM_MAX;
 }
 
@@ -164,10 +174,29 @@ static int cam_hw_cdm_pause_core(struct cam_hw_info *cdm_hw, bool pause)
 {
 	int rc = 0;
 	struct cam_cdm *core = (struct cam_cdm *)cdm_hw->core_info;
-	uint32_t val = 0x1;
+	uint32_t val = 0x1, core_en_reg, cdm_status_reg;
+	bool pause_core_supported;
 
 	if (pause)
 		val |= 0x2;
+
+	pause_core_supported = core->offsets->reg_data->capabilities &
+		CAM_CDM_CAP_PAUSE_CORE;
+
+	if (pause_core_supported) {
+		cam_cdm_read_hw_reg(cdm_hw,
+			core->offsets->cmn_reg->core_en, &core_en_reg);
+		cam_cdm_read_hw_reg(cdm_hw,
+			core->offsets->cmn_reg->cdm_status, &cdm_status_reg);
+
+		/* In both pause or resume, further action need not/cannot be taken */
+		if ((core_en_reg & core->offsets->cmn_reg->pause_core_enable_mask) &&
+			!(cdm_status_reg & core->offsets->cmn_reg->pause_core_done_mask)) {
+			if (!pause)
+				CAM_ERR(CAM_CDM, "Pause core not done yet, can't resume core");
+			return -EAGAIN;
+		}
+	}
 
 	if (cam_cdm_write_hw_reg(cdm_hw,
 			core->offsets->cmn_reg->core_en, val)) {
@@ -175,6 +204,21 @@ static int cam_hw_cdm_pause_core(struct cam_hw_info *cdm_hw, bool pause)
 			cdm_hw->soc_info.label_name,
 			cdm_hw->soc_info.index);
 		rc = -EIO;
+	}
+
+	if (pause && pause_core_supported) {
+		if (cam_common_read_poll_timeout(
+			cdm_hw->soc_info.reg_map[CAM_HW_CDM_BASE_INDEX].mem_base +
+			core->offsets->cmn_reg->cdm_status, 0,
+			CAM_CDM_PAUSE_CORE_US_TIMEOUT,
+			core->offsets->cmn_reg->pause_core_done_mask,
+			core->offsets->cmn_reg->pause_core_done_mask,
+			&cdm_status_reg)) {
+			CAM_WARN(CAM_CDM,
+				"Pause core operation not successful: status=0x%08x",
+				cdm_status_reg);
+		} else
+			CAM_DBG(CAM_CDM, "Pause core CDM[%u] successful", core->index);
 	}
 
 	return rc;
@@ -309,7 +353,10 @@ static void cam_hw_cdm_dump_bl_fifo_data(struct cam_hw_info *cdm_hw)
 void cam_hw_cdm_dump_core_debug_registers(struct cam_hw_info *cdm_hw,
 	bool pause_core)
 {
-	uint32_t dump_reg[4], core_dbg = 0x100;
+	uint32_t dump_reg[4];
+	uint32_t core_dbg = CAM_CDM_CORE_DBG_TEST_BUS_EN_MASK |
+		CAM_CDM_CORE_DBG_LOG_AHB_MASK |
+		CAM_CDM_CORE_DBG_FIFO_RB_EN_MASK;
 	uint32_t cdm_version = 0;
 	int i;
 	bool is_core_paused_already;
@@ -321,10 +368,8 @@ void cam_hw_cdm_dump_core_debug_registers(struct cam_hw_info *cdm_hw,
 		cdm_hw->soc_info.label_name, cdm_hw->soc_info.index);
 
 
-	if (pause_core) {
+	if (pause_core)
 		cam_hw_cdm_pause_core(cdm_hw, true);
-		usleep_range(1000, 1010);
-	}
 
 	cam_cdm_read_hw_reg(cdm_hw, core->offsets->cmn_reg->cdm_hw_version,
 		&cdm_version);
@@ -343,9 +388,14 @@ void cam_hw_cdm_dump_core_debug_registers(struct cam_hw_info *cdm_hw,
 		}
 
 		core_dbg &= ~(CAM_CDM_CORE_DBG_TEST_BUS_EN_MASK |
-			CAM_CDM_CORE_DBG_TEST_BUS_SEL_MASK);
+			CAM_CDM_CORE_DBG_TEST_BUS_SEL_MASK) |
+			CAM_CDM_CORE_DBG_LOG_AHB_MASK |
+			CAM_CDM_CORE_DBG_FIFO_RB_EN_MASK;
 		cam_hw_cdm_enable_core_dbg(cdm_hw, core_dbg);
-	} else {
+	}
+
+	if (core_dbg & CAM_CDM_CORE_DBG_LOG_AHB_MASK ||
+			core_dbg & CAM_CDM_CORE_DBG_FIFO_RB_EN_MASK){
 		cam_hw_cdm_enable_core_dbg(cdm_hw, core_dbg);
 
 		cam_cdm_read_hw_reg(cdm_hw, core->offsets->cmn_reg->debug_status,
@@ -461,10 +511,8 @@ void cam_hw_cdm_dump_core_debug_registers(struct cam_hw_info *cdm_hw,
 		cam_cdm_read_hw_reg(cdm_hw,
 			core->offsets->cmn_reg->core_en, &dump_reg[0]);
 		is_core_paused_already = (bool)(dump_reg[0] & 0x20);
-		if (!is_core_paused_already) {
+		if (!is_core_paused_already)
 			cam_hw_cdm_pause_core(cdm_hw, true);
-			usleep_range(1000, 1010);
-		}
 
 		cam_hw_cdm_dump_bl_fifo_data(cdm_hw);
 
@@ -798,34 +846,41 @@ bool cam_hw_cdm_commit_bl_write(struct cam_hw_info *cdm_hw, uint32_t fifo_idx)
 int cam_hw_cdm_submit_gen_irq(
 	struct cam_hw_info *cdm_hw,
 	struct cam_cdm_hw_intf_cmd_submit_bl *req,
-	uint32_t fifo_idx, bool set_arb)
+	uint32_t fifo_idx)
 {
 	struct cam_cdm_bl_cb_request_entry *node;
 	struct cam_cdm *core = (struct cam_cdm *)cdm_hw->core_info;
-	uint32_t len;
+	struct cam_cdm_bl_request *cdm_cmd = req->data;
+	dma_addr_t hw_vaddr_ptr = 0;
 	int rc;
 	bool bit_wr_enable = false;
+	size_t len, genirq_cmd_size;
 
-	if (core->bl_fifo[fifo_idx].bl_tag >
-		(core->bl_fifo[fifo_idx].bl_depth - 1)) {
-		CAM_ERR(CAM_CDM,
-			"Invalid bl_tag=%d bl_depth=%d fifo_idx=%d",
+	if (core->bl_fifo[fifo_idx].bl_tag > (core->bl_fifo[fifo_idx].bl_depth - 1)) {
+		CAM_ERR(CAM_CDM, "Invalid BL Tag: %d, BL Depth: %d Fifo_idx: %d",
 			core->bl_fifo[fifo_idx].bl_tag,
 			core->bl_fifo[fifo_idx].bl_depth,
 			fifo_idx);
-		rc = -EINVAL;
-		goto end;
+		return -EINVAL;
 	}
-	CAM_DBG(CAM_CDM, "CDM write BL last cmd tag=%x total=%d cookie=%d",
-		core->bl_fifo[fifo_idx].bl_tag,
-		req->data->cmd_arrary_count,
-		req->data->cookie);
 
-	node = kzalloc(sizeof(struct cam_cdm_bl_cb_request_entry),
+	genirq_cmd_size = 4 * core->ops->cdm_required_size_genirq();
+
+	CAM_DBG(CAM_CDM, "Last Tag: 0x%x Total BLs: %d, Cookie: %d",
+		core->bl_fifo[fifo_idx].bl_tag, cdm_cmd->cmd_arrary_count, cdm_cmd->cookie);
+
+	rc = cam_mem_get_io_buf(cdm_cmd->genirq_buff->handle, core->iommu_hdl.non_secure,
+		&hw_vaddr_ptr, &len, NULL, NULL);
+	if (rc) {
+		CAM_ERR(CAM_CDM, "Getting a hwva from mem_hdl failed. rc: %d", rc);
+		return -EINVAL;
+	}
+
+	node = CAM_MEM_ZALLOC(sizeof(struct cam_cdm_bl_cb_request_entry),
 			GFP_KERNEL);
 	if (!node) {
-		rc = -ENOMEM;
-		goto end;
+		CAM_ERR(CAM_CDM, "Failed while getting memory for the Node");
+		return -ENOMEM;
 	}
 
 	if (core->offsets->reg_data->num_bl_fifo > 1)
@@ -833,105 +888,127 @@ int cam_hw_cdm_submit_gen_irq(
 
 	node->request_type = CAM_HW_CDM_BL_CB_CLIENT;
 	node->client_hdl = req->handle;
-	node->cookie = req->data->cookie;
+	node->cookie = cdm_cmd->cookie;
 	node->bl_tag = core->bl_fifo[fifo_idx].bl_tag;
-	node->userdata = req->data->userdata;
+	node->userdata = cdm_cmd->userdata;
 	list_add_tail(&node->entry, &core->bl_fifo[fifo_idx].bl_request_list);
-	len = core->ops->cdm_required_size_genirq() *
-		core->bl_fifo[fifo_idx].bl_tag;
+
 	core->ops->cdm_write_genirq(
-		((uint32_t *)core->gen_irq[fifo_idx].kmdvaddr + len),
-		core->bl_fifo[fifo_idx].bl_tag,
-		bit_wr_enable, fifo_idx);
+		cdm_cmd->genirq_buff->cpu_addr + (cdm_cmd->genirq_buff->used_bytes / 4),
+		core->bl_fifo[fifo_idx].bl_tag, bit_wr_enable, fifo_idx);
 	rc = cam_hw_cdm_bl_write(cdm_hw,
-		(core->gen_irq[fifo_idx].vaddr + (4*len)),
-		((4 * core->ops->cdm_required_size_genirq()) - 1),
-		core->bl_fifo[fifo_idx].bl_tag,
-		set_arb, fifo_idx);
+		(uint32_t)(hw_vaddr_ptr + cdm_cmd->genirq_buff->offset),
+		genirq_cmd_size - 1,
+		core->bl_fifo[fifo_idx].bl_tag, cdm_cmd->gen_irq_arb, fifo_idx);
 	if (rc) {
 		CAM_ERR(CAM_CDM, "CDM hw bl write failed for gen irq bltag=%d",
 			core->bl_fifo[fifo_idx].bl_tag);
 		list_del_init(&node->entry);
-		kfree(node);
+		CAM_MEM_FREE(node);
 		node = NULL;
-		rc = -EIO;
-		goto end;
+		return -EIO;
 	}
+
+	CAM_DBG(CAM_CDM, "GenIRQ BL: First Word: 0x%llx Second Word: 0x%llx",
+		*(cdm_cmd->genirq_buff->cpu_addr + (cdm_cmd->genirq_buff->used_bytes / 4)),
+		*(cdm_cmd->genirq_buff->cpu_addr + (cdm_cmd->genirq_buff->used_bytes / 4) + 1));
+
+	cdm_cmd->genirq_buff->used_bytes += genirq_cmd_size;
+	cdm_cmd->genirq_buff->offset += genirq_cmd_size;
 
 	if (cam_presil_mode_enabled()) {
 		CAM_DBG(CAM_PRESIL,
 			"Sending CDM gen irq cmd buffer:%d with iommu_hdl:%d",
-			core->gen_irq[fifo_idx].handle, core->iommu_hdl.non_secure);
+			cdm_cmd->genirq_buff->handle, core->iommu_hdl.non_secure);
 
 		rc = cam_mem_mgr_send_buffer_to_presil(core->iommu_hdl.non_secure,
-			core->gen_irq[fifo_idx].handle);
+			cdm_cmd->genirq_buff->handle);
 		if (rc) {
 			CAM_ERR(CAM_PRESIL,
 				"Failed to send CDM gen irq cmd buffer fifo_idx:%d mem_handle:%d rc:%d",
-				fifo_idx, core->gen_irq[fifo_idx].handle, rc);
-			goto end;
+				fifo_idx, cdm_cmd->genirq_buff->handle, rc);
+			return rc;
 		}
 	}
 
 	if (cam_hw_cdm_commit_bl_write(cdm_hw, fifo_idx)) {
 		CAM_ERR(CAM_CDM,
-			"Cannot commit the genirq BL with tag tag=%d",
+			"Cannot commit the genirq BL with Tag: %d",
 			core->bl_fifo[fifo_idx].bl_tag);
 		list_del_init(&node->entry);
-		kfree(node);
+		CAM_MEM_FREE(node);
 		node = NULL;
 		rc = -EIO;
 	}
 
-	trace_cam_log_event("CDM_START", "CDM_START_IRQ", req->data->cookie, 0);
+	trace_cam_log_event("CDM_START", "CDM_START_IRQ", cdm_cmd->cookie, 0);
 
-end:
 	return rc;
 }
 
 int cam_hw_cdm_submit_debug_gen_irq(
 	struct cam_hw_info *cdm_hw,
+	struct cam_cdm_hw_intf_cmd_submit_bl *req,
 	uint32_t            fifo_idx)
 {
 	struct cam_cdm *core = (struct cam_cdm *)cdm_hw->core_info;
-	uint32_t len;
+	struct cam_cdm_bl_request *cdm_cmd = req->data;
+	dma_addr_t hw_vaddr_ptr = 0;
 	int rc;
 	bool bit_wr_enable = false;
+	size_t len, genirq_cmd_size;
 
-	CAM_DBG(CAM_CDM,
-		"CDM write BL last cmd tag=0x%x",
-		core->bl_fifo[fifo_idx].bl_tag);
+	genirq_cmd_size = 4 * core->ops->cdm_required_size_genirq();
+
+	if (core->bl_fifo[fifo_idx].bl_tag > (core->bl_fifo[fifo_idx].bl_depth - 1)) {
+		CAM_ERR(CAM_CDM, "Invalid BL Tag: %d, BL Depth: %d Fifo_idx: %d",
+			core->bl_fifo[fifo_idx].bl_tag,
+			core->bl_fifo[fifo_idx].bl_depth,
+			fifo_idx);
+		return -EINVAL;
+	}
+
+	if ((cdm_cmd->genirq_buff->size - cdm_cmd->genirq_buff->used_bytes) < genirq_cmd_size) {
+		CAM_ERR(CAM_CDM, "Insufficient memory for GenIRQ Command");
+		return -ENOMEM;
+	}
+
+	CAM_DBG(CAM_CDM, "Last Tag: 0x%x Total BLs: %d, Cookie: %d",
+		core->bl_fifo[fifo_idx].bl_tag, cdm_cmd->cmd_arrary_count, cdm_cmd->cookie);
+
+	rc = cam_mem_get_io_buf(cdm_cmd->genirq_buff->handle, core->iommu_hdl.non_secure,
+		&hw_vaddr_ptr, &len, NULL, NULL);
+	if (rc) {
+		CAM_ERR(CAM_CDM, "Getting a hwva from mem_hdl failed. rc: %d", rc);
+		return -EINVAL;
+	}
 
 	if (core->offsets->reg_data->num_bl_fifo > 1)
 		bit_wr_enable = true;
 
-	len = core->ops->cdm_required_size_genirq() *
-		core->bl_fifo[fifo_idx].bl_tag;
 	core->ops->cdm_write_genirq(
-		((uint32_t *)core->gen_irq[fifo_idx].kmdvaddr + len),
+		cdm_cmd->genirq_buff->cpu_addr + (cdm_cmd->genirq_buff->used_bytes / 4),
 		CAM_CDM_DBG_GEN_IRQ_USR_DATA, bit_wr_enable, fifo_idx);
 	rc = cam_hw_cdm_bl_write(cdm_hw,
-		(core->gen_irq[fifo_idx].vaddr + (4*len)),
-		((4 * core->ops->cdm_required_size_genirq()) - 1),
+		(uint32_t)(hw_vaddr_ptr + cdm_cmd->genirq_buff->offset),
+		genirq_cmd_size - 1,
 		core->bl_fifo[fifo_idx].bl_tag,
 		false, fifo_idx);
 	if (rc) {
-		CAM_ERR(CAM_CDM,
-			"CDM hw bl write failed for dbggenirq USRdata=%d tag 0x%x",
-			CAM_CDM_DBG_GEN_IRQ_USR_DATA,
-			core->bl_fifo[fifo_idx].bl_tag);
-		rc = -EIO;
-		goto end;
-	}
-	if (cam_hw_cdm_commit_bl_write(cdm_hw, fifo_idx)) {
-		CAM_ERR(CAM_CDM,
-			"Cannot commit the dbggenirq BL with tag tag=0x%x",
-			core->bl_fifo[fifo_idx].bl_tag);
-		rc = -EIO;
-		goto end;
+		CAM_ERR(CAM_CDM, "CDM hw bl write failed for Debug GenIRQ USRdata: %d, Tag: 0x%x",
+			CAM_CDM_DBG_GEN_IRQ_USR_DATA, core->bl_fifo[fifo_idx].bl_tag);
+		return -EIO;
 	}
 
-end:
+	cdm_cmd->genirq_buff->used_bytes += genirq_cmd_size;
+	cdm_cmd->genirq_buff->offset += genirq_cmd_size;
+
+	if (cam_hw_cdm_commit_bl_write(cdm_hw, fifo_idx)) {
+		CAM_ERR(CAM_CDM, "Cannot commit the Debug GenIRQ BL with Tag: 0x%x",
+			core->bl_fifo[fifo_idx].bl_tag);
+		return -EIO;
+	}
+
 	return rc;
 }
 
@@ -958,6 +1035,13 @@ int cam_hw_cdm_submit_bl(struct cam_hw_info *cdm_hw,
 		goto end;
 	}
 
+	if ((cdm_cmd->genirq_buff->size - cdm_cmd->genirq_buff->used_bytes) <
+		(core->ops->cdm_required_size_genirq() * 4)) {
+		CAM_ERR(CAM_CDM, "Insufficient memory for GenIRQ Command");
+		rc = -ENOMEM;
+		goto end;
+	}
+
 	bl_fifo = &core->bl_fifo[fifo_idx];
 
 	if (req->data->cmd_arrary_count > bl_fifo->bl_depth) {
@@ -970,8 +1054,12 @@ int cam_hw_cdm_submit_bl(struct cam_hw_info *cdm_hw,
 	mutex_lock(&core->bl_fifo[fifo_idx].fifo_lock);
 	mutex_lock(&client->lock);
 
+	/*
+	 * Check PF status bit to avoid submiting commands to CDM
+	 */
 	if (test_bit(CAM_CDM_ERROR_HW_STATUS, &core->cdm_status) ||
-			test_bit(CAM_CDM_RESET_HW_STATUS, &core->cdm_status)) {
+			test_bit(CAM_CDM_RESET_HW_STATUS, &core->cdm_status) ||
+			test_bit(CAM_CDM_PF_HW_STATUS, &core->cdm_status)) {
 		mutex_unlock(&client->lock);
 		mutex_unlock(&core->bl_fifo[fifo_idx].fifo_lock);
 		return -EAGAIN;
@@ -982,7 +1070,7 @@ int cam_hw_cdm_submit_bl(struct cam_hw_info *cdm_hw,
 		size_t len = 0;
 
 		if ((!cdm_cmd->cmd_flex[i].len) ||
-			(cdm_cmd->cmd_flex[i].len > CAM_CDM_MAX_BL_LENGTH)) {
+				(cdm_cmd->cmd_flex[i].len > CAM_CDM_MAX_BL_LENGTH)) {
 			CAM_ERR(CAM_CDM,
 				"cmd len=: %d is invalid_ent: %d, num_cmd_ent: %d",
 				cdm_cmd->cmd_flex[i].len, i,
@@ -990,11 +1078,16 @@ int cam_hw_cdm_submit_bl(struct cam_hw_info *cdm_hw,
 			rc = -EINVAL;
 			break;
 		}
+
+		/*
+		 * While commands submission is ongoing, if error/reset/PF occurs, prevent
+		 * further command submission.
+		 */
 		if (test_bit(CAM_CDM_ERROR_HW_STATUS, &core->cdm_status) ||
-				test_bit(CAM_CDM_RESET_HW_STATUS,
-					&core->cdm_status)) {
+				test_bit(CAM_CDM_RESET_HW_STATUS, &core->cdm_status) ||
+				test_bit(CAM_CDM_PF_HW_STATUS, &core->cdm_status)) {
 			CAM_ERR_RATE_LIMIT(CAM_CDM,
-				"In error/reset state cnt=%d total cnt=%d cdm_status 0x%x",
+				"In error/reset/PF state cnt=%d total cnt=%d cdm_status 0x%x",
 				i, req->data->cmd_arrary_count,
 				core->cdm_status);
 			rc = -EAGAIN;
@@ -1014,7 +1107,7 @@ int cam_hw_cdm_submit_bl(struct cam_hw_info *cdm_hw,
 		if (req->data->type == CAM_CDM_BL_CMD_TYPE_MEM_HANDLE) {
 			rc = cam_mem_get_io_buf(cdm_cmd->cmd_flex[i].bl_addr.mem_handle,
 				core->iommu_hdl.non_secure, &hw_vaddr_ptr,
-				&len, NULL);
+				&len, NULL, NULL);
 			if (rc) {
 				CAM_ERR(CAM_CDM,
 					"Getting a hwva from mem_hdl failed. rc: %d, cmd_ent: %u",
@@ -1029,7 +1122,6 @@ int cam_hw_cdm_submit_bl(struct cam_hw_info *cdm_hw,
 				break;
 			}
 
-			rc = 0;
 			hw_vaddr_ptr = (dma_addr_t)cdm_cmd->cmd_flex[i].bl_addr.hw_iova;
 			len = cdm_cmd->cmd_flex[i].len + cdm_cmd->cmd_flex[i].offset;
 		} else {
@@ -1093,7 +1185,7 @@ int cam_hw_cdm_submit_bl(struct cam_hw_info *cdm_hw,
 					}
 				}
 
-				rc = cam_hw_cdm_submit_debug_gen_irq(cdm_hw, fifo_idx);
+				rc = cam_hw_cdm_submit_debug_gen_irq(cdm_hw, req, fifo_idx);
 				if (!rc) {
 					CAM_DBG(CAM_CDM,
 						"Commit success for Dbg_GenIRQ_BL, Tag: %d",
@@ -1127,21 +1219,21 @@ int cam_hw_cdm_submit_bl(struct cam_hw_info *cdm_hw,
 				else
 					cdm_cmd->gen_irq_arb = false;
 
-				rc = cam_hw_cdm_submit_gen_irq(cdm_hw, req, fifo_idx,
-					cdm_cmd->gen_irq_arb);
+				rc = cam_hw_cdm_submit_gen_irq(cdm_hw, req, fifo_idx);
 				if (!rc) {
 					CAM_DBG(CAM_CDM, "Commit success for GenIRQ_BL, Tag: %d",
 						core->bl_fifo[fifo_idx].bl_tag);
 					core->bl_fifo[fifo_idx].bl_tag++;
 					core->bl_fifo[fifo_idx].bl_tag %= (bl_fifo->bl_depth - 1);
 				}
+			} else if (!req->data->flag && (i == (req->data->cmd_arrary_count - 1))) {
+				core->bl_fifo[fifo_idx].last_bl_tag_done = -1;
 			}
 		} else {
 			CAM_ERR(CAM_CDM,
 				"Sanity check failed for cdm_cmd: %d, Hdl: 0x%x, len: %zu, offset: 0x%x, num_cmds: %d",
 				i, cdm_cmd->cmd_flex[i].bl_addr.mem_handle, len,
-				cdm_cmd->cmd_flex[i].offset,
-				req->data->cmd_arrary_count);
+				cdm_cmd->cmd_flex[i].offset, req->data->cmd_arrary_count);
 			rc = -EINVAL;
 			break;
 		}
@@ -1198,7 +1290,7 @@ static void cam_hw_cdm_reset_cleanup(
 						(void *)node);
 			}
 			list_del_init(&node->entry);
-			kfree(node);
+			CAM_MEM_FREE(node);
 			node = NULL;
 		}
 		core->bl_fifo[i].bl_tag = 0;
@@ -1229,13 +1321,13 @@ static void cam_hw_cdm_work(struct work_struct *work)
 		(!core->bl_fifo[fifo_idx].bl_depth)) {
 		CAM_ERR(CAM_CDM, "Invalid fifo idx %d",
 			fifo_idx);
-		kfree(payload);
+		CAM_MEM_FREE(payload);
 		payload = NULL;
 		return;
 	}
 
 	cam_common_util_thread_switch_delay_detect(
-		"CDM workq schedule",
+		"cam_cdm_workq", "schedule", cam_hw_cdm_work,
 		payload->workq_scheduled_ts,
 		CAM_WORKQ_SCHEDULE_TIME_THRESHOLD);
 
@@ -1243,15 +1335,13 @@ static void cam_hw_cdm_work(struct work_struct *work)
 	if (payload->irq_status &
 		CAM_CDM_IRQ_STATUS_INLINE_IRQ_MASK) {
 		CAM_DBG(CAM_CDM, "inline IRQ data=0x%x last tag: 0x%x",
-			payload->irq_data,
-			core->bl_fifo[payload->fifo_idx]
-				.last_bl_tag_done);
+			payload->irq_data, core->bl_fifo[payload->fifo_idx].last_bl_tag_done);
 
 		if (payload->irq_data == 0xff) {
 			CAM_INFO(CAM_CDM, "%s%u Debug genirq received",
 				cdm_hw->soc_info.label_name,
 				cdm_hw->soc_info.index);
-			kfree(payload);
+			CAM_MEM_FREE(payload);
 			payload = NULL;
 			return;
 		}
@@ -1262,53 +1352,44 @@ static void cam_hw_cdm_work(struct work_struct *work)
 		if (atomic_read(&core->bl_fifo[fifo_idx].work_record))
 			atomic_dec(&core->bl_fifo[fifo_idx].work_record);
 
-		if (list_empty(&core->bl_fifo[fifo_idx]
-				.bl_request_list)) {
-			CAM_INFO(CAM_CDM,
-				"Fifo list empty, idx %d tag %d arb %d",
-				fifo_idx, payload->irq_data,
-				core->arbitration);
-			mutex_unlock(&core->bl_fifo[fifo_idx]
-					.fifo_lock);
+		if (list_empty(&core->bl_fifo[fifo_idx].bl_request_list)) {
+			CAM_INFO(CAM_CDM, "Fifo list empty, idx %d tag %d arb %d",
+				fifo_idx, payload->irq_data, core->arbitration);
+			mutex_unlock(&core->bl_fifo[fifo_idx].fifo_lock);
 			mutex_unlock(&cdm_hw->hw_mutex);
+			CAM_MEM_FREE(payload);
+			payload = NULL;
 			return;
 		}
 
-		if (core->bl_fifo[fifo_idx].last_bl_tag_done !=
-			payload->irq_data) {
-			core->bl_fifo[fifo_idx].last_bl_tag_done =
-				payload->irq_data;
+		if (core->bl_fifo[fifo_idx].last_bl_tag_done != payload->irq_data) {
+			core->bl_fifo[fifo_idx].last_bl_tag_done = payload->irq_data;
 			list_for_each_entry_safe(node, tnode,
-				&core->bl_fifo[fifo_idx].bl_request_list,
-				entry) {
-				if (node->request_type ==
-					CAM_HW_CDM_BL_CB_CLIENT) {
+				&core->bl_fifo[fifo_idx].bl_request_list, entry) {
+				if (node->request_type == CAM_HW_CDM_BL_CB_CLIENT) {
 					cam_cdm_notify_clients(cdm_hw,
-					CAM_CDM_CB_STATUS_BL_SUCCESS,
-					(void *)node);
-				} else if (node->request_type ==
-					CAM_HW_CDM_BL_CB_INTERNAL) {
-					CAM_ERR(CAM_CDM,
-						"Invalid node=%pK %d",
-						node,
-						node->request_type);
+						CAM_CDM_CB_STATUS_BL_SUCCESS, (void *)node);
+				} else if (node->request_type == CAM_HW_CDM_BL_CB_INTERNAL) {
+					CAM_ERR(CAM_CDM, "Invalid node=%pK %d",
+						node, node->request_type);
 				}
+
 				list_del_init(&node->entry);
 				if (node->bl_tag == payload->irq_data) {
-					kfree(node);
+					CAM_MEM_FREE(node);
 					node = NULL;
 					break;
 				}
-				kfree(node);
+
+				CAM_MEM_FREE(node);
 				node = NULL;
 			}
 		} else {
-			CAM_INFO(CAM_CDM,
-				"Skip GenIRQ, tag 0x%x fifo %d",
+			CAM_INFO(CAM_CDM, "Skip GenIRQ, tag 0x%x fifo %d",
 				payload->irq_data, payload->fifo_idx);
 		}
-		mutex_unlock(&core->bl_fifo[payload->fifo_idx]
-			.fifo_lock);
+
+		mutex_unlock(&core->bl_fifo[payload->fifo_idx].fifo_lock);
 		mutex_unlock(&cdm_hw->hw_mutex);
 	}
 
@@ -1316,18 +1397,15 @@ static void cam_hw_cdm_work(struct work_struct *work)
 		CAM_CDM_IRQ_STATUS_BL_DONE_MASK) {
 		if (test_bit(payload->fifo_idx, &core->cdm_status)) {
 			CAM_DBG(CAM_CDM, "%s%u HW BL done IRQ",
-				cdm_hw->soc_info.label_name,
-				cdm_hw->soc_info.index);
-			complete(&core->bl_fifo[payload->fifo_idx]
-				.bl_complete);
+				cdm_hw->soc_info.label_name, cdm_hw->soc_info.index);
+			complete(&core->bl_fifo[payload->fifo_idx].bl_complete);
 		}
 	}
 	if (payload->irq_status &
 		CAM_CDM_IRQ_STATUS_ERRORS) {
 		int reset_hw_hdl = 0x0;
 
-		CAM_ERR_RATE_LIMIT(CAM_CDM,
-			"%s%u Error IRQ status %d\n",
+		CAM_ERR_RATE_LIMIT(CAM_CDM, "%s%u Error IRQ status %d\n",
 			cdm_hw->soc_info.label_name,
 			cdm_hw->soc_info.index, payload->irq_status);
 		set_bit(CAM_CDM_ERROR_HW_STATUS, &core->cdm_status);
@@ -1356,7 +1434,7 @@ static void cam_hw_cdm_work(struct work_struct *work)
 						node->request_type);
 				}
 				list_del_init(&node->entry);
-				kfree(node);
+				CAM_MEM_FREE(node);
 			}
 		}
 
@@ -1373,7 +1451,8 @@ static void cam_hw_cdm_work(struct work_struct *work)
 			clear_bit(CAM_CDM_ERROR_HW_STATUS,
 				&core->cdm_status);
 	}
-	kfree(payload);
+
+	CAM_MEM_FREE(payload);
 	payload = NULL;
 
 }
@@ -1383,7 +1462,7 @@ static void cam_hw_cdm_iommu_fault_handler(struct cam_smmu_pf_info *pf_info)
 	struct cam_hw_info *cdm_hw = NULL;
 	struct cam_cdm *core = NULL;
 	struct cam_cdm_private_dt_data *pvt_data;
-	int i;
+	int i, rc;
 
 	if (!pf_info) {
 		CAM_ERR(CAM_CDM, "pf_info is null");
@@ -1398,30 +1477,41 @@ static void cam_hw_cdm_iommu_fault_handler(struct cam_smmu_pf_info *pf_info)
 			(void *)pf_info->iova);
 
 		/* Check if the PID and MID are valid, if not handle the pf */
-		if ((pvt_data->pid >= 0) && (pvt_data->mid >= 0)) {
-			if (((pf_info->pid == pvt_data->pid) && (pf_info->mid == pvt_data->mid)))
-				goto handle_cdm_pf;
-			else
-				return;
-		}
+		if (((pf_info->pid == pvt_data->pid) && (pf_info->mid == pvt_data->mid)))
+			goto handle_cdm_pf;
+		else
+			return;
 
 handle_cdm_pf:
-		set_bit(CAM_CDM_ERROR_HW_STATUS, &core->cdm_status);
+
+		CAM_ERR(CAM_CDM, "Page Fault on %s%u, flags: %u, status: %llu",
+			core->name, core->id, core->flags, core->cdm_status);
+		set_bit(CAM_CDM_PF_HW_STATUS, &core->cdm_status);
 		mutex_lock(&cdm_hw->hw_mutex);
+		/* Pausing CDM HW from doing any further memory transactions */
+		cam_hw_cdm_pause_core(cdm_hw, true);
+
 		for (i = 0; i < core->offsets->reg_data->num_bl_fifo; i++)
 			mutex_lock(&core->bl_fifo[i].fifo_lock);
+
 		if (cdm_hw->hw_state == CAM_HW_STATE_POWER_UP) {
 			cam_hw_cdm_dump_core_debug_registers(cdm_hw, true);
 		} else
 			CAM_INFO(CAM_CDM, "%s%u hw is power in off state",
 				cdm_hw->soc_info.label_name,
 				cdm_hw->soc_info.index);
+
 		for (i = 0; i < core->offsets->reg_data->num_bl_fifo; i++)
 			mutex_unlock(&core->bl_fifo[i].fifo_lock);
-		cam_cdm_notify_clients(cdm_hw, CAM_CDM_CB_STATUS_PAGEFAULT,
-			(void *)pf_info->iova);
+
+		/* Notify clients to handle PF event */
+		cam_cdm_notify_clients(cdm_hw, CAM_CDM_CB_STATUS_PAGEFAULT, (void *)pf_info);
+		/* Stream off CDM completely */
+		rc = cam_cdm_pf_stream_off_all_clients(cdm_hw);
+		if (rc)
+			CAM_ERR(CAM_CDM, "Stream off failed for %s%u rc: %d",
+				core->name, core->id, rc);
 		mutex_unlock(&cdm_hw->hw_mutex);
-		clear_bit(CAM_CDM_ERROR_HW_STATUS, &core->cdm_status);
 	} else {
 		CAM_ERR(CAM_CDM, "Invalid token");
 	}
@@ -1499,7 +1589,7 @@ irqreturn_t cam_hw_cdm_irq(int irq_num, void *data)
 			continue;
 		}
 
-		payload[i] = kzalloc(sizeof(struct cam_cdm_work_payload),
+		payload[i] = CAM_MEM_ZALLOC(sizeof(struct cam_cdm_work_payload),
 			GFP_ATOMIC);
 
 		if (!payload[i]) {
@@ -1514,8 +1604,7 @@ irqreturn_t cam_hw_cdm_irq(int irq_num, void *data)
 			payload[i]->irq_data = (user_data >> (i * 0x8)) &
 				CAM_CDM_IRQ_STATUS_USR_DATA_MASK;
 
-			if (payload[i]->irq_data ==
-				CAM_CDM_DBG_GEN_IRQ_USR_DATA)
+			if (payload[i]->irq_data == CAM_CDM_DBG_GEN_IRQ_USR_DATA)
 				CAM_INFO(CAM_CDM, "Debug gen_irq received");
 
 			atomic_inc(&cdm_core->bl_fifo[i].work_record);
@@ -1541,7 +1630,7 @@ irqreturn_t cam_hw_cdm_irq(int irq_num, void *data)
 			CAM_ERR(CAM_CDM, "Failed to Write %s%u HW IRQ Clear",
 				soc_info->label_name,
 				soc_info->index);
-			kfree(payload[i]);
+			CAM_MEM_FREE(payload[i]);
 			return IRQ_HANDLED;
 		}
 
@@ -1555,7 +1644,7 @@ irqreturn_t cam_hw_cdm_irq(int irq_num, void *data)
 			CAM_ERR(CAM_CDM,
 				"Failed to queue work for FIFO: %d irq=0x%x",
 				i, payload[i]->irq_status);
-			kfree(payload[i]);
+			CAM_MEM_FREE(payload[i]);
 			payload[i] = NULL;
 		}
 	}
@@ -1575,71 +1664,6 @@ irqreturn_t cam_hw_cdm_irq(int irq_num, void *data)
 	return IRQ_HANDLED;
 }
 
-int cam_hw_cdm_alloc_genirq_mem(void *hw_priv)
-{
-	struct cam_hw_info *cdm_hw = hw_priv;
-	struct cam_mem_mgr_request_desc genirq_alloc_cmd;
-	struct cam_mem_mgr_memory_desc genirq_alloc_out;
-	struct cam_cdm *cdm_core = NULL;
-	int rc = -EINVAL, i;
-
-	if (!hw_priv)
-		return rc;
-
-	cdm_core = (struct cam_cdm *)cdm_hw->core_info;
-	genirq_alloc_cmd.align = 0;
-	genirq_alloc_cmd.smmu_hdl = cdm_core->iommu_hdl.non_secure;
-	genirq_alloc_cmd.flags = CAM_MEM_FLAG_HW_READ_WRITE;
-	for (i = 0; i < cdm_core->offsets->reg_data->num_bl_fifo; i++) {
-		if (!cdm_core->bl_fifo[i].bl_depth)
-			continue;
-
-		genirq_alloc_cmd.size = (8 *
-				cdm_core->bl_fifo[i].bl_depth);
-		rc = cam_mem_mgr_request_mem(&genirq_alloc_cmd,
-				&genirq_alloc_out);
-		if (rc) {
-			CAM_ERR(CAM_CDM,
-				"Failed to get genirq cmd space rc=%d",
-				rc);
-			goto end;
-		}
-		cdm_core->gen_irq[i].handle = genirq_alloc_out.mem_handle;
-		cdm_core->gen_irq[i].vaddr = (genirq_alloc_out.iova &
-			0xFFFFFFFF);
-		cdm_core->gen_irq[i].kmdvaddr = genirq_alloc_out.kva;
-		cdm_core->gen_irq[i].size = genirq_alloc_out.len;
-	}
-end:
-	return rc;
-}
-
-int cam_hw_cdm_release_genirq_mem(void *hw_priv)
-{
-	struct cam_hw_info *cdm_hw = hw_priv;
-	struct cam_cdm *cdm_core = NULL;
-	struct cam_mem_mgr_memory_desc genirq_release_cmd;
-	int rc = -EINVAL, i;
-
-	if (!hw_priv)
-		return rc;
-
-	cdm_core = (struct cam_cdm *)cdm_hw->core_info;
-	for (i = 0; i < cdm_core->offsets->reg_data->num_bl_fifo; i++) {
-		if (!cdm_core->bl_fifo[i].bl_depth)
-			continue;
-
-		genirq_release_cmd.mem_handle = cdm_core->gen_irq[i].handle;
-		rc = cam_mem_mgr_release_mem(&genirq_release_cmd);
-		if (rc)
-			CAM_ERR(CAM_CDM,
-				"Failed to put genirq cmd space for hw rc %d",
-				rc);
-	}
-
-	return rc;
-}
-
 int cam_hw_cdm_reset_hw(struct cam_hw_info *cdm_hw, uint32_t handle)
 {
 	struct cam_cdm *cdm_core = NULL;
@@ -1657,45 +1681,29 @@ int cam_hw_cdm_reset_hw(struct cam_hw_info *cdm_hw, uint32_t handle)
 
 	reinit_completion(&cdm_core->reset_complete);
 
-	/* First pause CDM, If it fails still proceed to reset CDM HW */
 	cam_hw_cdm_pause_core(cdm_hw, true);
-	usleep_range(1000, 1010);
 
-	for (i = 0; i < cdm_core->offsets->reg_data->num_bl_fifo; i++) {
-		if (!cdm_core->bl_fifo[i].bl_depth)
-			continue;
-
-		reset_val = reset_val |
-			(1 << (i + CAM_CDM_BL_FIFO_FLUSH_SHIFT));
-		if (cam_cdm_write_hw_reg(cdm_hw,
-				cdm_core->offsets->irq_reg[i]->irq_mask,
-				0x70003)) {
-			CAM_ERR(CAM_CDM, "Failed to Write %s%u HW IRQ mask",
-				soc_info->label_name,
-				soc_info->index);
-			goto end;
-		}
-	}
-
-	if (cam_cdm_write_hw_reg(cdm_hw,
-			cdm_core->offsets->cmn_reg->rst_cmd, reset_val)) {
+	if (cam_cdm_write_hw_reg(cdm_hw, cdm_core->offsets->cmn_reg->rst_cmd, reset_val)) {
 		CAM_ERR(CAM_CDM, "Failed to Write %s%u HW reset",
 			soc_info->label_name,
 			soc_info->index);
 		goto end;
 	}
 
-	CAM_DBG(CAM_CDM, "Waiting for %s%u HW reset done",
-		soc_info->label_name, soc_info->index);
+	CAM_DBG(CAM_CDM, "Waiting for %s%u HW reset done", soc_info->label_name, soc_info->index);
 	time_left = cam_common_wait_for_completion_timeout(
 			&cdm_core->reset_complete,
 			msecs_to_jiffies(CAM_CDM_HW_RESET_TIMEOUT));
 
 	if (time_left <= 0) {
 		rc = -ETIMEDOUT;
+
 		CAM_ERR(CAM_CDM, "%s%u HW reset Wait failed rc=%d",
 			soc_info->label_name,
 			soc_info->index, rc);
+
+		cam_hw_cdm_dump_core_debug_registers(cdm_hw, false);
+		cam_hw_cdm_pause_core(cdm_hw, false);
 		goto end;
 	}
 
@@ -1750,7 +1758,6 @@ int cam_hw_cdm_handle_error_info(
 		goto end;
 	}
 
-	/* First pause CDM, If it fails still proceed to dump debug info */
 	cam_hw_cdm_pause_core(cdm_hw, true);
 
 	rc = cam_cdm_read_hw_reg(cdm_hw,
@@ -1833,7 +1840,7 @@ int cam_hw_cdm_handle_error_info(
 					node->request_type);
 		}
 		list_del_init(&node->entry);
-		kfree(node);
+		CAM_MEM_FREE(node);
 		node = NULL;
 	}
 
@@ -1858,20 +1865,6 @@ int cam_hw_cdm_flush_hw(struct cam_hw_info *cdm_hw, uint32_t handle)
 	set_bit(CAM_CDM_FLUSH_HW_STATUS, &cdm_core->cdm_status);
 	rc = cam_hw_cdm_reset_hw(cdm_hw, handle);
 	clear_bit(CAM_CDM_FLUSH_HW_STATUS, &cdm_core->cdm_status);
-
-	return rc;
-}
-
-int cam_hw_cdm_handle_error(
-	struct cam_hw_info *cdm_hw,
-	uint32_t            handle)
-{
-	struct cam_cdm *cdm_core = NULL;
-	int rc = 0;
-
-	cdm_core = (struct cam_cdm *)cdm_hw->core_info;
-
-	rc = cam_hw_cdm_handle_error_info(cdm_hw, handle);
 
 	return rc;
 }
@@ -1904,39 +1897,58 @@ int cam_hw_cdm_get_cdm_config(struct cam_hw_info *cdm_hw)
 {
 	struct cam_hw_soc_info *soc_info = NULL;
 	struct cam_cdm *core = NULL;
-	int rc = 0;
+	int rc = 0, ret = 0;
 
 	core = (struct cam_cdm *)cdm_hw->core_info;
 	soc_info = &cdm_hw->soc_info;
-	rc = cam_soc_util_enable_platform_resource(soc_info, true,
-			CAM_SVS_VOTE, true);
-	if (rc) {
-		CAM_ERR(CAM_CDM, "Enable platform failed for dev %s",
+
+	if (!cam_vmrm_no_register_read_on_bind()) {
+		rc = cam_soc_util_enable_platform_resource(soc_info, CAM_CLK_SW_CLIENT_IDX, true,
+			soc_info->lowest_clk_level, true);
+		if (rc) {
+			CAM_ERR(CAM_CDM, "Enable platform failed for dev %s",
 				soc_info->dev_name);
-		goto end;
-	} else {
-		CAM_DBG(CAM_CDM, "%s%u init success",
-			soc_info->label_name, soc_info->index);
-		cdm_hw->hw_state = CAM_HW_STATE_POWER_UP;
-	}
+			goto end;
+		} else {
+			CAM_DBG(CAM_CDM, "%s%u init success",
+				soc_info->label_name, soc_info->index);
+			cdm_hw->hw_state = CAM_HW_STATE_POWER_UP;
+		}
 
-	if (cam_cdm_read_hw_reg(cdm_hw,
-			core->offsets->cmn_reg->cdm_hw_version,
-			&core->hw_version)) {
-		CAM_ERR(CAM_CDM, "Failed to read HW Version for %s%u",
-			soc_info->label_name, soc_info->index);
-		rc = -EIO;
-		goto disable_platform_resource;
-	}
-
-	if (core->offsets->cmn_reg->cam_version) {
 		if (cam_cdm_read_hw_reg(cdm_hw,
-				core->offsets->cmn_reg->cam_version->hw_version,
-				&core->hw_family_version)) {
-			CAM_ERR(CAM_CDM, "Failed to read %s%d family Version",
+			core->offsets->cmn_reg->cdm_hw_version, &core->hw_version)) {
+			CAM_ERR(CAM_CDM, "Failed to read HW Version for %s%u",
 				soc_info->label_name, soc_info->index);
 			rc = -EIO;
 			goto disable_platform_resource;
+		}
+
+		if (core->offsets->cmn_reg->cam_version) {
+			if (cam_cdm_read_hw_reg(cdm_hw,
+					core->offsets->cmn_reg->cam_version->hw_version,
+					&core->hw_family_version)) {
+				CAM_ERR(CAM_CDM, "Failed to read %s%d family Version",
+					soc_info->label_name, soc_info->index);
+				rc = -EIO;
+				goto disable_platform_resource;
+			}
+		}
+	} else {
+		/*
+		 * This is temporary workaround in TVM to avoid register read during probe/bind.
+		 */
+		rc = of_property_read_u32(soc_info->pdev->dev.of_node,
+			"override-cdm-family", &core->hw_family_version);
+		if (rc) {
+			CAM_ERR(CAM_CDM, "no cdm family");
+			return rc;
+		}
+
+		rc = of_property_read_u32(soc_info->pdev->dev.of_node,
+			"override-cdm-version", &core->hw_version);
+		if (rc) {
+			CAM_ERR(CAM_CDM, "no cdm version");
+			return rc;
 		}
 	}
 
@@ -1946,14 +1958,12 @@ int cam_hw_cdm_get_cdm_config(struct cam_hw_info *cdm_hw)
 
 		rc = of_property_read_u32(soc_info->pdev->dev.of_node,
 			"override-cdm-family", &override_family);
-		if (rc) {
+		if (rc)
 			CAM_INFO(CAM_CDM,
 				"no cdm family override,using current hw family 0x%x",
 				core->hw_family_version);
-			rc = 0;
-		} else {
+		else
 			core->hw_family_version = override_family;
-		}
 
 		rc = of_property_read_u32(soc_info->pdev->dev.of_node,
 			"override-cdm-version", &override_version);
@@ -1983,9 +1993,10 @@ int cam_hw_cdm_get_cdm_config(struct cam_hw_info *cdm_hw)
 	}
 
 disable_platform_resource:
-	rc = cam_soc_util_disable_platform_resource(soc_info, true, true);
-
-	if (rc) {
+	if (cam_vmrm_no_register_read_on_bind())
+		return rc;
+	ret = cam_soc_util_disable_platform_resource(soc_info, CAM_CLK_SW_CLIENT_IDX, true, true);
+	if (ret) {
 		CAM_ERR(CAM_CDM, "disable platform failed for dev %s",
 				soc_info->dev_name);
 	} else {
@@ -2012,8 +2023,8 @@ int cam_hw_cdm_init(void *hw_priv,
 	soc_info = &cdm_hw->soc_info;
 	cdm_core = (struct cam_cdm *)cdm_hw->core_info;
 
-	rc = cam_soc_util_enable_platform_resource(soc_info, true,
-		CAM_SVS_VOTE, true);
+	rc = cam_soc_util_enable_platform_resource(soc_info, CAM_CLK_SW_CLIENT_IDX, true,
+		soc_info->lowest_clk_level, true);
 	if (rc) {
 		CAM_ERR(CAM_CDM, "Enable platform failed for %s%d",
 			soc_info->label_name, soc_info->index);
@@ -2039,34 +2050,77 @@ int cam_hw_cdm_init(void *hw_priv,
 	}
 
 	rc = cam_hw_cdm_reset_hw(cdm_hw, reset_hw_hdl);
-
 	if (rc) {
 		CAM_ERR(CAM_CDM, "%s%u HW reset Wait failed rc=%d",
 			soc_info->label_name,
 			soc_info->index, rc);
 		goto disable_return;
-	} else {
-		CAM_DBG(CAM_CDM, "%s%u Init success",
-			soc_info->label_name, soc_info->index);
-		for (i = 0; i < cdm_core->offsets->reg_data->num_bl_fifo; i++) {
-			if (!cdm_core->bl_fifo[i].bl_depth)
-				continue;
-
-			cam_cdm_write_hw_reg(cdm_hw,
-					cdm_core->offsets->irq_reg[i]->irq_mask,
-					0x70003);
-		}
-		rc = 0;
-		goto end;
 	}
+
+	CAM_DBG(CAM_CDM, "%s%u Init success", soc_info->label_name, soc_info->index);
+	return 0;
 
 disable_return:
 	rc = -EIO;
 	flags = cam_hw_util_hw_lock_irqsave(cdm_hw);
 	cdm_hw->hw_state = CAM_HW_STATE_POWER_DOWN;
 	cam_hw_util_hw_unlock_irqrestore(cdm_hw, flags);
-	cam_soc_util_disable_platform_resource(soc_info, true, true);
+	cam_soc_util_disable_platform_resource(soc_info, CAM_CLK_SW_CLIENT_IDX, true, true);
 end:
+	return rc;
+}
+
+static inline void cam_hw_cdm_clear_bl_requests(struct cam_cdm *cdm_core)
+{
+	struct cam_cdm_bl_cb_request_entry *node, *tnode;
+	int i;
+
+	for (i = 0; i < cdm_core->offsets->reg_data->num_bl_fifo; i++) {
+		list_for_each_entry_safe(node, tnode,
+			&cdm_core->bl_fifo[i].bl_request_list, entry) {
+			list_del_init(&node->entry);
+			CAM_MEM_FREE(node);
+			node = NULL;
+		}
+	}
+}
+
+int cam_hw_cdm_pf_deinit(void *hw_priv,
+	void *init_hw_args, uint32_t arg_size)
+{
+	struct cam_hw_info *cdm_hw = hw_priv;
+	struct cam_hw_soc_info *soc_info = NULL;
+	struct cam_cdm *cdm_core = NULL;
+	int i, rc;
+	unsigned long flags = 0;
+
+	if (!hw_priv)
+		return -EINVAL;
+
+	soc_info = &cdm_hw->soc_info;
+	cdm_core = (struct cam_cdm *)cdm_hw->core_info;
+
+	for (i = 0; i < cdm_core->offsets->reg_data->num_bl_fifo; i++)
+		mutex_lock(&cdm_core->bl_fifo[i].fifo_lock);
+
+	/* clear bl request */
+	cam_hw_cdm_clear_bl_requests(cdm_core);
+
+	for (i = 0; i < cdm_core->offsets->reg_data->num_bl_fifo; i++)
+		mutex_unlock(&cdm_core->bl_fifo[i].fifo_lock);
+
+	flags = cam_hw_util_hw_lock_irqsave(cdm_hw);
+	cdm_hw->hw_state = CAM_HW_STATE_POWER_DOWN;
+	cam_hw_util_hw_unlock_irqrestore(cdm_hw, flags);
+
+	rc = cam_soc_util_disable_platform_resource(soc_info, CAM_CLK_SW_CLIENT_IDX, true, true);
+	if (rc)
+		CAM_ERR(CAM_CDM, "disable platform failed for %s%u",
+			soc_info->label_name, soc_info->index);
+	else
+		CAM_DBG(CAM_CDM, "%s%u Deinit success",
+			soc_info->label_name, soc_info->index);
+
 	return rc;
 }
 
@@ -2076,7 +2130,6 @@ int cam_hw_cdm_deinit(void *hw_priv,
 	struct cam_hw_info *cdm_hw = hw_priv;
 	struct cam_hw_soc_info *soc_info = NULL;
 	struct cam_cdm *cdm_core = NULL;
-	struct cam_cdm_bl_cb_request_entry *node, *tnode;
 	int rc = 0, i;
 	uint32_t reset_val = 1;
 	long time_left;
@@ -2092,21 +2145,12 @@ int cam_hw_cdm_deinit(void *hw_priv,
 		mutex_lock(&cdm_core->bl_fifo[i].fifo_lock);
 
 	/*clear bl request */
-	for (i = 0; i < cdm_core->offsets->reg_data->num_bl_fifo; i++) {
-		list_for_each_entry_safe(node, tnode,
-			&cdm_core->bl_fifo[i].bl_request_list, entry) {
-			list_del_init(&node->entry);
-			kfree(node);
-			node = NULL;
-		}
-	}
+	cam_hw_cdm_clear_bl_requests(cdm_core);
 
 	set_bit(CAM_CDM_RESET_HW_STATUS, &cdm_core->cdm_status);
 	reinit_completion(&cdm_core->reset_complete);
 
-	/* First pause CDM, If it fails still proceed to reset CDM HW */
 	cam_hw_cdm_pause_core(cdm_hw, true);
-	usleep_range(1000, 1010);
 
 	for (i = 0; i < cdm_core->offsets->reg_data->num_bl_fifo; i++) {
 		if (!cdm_core->bl_fifo[i].bl_depth)
@@ -2145,7 +2189,7 @@ int cam_hw_cdm_deinit(void *hw_priv,
 	flags = cam_hw_util_hw_lock_irqsave(cdm_hw);
 	cdm_hw->hw_state = CAM_HW_STATE_POWER_DOWN;
 	cam_hw_util_hw_unlock_irqrestore(cdm_hw, flags);
-	rc = cam_soc_util_disable_platform_resource(soc_info, true, true);
+	rc = cam_soc_util_disable_platform_resource(soc_info, CAM_CLK_SW_CLIENT_IDX, true, true);
 	if (rc) {
 		CAM_ERR(CAM_CDM, "disable platform failed for %s%u",
 			soc_info->label_name, soc_info->index);
@@ -2157,6 +2201,65 @@ int cam_hw_cdm_deinit(void *hw_priv,
 	return rc;
 }
 
+#ifdef CONFIG_CAM_TEST_IRQ_LINE
+static int cam_cdm_test_irq_line(void *hw_priv)
+{
+	struct cam_hw_info *cdm_hw = hw_priv;
+	struct cam_cdm *core = NULL;
+	int rc = 0;
+
+	if (!cdm_hw) {
+		CAM_ERR(CAM_CDM, "Invalid cdm hw");
+		return -EINVAL;
+	}
+
+	core = (struct cam_cdm *)cdm_hw->core_info;
+
+	rc = cam_cdm_util_cpas_start(cdm_hw);
+	if (rc) {
+		CAM_ERR(CAM_CDM, "CDM[%d] Failed in cpas start rc", core->index, rc);
+		goto done;
+	}
+
+	rc = cam_hw_cdm_init(cdm_hw, NULL, 0);
+	if (rc) {
+		CAM_ERR(CAM_CDM, "CDM[%d] Failed in cdm init rc", core->index, rc);
+		goto cpas_stop;
+	}
+
+	rc = cam_hw_cdm_deinit(cdm_hw, NULL, 0);
+	if (rc) {
+		CAM_ERR(CAM_CDM, "CDM[%d] Failed in cdm deinit rc", core->index, rc);
+		goto cpas_stop;
+	}
+
+cpas_stop:
+	rc = cam_cpas_stop(core->cpas_handle);
+	if (rc)
+		CAM_ERR(CAM_CDM, "CDM[%d] Failed in cpas stop rc", core->index, rc);
+done:
+	return rc;
+}
+#else
+static int cam_cdm_test_irq_line(void *hw_priv)
+{
+	return -EPERM;
+}
+#endif
+
+
+#if (defined(CONFIG_CAM_TEST_IRQ_LINE) && defined(CONFIG_CAM_TEST_IRQ_LINE_AT_PROBE))
+static int cam_cdm_test_irq_line_at_probe(struct cam_hw_info *cdm_hw)
+{
+	return cam_cdm_test_irq_line(cdm_hw);
+}
+#else
+static int cam_cdm_test_irq_line_at_probe(struct cam_hw_info *cdm_hw)
+{
+	return -EPERM;
+}
+#endif
+
 static int cam_hw_cdm_component_bind(struct device *dev,
 	struct device *master_dev, void *data)
 {
@@ -2166,27 +2269,29 @@ static int cam_hw_cdm_component_bind(struct device *dev,
 	struct cam_cdm *cdm_core = NULL;
 	struct cam_cdm_private_dt_data *soc_private = NULL;
 	struct cam_cpas_register_params cpas_parms;
-	struct cam_ahb_vote ahb_vote;
-	struct cam_axi_vote axi_vote = {0};
 	char cdm_name[128], work_q_name[128];
 	struct platform_device *pdev = to_platform_device(dev);
+	void *irq_data[CAM_SOC_MAX_IRQ_LINES_PER_DEV] = {0};
+	struct timespec64 ts_start, ts_end;
+	long microsec = 0;
 
-	cdm_hw_intf = kzalloc(sizeof(struct cam_hw_intf), GFP_KERNEL);
+	CAM_GET_TIMESTAMP(ts_start);
+	cdm_hw_intf = CAM_MEM_ZALLOC(sizeof(struct cam_hw_intf), GFP_KERNEL);
 	if (!cdm_hw_intf)
 		return -ENOMEM;
 
-	cdm_hw = kzalloc(sizeof(struct cam_hw_info), GFP_KERNEL);
+	cdm_hw = CAM_MEM_ZALLOC(sizeof(struct cam_hw_info), GFP_KERNEL);
 	if (!cdm_hw) {
-		kfree(cdm_hw_intf);
+		CAM_MEM_FREE(cdm_hw_intf);
 		cdm_hw_intf = NULL;
 		return -ENOMEM;
 	}
 
-	cdm_hw->core_info = kzalloc(sizeof(struct cam_cdm), GFP_KERNEL);
+	cdm_hw->core_info = CAM_MEM_ZALLOC(sizeof(struct cam_cdm), GFP_KERNEL);
 	if (!cdm_hw->core_info) {
-		kfree(cdm_hw);
+		CAM_MEM_FREE(cdm_hw);
 		cdm_hw = NULL;
-		kfree(cdm_hw_intf);
+		CAM_MEM_FREE(cdm_hw_intf);
 		cdm_hw_intf = NULL;
 		return -ENOMEM;
 	}
@@ -2235,6 +2340,7 @@ static int cam_hw_cdm_component_bind(struct device *dev,
 	cdm_hw_intf->hw_ops.read = NULL;
 	cdm_hw_intf->hw_ops.write = NULL;
 	cdm_hw_intf->hw_ops.process_cmd = cam_cdm_process_cmd;
+	cdm_hw_intf->hw_ops.test_irq_line = cam_cdm_test_irq_line;
 	mutex_lock(&cdm_hw->hw_mutex);
 
 	CAM_DBG(CAM_CDM, "type %d index %d", cdm_hw_intf->hw_type,
@@ -2267,7 +2373,7 @@ static int cam_hw_cdm_component_bind(struct device *dev,
 
 		init_completion(&cdm_core->bl_fifo[i].bl_complete);
 
-		len = strlcpy(work_q_name, cdm_hw->soc_info.label_name,
+		len = strscpy(work_q_name, cdm_hw->soc_info.label_name,
 				sizeof(work_q_name));
 		snprintf(work_q_name + len, sizeof(work_q_name) - len, "%d_%d", cdm_hw->soc_info.index, i);
 		cdm_core->bl_fifo[i].work_queue = alloc_workqueue(work_q_name,
@@ -2283,8 +2389,11 @@ static int cam_hw_cdm_component_bind(struct device *dev,
 		CAM_DBG(CAM_CDM, "wq %s", work_q_name);
 	}
 
+	for (i = 0; i < cdm_hw->soc_info.irq_count; i++)
+		irq_data[i] = cdm_hw;
+
 	rc = cam_soc_util_request_platform_resource(&cdm_hw->soc_info,
-			cam_hw_cdm_irq, cdm_hw);
+			cam_hw_cdm_irq, &(irq_data[0]));
 	if (rc) {
 		CAM_ERR(CAM_CDM,
 			"Failed to request platform resource for %s%u",
@@ -2292,11 +2401,20 @@ static int cam_hw_cdm_component_bind(struct device *dev,
 			cdm_hw->soc_info.index);
 		goto destroy_non_secure_hdl;
 	}
+
+	cdm_hw->soc_info.hw_id = CAM_HW_ID_CDM0 + cdm_hw->soc_info.index;
+	rc = cam_vmvm_populate_hw_instance_info(&cdm_hw->soc_info, NULL, NULL);
+	if (rc) {
+		CAM_ERR(CAM_CDM, " cdm %d hw instance populate failed: %d",
+			cdm_hw->soc_info.index, rc);
+		goto release_platform_resource;
+	}
+
 	cpas_parms.cam_cpas_client_cb = cam_cdm_cpas_cb;
 	cpas_parms.cell_index = cdm_hw->soc_info.index;
 	cpas_parms.dev = &pdev->dev;
 	cpas_parms.userdata = cdm_hw_intf;
-	strlcpy(cpas_parms.identifier, cdm_hw->soc_info.label_name,
+	strscpy(cpas_parms.identifier, cdm_hw->soc_info.label_name,
 		CAM_HW_IDENTIFIER_LENGTH);
 	rc = cam_cpas_register_client(&cpas_parms);
 	if (rc) {
@@ -2307,19 +2425,12 @@ static int cam_hw_cdm_component_bind(struct device *dev,
 		cpas_parms.client_handle);
 	cdm_core->cpas_handle = cpas_parms.client_handle;
 
-	ahb_vote.type = CAM_VOTE_ABSOLUTE;
-	ahb_vote.vote.level = CAM_LOWSVS_VOTE;
-	axi_vote.num_paths = 1;
-	axi_vote.axi_path[0].path_data_type = CAM_AXI_PATH_DATA_ALL;
-	axi_vote.axi_path[0].transac_type = CAM_AXI_TRANSACTION_READ;
-	axi_vote.axi_path[0].camnoc_bw = CAM_CPAS_DEFAULT_AXI_BW;
-	axi_vote.axi_path[0].mnoc_ab_bw = CAM_CPAS_DEFAULT_AXI_BW;
-	axi_vote.axi_path[0].mnoc_ib_bw = CAM_CPAS_DEFAULT_AXI_BW;
-
-	rc = cam_cpas_start(cdm_core->cpas_handle, &ahb_vote, &axi_vote);
-	if (rc) {
-		CAM_ERR(CAM_CDM, "CPAS start failed");
-		goto cpas_unregister;
+	if (!cam_vmrm_no_register_read_on_bind()) {
+		rc = cam_cdm_util_cpas_start(cdm_hw);
+		if (rc) {
+			CAM_ERR(CAM_CDM, "CPAS start failed");
+			goto cpas_unregister;
+		}
 	}
 
 	rc = cam_hw_cdm_get_cdm_config(cdm_hw);
@@ -2367,10 +2478,12 @@ static int cam_hw_cdm_component_bind(struct device *dev,
 		goto cpas_stop;
 	}
 
-	rc = cam_cpas_stop(cdm_core->cpas_handle);
-	if (rc) {
-		CAM_ERR(CAM_CDM, "CPAS stop failed");
-		goto cpas_unregister;
+	if (!cam_vmrm_no_register_read_on_bind()) {
+		rc = cam_cpas_stop(cdm_core->cpas_handle);
+		if (rc) {
+			CAM_ERR(CAM_CDM, "CPAS stop failed");
+			goto cpas_unregister;
+		}
 	}
 
 	rc = cam_cdm_intf_register_hw_cdm(cdm_hw_intf,
@@ -2379,15 +2492,22 @@ static int cam_hw_cdm_component_bind(struct device *dev,
 		CAM_ERR(CAM_CDM, "HW CDM Interface registration failed");
 		goto cpas_unregister;
 	}
+
+	cam_cdm_test_irq_line_at_probe(cdm_hw);
 	mutex_unlock(&cdm_hw->hw_mutex);
+	CAM_GET_TIMESTAMP(ts_end);
+	CAM_GET_TIMESTAMP_DIFF_IN_MICRO(ts_start, ts_end, microsec);
+	cam_record_bind_latency(pdev->name, microsec);
 
 	CAM_DBG(CAM_CDM, "%s component bound successfully", cdm_core->name);
 
 	return rc;
 
 cpas_stop:
-	if (cam_cpas_stop(cdm_core->cpas_handle))
-		CAM_ERR(CAM_CDM, "CPAS stop failed");
+	if (!cam_vmrm_no_register_read_on_bind()) {
+		if (cam_cpas_stop(cdm_core->cpas_handle))
+			CAM_ERR(CAM_CDM, "CPAS stop failed");
+	}
 cpas_unregister:
 	if (cam_cpas_unregister_client(cdm_core->cpas_handle))
 		CAM_ERR(CAM_CDM, "CPAS unregister failed");
@@ -2407,15 +2527,15 @@ destroy_non_secure_hdl:
 unlock_release_mem:
 	mutex_unlock(&cdm_hw->hw_mutex);
 release_private_mem:
-	kfree(cdm_hw->soc_info.soc_private);
+	CAM_MEM_FREE(cdm_hw->soc_info.soc_private);
 	cdm_hw->soc_info.soc_private = NULL;
 release_mem:
 	mutex_destroy(&cdm_hw->hw_mutex);
-	kfree(cdm_hw_intf);
+	CAM_MEM_FREE(cdm_hw_intf);
 	cdm_hw_intf = NULL;
-	kfree(cdm_hw->core_info);
+	CAM_MEM_FREE(cdm_hw->core_info);
 	cdm_hw->core_info = NULL;
-	kfree(cdm_hw);
+	CAM_MEM_FREE(cdm_hw);
 	cdm_hw = NULL;
 	return rc;
 }
@@ -2493,13 +2613,13 @@ static void cam_hw_cdm_component_unbind(struct device *dev,
 		CAM_ERR(CAM_CDM, "Release iommu secure hdl failed");
 
 	mutex_destroy(&cdm_hw->hw_mutex);
-	kfree(cdm_hw->soc_info.soc_private);
+	CAM_MEM_FREE(cdm_hw->soc_info.soc_private);
 	cdm_hw->soc_info.soc_private = NULL;
-	kfree(cdm_hw_intf);
+	CAM_MEM_FREE(cdm_hw_intf);
 	cdm_hw_intf = NULL;
-	kfree(cdm_hw->core_info);
+	CAM_MEM_FREE(cdm_hw->core_info);
 	cdm_hw->core_info = NULL;
-	kfree(cdm_hw);
+	CAM_MEM_FREE(cdm_hw);
 	cdm_hw = NULL;
 }
 

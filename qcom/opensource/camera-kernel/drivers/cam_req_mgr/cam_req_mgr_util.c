@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #define pr_fmt(fmt) "CAM-REQ-MGR_UTIL %s:%d " fmt, __func__, __LINE__
@@ -16,6 +16,7 @@
 #include "cam_req_mgr_util.h"
 #include "cam_debug_util.h"
 #include "cam_subdev.h"
+#include "cam_mem_mgr_api.h"
 
 static struct cam_req_mgr_util_hdl_tbl *hdl_tbl;
 static DEFINE_SPINLOCK(hdl_tbl_lock);
@@ -32,13 +33,13 @@ int cam_req_mgr_util_init(void)
 		goto hdl_tbl_check_failed;
 	}
 
-	hdl_tbl_local = kzalloc(sizeof(*hdl_tbl), GFP_KERNEL);
+	hdl_tbl_local = CAM_MEM_ZALLOC(sizeof(*hdl_tbl), GFP_KERNEL);
 	if (!hdl_tbl_local) {
 		rc = -ENOMEM;
 		goto hdl_tbl_alloc_failed;
 	}
 	bitmap_size = BITS_TO_LONGS(CAM_REQ_MGR_MAX_HANDLES_V2) * sizeof(long);
-	hdl_tbl_local->bitmap = kzalloc(bitmap_size, GFP_KERNEL);
+	hdl_tbl_local->bitmap = CAM_MEM_ZALLOC(bitmap_size, GFP_KERNEL);
 	if (!hdl_tbl_local->bitmap) {
 		rc = -ENOMEM;
 		goto bitmap_alloc_fail;
@@ -49,8 +50,8 @@ int cam_req_mgr_util_init(void)
 	if (hdl_tbl) {
 		spin_unlock_bh(&hdl_tbl_lock);
 		rc = -EEXIST;
-		kfree(hdl_tbl_local->bitmap);
-		kfree(hdl_tbl_local);
+		CAM_MEM_FREE(hdl_tbl_local->bitmap);
+		CAM_MEM_FREE(hdl_tbl_local);
 		goto hdl_tbl_check_failed;
 	}
 	hdl_tbl = hdl_tbl_local;
@@ -59,8 +60,10 @@ int cam_req_mgr_util_init(void)
 	return rc;
 
 bitmap_alloc_fail:
-	kfree(hdl_tbl_local);
+	CAM_MEM_FREE(hdl_tbl_local);
+	spin_lock_bh(&hdl_tbl_lock);
 	hdl_tbl = NULL;
+	spin_unlock_bh(&hdl_tbl_lock);
 hdl_tbl_alloc_failed:
 hdl_tbl_check_failed:
 	return rc;
@@ -75,9 +78,9 @@ int cam_req_mgr_util_deinit(void)
 		return -EINVAL;
 	}
 
-	kfree(hdl_tbl->bitmap);
+	CAM_MEM_FREE(hdl_tbl->bitmap);
 	hdl_tbl->bitmap = NULL;
-	kfree(hdl_tbl);
+	CAM_MEM_FREE(hdl_tbl);
 	hdl_tbl = NULL;
 	spin_unlock_bh(&hdl_tbl_lock);
 
@@ -110,10 +113,9 @@ int cam_handle_validate(int32_t session_hdl, int32_t handle)
 
 	if (hdl_tbl->hdl[idx].session_hdl != session_hdl ||
 		hdl_tbl->hdl[idx].hdl_value != handle) {
-		CAM_ERR(CAM_CRM, "Expected session_hdl: 0x%x, Actual Session_hdl: 0x%x",
-			hdl_tbl->hdl[idx].session_hdl, session_hdl);
-		CAM_ERR(CAM_CRM, "Expected handle: 0x%x, Actual handle: 0x%x",
-			hdl_tbl->hdl[idx].hdl_value, handle);
+		CAM_ERR(CAM_CRM, "Exp ses_hdl: 0x%x ses_hdl: 0x%x Exp hdl: 0x%x hdl: 0x%x",
+			hdl_tbl->hdl[idx].session_hdl, session_hdl, hdl_tbl->hdl[idx].hdl_value,
+			handle);
 		rc = -EINVAL;
 		goto out;
 	}
@@ -222,7 +224,6 @@ int32_t cam_create_device_hdl(struct cam_create_dev_hdl *hdl_data)
 	crm_active = cam_req_mgr_is_open();
 	if (!crm_active) {
 		CAM_ERR(CAM_ICP, "CRM is not ACTIVE");
-		spin_unlock_bh(&hdl_tbl_lock);
 		return -EINVAL;
 	}
 

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_CSIPHY_SOC_H_
@@ -32,7 +33,22 @@
 #define CSIPHY_VERSION_V201                       0x201
 #define CSIPHY_VERSION_V210                       0x210
 #define CSIPHY_VERSION_V211                       0x211
+#define CSIPHY_VERSION_V212                       0x212
 #define CSIPHY_VERSION_V213                       0x213
+#define CSIPHY_VERSION_V220                       0x220
+#define CSIPHY_VERSION_V221                       0x221
+#define CSIPHY_VERSION_V230                       0x230
+#define CSIPHY_VERSION_V240                       0x240
+#define CSIPHY_VERSION_V241                       0x241
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#define CSIPHY_VERSION_V230_DODGE_TELE           0xF231
+#define CSIPHY_VERSION_V230_DODGE_ULTRAWIDE      0xF232
+#define CSIPHY_VERSION_V230_HUMMER_MAIN          0xF234
+#define CSIPHY_VERSION_V230_PAGANI_FRONT         0xF23D
+#define CSIPHY_VERSION_V230_PAGANI_MAIN          0xF23E
+#define CSIPHY_VERSION_V230_KTM_MAIN             0xF240
+#define CSIPHY_VERSION_V221_VW_MAIN              0xF244
+#endif
 
 /**
  * @csiphy_dev: CSIPhy device structure
@@ -62,7 +78,7 @@ int cam_csiphy_enable_hw(struct csiphy_device *csiphy_dev, int32_t index);
  *
  * This API disables SOC related parameters
  */
-int cam_csiphy_disable_hw(struct csiphy_device *csiphy_dev);
+int cam_csiphy_disable_hw(struct csiphy_device *csiphy_dev, int32_t index);
 
 /**
  * @soc_info: Soc info of cam hw driver module
@@ -74,8 +90,10 @@ int cam_csiphy_reg_dump(struct cam_hw_soc_info *soc_info);
 
 /**
  * @csiphy_dev: CSIPhy device structure
+ * @dump_to_log: Write dump to kernel log
  *
  * This API dumps memory for the entire status region
  */
-int32_t cam_csiphy_common_status_reg_dump(struct csiphy_device *csiphy_dev);
+int32_t cam_csiphy_common_status_reg_dump(struct csiphy_device *csiphy_dev,
+	bool dump_to_log);
 #endif /* _CAM_CSIPHY_SOC_H_ */

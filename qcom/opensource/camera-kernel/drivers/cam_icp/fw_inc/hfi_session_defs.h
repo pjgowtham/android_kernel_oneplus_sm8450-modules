@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
- * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_HFI_SESSION_DEFS_H
@@ -19,6 +19,11 @@
 #define HFI_IPEBPS_CMD_OPCODE_IPE_ABORT                 0x7
 #define HFI_IPEBPS_CMD_OPCODE_IPE_DESTROY               0x8
 
+#define HFI_OFE_CMD_OPCODE_CONFIG_IO                    0x1
+#define HFI_OFE_CMD_OPCODE_FRAME_PROCESS                0x2
+#define HFI_OFE_CMD_OPCODE_ABORT                        0x3
+#define HFI_OFE_CMD_OPCODE_DESTROY                      0x4
+
 #define HFI_IPEBPS_CMD_OPCODE_BPS_WAIT_FOR_IPE          0x9
 #define HFI_IPEBPS_CMD_OPCODE_BPS_WAIT_FOR_BPS          0xa
 #define HFI_IPEBPS_CMD_OPCODE_IPE_WAIT_FOR_BPS          0xb
@@ -27,9 +32,16 @@
 #define HFI_IPEBPS_CMD_OPCODE_MEM_MAP                   0xe
 #define HFI_IPEBPS_CMD_OPCODE_MEM_UNMAP                 0xf
 
-#define HFI_IPEBPS_HANDLE_TYPE_BPS                      0x1
+#define HFI_IPEBPS_HANDLE_TYPE_BPS_NON_RT               0x1
 #define HFI_IPEBPS_HANDLE_TYPE_IPE_RT                   0x2
 #define HFI_IPEBPS_HANDLE_TYPE_IPE_NON_RT               0x3
+#define HFI_IPEBPS_HANDLE_TYPE_IPE_SEMI_RT              0x4
+#define HFI_IPEBPS_HANDLE_TYPE_BPS_RT                   0x5
+#define HFI_IPEBPS_HANDLE_TYPE_BPS_SEMI_RT              0x6
+
+#define HFI_OFE_HANDLE_TYPE_OFE_RT                      0x1
+#define HFI_OFE_HANDLE_TYPE_OFE_NON_RT                  0x2
+#define HFI_OFE_HANDLE_TYPE_OFE_SEMI_RT                 0x3
 
 /**
  * struct mem_map_region_data
@@ -100,16 +112,15 @@ struct hfi_cmd_abort {
 } __packed;
 
 /**
- * struct hfi_cmd_abort_destroy
+ * struct hfi_cmd_destroy
  * @user_data: user supplied data
  *
- * IPE/BPS destroy/abort command
- * @HFI_IPEBPS_CMD_OPCODE_IPE_ABORT
- * @HFI_IPEBPS_CMD_OPCODE_BPS_ABORT
+ * IPE/BPS/OFE destroy command
  * @HFI_IPEBPS_CMD_OPCODE_IPE_DESTROY
  * @HFI_IPEBPS_CMD_OPCODE_BPS_DESTROY
+ * @HFI_OFE_CMD_OPCODE_OFE_DESTROY
  */
-struct hfi_cmd_abort_destroy {
+struct hfi_cmd_destroy {
 	uint64_t user_data;
 } __packed;
 
@@ -133,7 +144,7 @@ struct hfi_cmd_chaining_ops {
  * struct hfi_cmd_create_handle
  * @size: packet size in bytes
  * @pkt_type: opcode of a packet
- * @handle_type: IPE/BPS firmware session handle type
+ * @handle_type: IPE/BPS/OFE firmware session handle type
  * @user_data1: caller provided data1
  * @user_data2: caller provided data2
  *
@@ -148,28 +159,28 @@ struct hfi_cmd_create_handle {
 } __packed;
 
 /**
- * struct hfi_cmd_ipebps_async
+ * struct hfi_cmd_dev_async
  * @size: packet size in bytes
  * @pkt_type: opcode of a packet
- * @opcode: opcode for IPE/BPS async operation
- *          CONFIG_IO: configures I/O for IPE/BPS handle
- *          FRAME_PROCESS: image frame to be processed by IPE/BPS
- *          ABORT: abort all processing frames of IPE/BPS handle
- *          DESTROY: destroy earlier created IPE/BPS handle
+ * @opcode: opcode for devices I/O async operation
+ *          CONFIG_IO: configures I/O for device handle
+ *          FRAME_PROCESS: image frame to be processed by device
+ *          ABORT: abort all processing frames of device handle
+ *          DESTROY: destroy earlier created device handle
  *          BPS_WAITS_FOR_IPE: sync for BPS to wait for IPE
  *          BPS_WAITS_FOR_BPS: sync for BPS to wait for BPS
  *          IPE_WAITS_FOR_IPE: sync for IPE to wait for IPE
  *          IPE_WAITS_FOR_BPS: sync for IPE to wait for BPS
- * @num_fw_handles: number of IPE/BPS firmware handles in fw_handles array
- * @fw_handles: IPE/BPS handles array
- * @payload: command payload for IPE/BPS opcodes
+ * @num_fw_handles: number of device firmware handles in fw_handles array
+ * @fw_handles: device handles array
+ * @payload: command payload for device opcodes
  * @direct: points to actual payload
  * @indirect: points to address of payload
  *
- * sends async command to the earlier created IPE or BPS handle
+ * sends async command to the earlier created device handle
  * for asynchronous operation.
  */
-struct hfi_cmd_ipebps_async {
+struct hfi_cmd_dev_async {
 	uint32_t size;
 	uint32_t pkt_type;
 	uint32_t opcode;
@@ -194,11 +205,11 @@ struct hfi_cmd_ipebps_async {
  * @size: packet size in bytes
  * @pkt_type: opcode of a packet
  * @err_type: error code
- * @fw_handle: output param for IPE/BPS handle
+ * @fw_handle: output param for device handle
  * @user_data1: user provided data1
  * @user_data2: user provided data2
  *
- * ack for create handle command of IPE/BPS
+ * ack for create handle command of ICP's controlled HW
  * @HFI_MSG_IPEBPS_CREATE_HANDLE_ACK
  */
 struct hfi_msg_create_handle_ack {
@@ -211,19 +222,19 @@ struct hfi_msg_create_handle_ack {
 } __packed;
 
 /**
- * struct hfi_msg_ipebps_async
+ * struct hfi_msg_dev_async_ack
  * @size: packet size in bytes
  * @pkt_type: opcode of a packet
- * @opcode: opcode of IPE/BPS async operation
+ * @opcode: opcode of the device async operation
  * @user_data1: user provided data1
  * @user_data2: user provided data2
  * @err_type: error code
- * @msg_data: IPE/BPS async done message data
+ * @msg_data: device async done message data
  *
- * result of IPE/BPS async command
+ * result of device async command
  * @HFI_MSG_IPEBPS_ASYNC_COMMAND_ACK
  */
-struct hfi_msg_ipebps_async_ack {
+struct hfi_msg_dev_async_ack {
 	uint32_t size;
 	uint32_t pkt_type;
 	uint32_t opcode;
@@ -251,7 +262,7 @@ struct hfi_msg_frame_process_done {
  * @status: return status
  * @user_data: user data provided as part of chaining ops
  *
- * IPE/BPS wait response
+ * Device wait response
  */
 struct hfi_msg_chaining_op {
 	uint32_t status;
@@ -263,7 +274,7 @@ struct hfi_msg_chaining_op {
  * @status: return status
  * @user_data: user data provided as part of abort/destroy ops
  *
- * IPE/BPS abort/destroy response
+ * Device abort/destroy response
  */
 struct hfi_msg_abort_destroy {
 	uint32_t status;
@@ -562,20 +573,28 @@ struct hfi_msg_ipe_config {
 } __packed;
 
 /**
- * struct hfi_msg_bps_common
- * @rc: result of ipe config command
+ * struct hfi_msg_bps_config
+ * @rc: result of bps config command
  * @user_data: user data
  */
-struct hfi_msg_bps_common {
+struct hfi_msg_bps_config {
 	uint32_t rc;
 	uint64_t user_data;
 } __packed;
 
 /**
- * struct ipe_bps_destroy
+ * struct hfi_msg_ofe_config
+ * @rc: result of ofe config command
+ */
+struct hfi_msg_ofe_config {
+	uint32_t rc;
+} __packed;
+
+/**
+ * struct icp_dev_destroy
  * @user_data: user data
  */
-struct ipe_bps_destroy {
+struct icp_dev_destroy {
 	uint64_t userdata;
 };
 
@@ -591,4 +610,23 @@ struct hfi_msg_ipe_frame_process {
 	uint64_t user_data;
 } __packed;
 
+/**
+ * struct hfi_cmd_synx_test_payload
+ *        Same struct used for cmd and response
+ *
+ * @size: Size of the pkt
+ * @pkt_type: pkt type (cmd/response)
+ * @input_size: Input buffer size
+ * @input_iova: Input buffer address
+ * @output_size: Output buffer size
+ * @output_iova: Output buffer address
+ */
+struct hfi_cmd_synx_test_payload {
+	uint32_t size;
+	uint32_t pkt_type;
+	uint32_t input_size;
+	uint32_t input_iova;
+	uint32_t output_size;
+	uint32_t output_iova;
+} __packed;
 #endif /* _CAM_HFI_SESSION_DEFS_H */

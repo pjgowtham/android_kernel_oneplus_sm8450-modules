@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #include <linux/slab.h>
 #include "cam_ife_csid_soc.h"
-#include "cam_cpas_api.h"
 #include "cam_debug_util.h"
+#include "cam_mem_mgr_api.h"
 
 static int cam_ife_csid_get_dt_properties(struct cam_hw_soc_info *soc_info)
 {
@@ -26,7 +27,6 @@ static int cam_ife_csid_get_dt_properties(struct cam_hw_soc_info *soc_info)
 	if (rc) {
 		CAM_DBG(CAM_ISP, "No max-width declared");
 		soc_private->max_width_enabled = false;
-		rc = 0;
 	} else {
 		soc_private->max_width_enabled = true;
 	}
@@ -51,12 +51,15 @@ static int cam_ife_csid_get_dt_properties(struct cam_hw_soc_info *soc_info)
 static int cam_ife_csid_request_platform_resource(
 	struct cam_hw_soc_info *soc_info,
 	irq_handler_t csid_irq_handler,
-	void *irq_data)
+	void *data)
 {
-	int rc = 0;
+	int rc = 0, i;
+	void *irq_data[CAM_SOC_MAX_IRQ_LINES_PER_DEV] = {0};
 
-	rc = cam_soc_util_request_platform_resource(soc_info, csid_irq_handler,
-		irq_data);
+	for (i = 0; i < soc_info->irq_count; i++)
+		irq_data[i] = data;
+
+	rc = cam_soc_util_request_platform_resource(soc_info, csid_irq_handler, &(irq_data[0]));
 	if (rc)
 		return rc;
 
@@ -64,42 +67,54 @@ static int cam_ife_csid_request_platform_resource(
 }
 
 int cam_ife_csid_init_soc_resources(struct cam_hw_soc_info *soc_info,
-	irq_handler_t csid_irq_handler, void *irq_data, bool is_custom)
+	irq_handler_t csid_irq_handler, cam_cpas_client_cb_func cpas_cb,
+	void *data, bool is_custom)
 {
 	int rc = 0;
 	struct cam_cpas_register_params   cpas_register_param;
 	struct cam_csid_soc_private      *soc_private;
 
-	soc_private = kzalloc(sizeof(struct cam_csid_soc_private), GFP_KERNEL);
+	soc_private = CAM_MEM_ZALLOC(sizeof(struct cam_csid_soc_private), GFP_KERNEL);
 	if (!soc_private)
 		return -ENOMEM;
 
 	soc_info->soc_private = soc_private;
 
 	rc = cam_ife_csid_get_dt_properties(soc_info);
-	if (rc < 0)
-		return rc;
+	if (rc < 0) {
+		CAM_ERR(CAM_ISP, "Failed in get_dt_properties, rc=%d", rc);
+		goto free_soc_private;
+	}
 
 	/* Need to see if we want post process the clock list */
 
+	if (!soc_private->is_ife_csid_lite) {
+		rc = cam_cpas_query_drv_enable(NULL, &soc_info->is_clk_drv_en);
+		if (rc) {
+			CAM_ERR(CAM_ISP, "Failed to query DRV enable rc:%d", rc);
+			goto free_soc_private;
+		}
+	}
+
 	rc = cam_ife_csid_request_platform_resource(soc_info, csid_irq_handler,
-		irq_data);
+		data);
 	if (rc < 0) {
 		CAM_ERR(CAM_ISP,
 			"Error Request platform resources failed rc=%d", rc);
 		goto free_soc_private;
 	}
 
-	memset(&cpas_register_param, 0, sizeof(cpas_register_param));
 	if (is_custom)
-		strlcpy(cpas_register_param.identifier, "csid-custom",
+		strscpy(cpas_register_param.identifier, "csid-custom",
 			CAM_HW_IDENTIFIER_LENGTH);
 	else
-		strlcpy(cpas_register_param.identifier, "csid",
+		strscpy(cpas_register_param.identifier, "csid",
 			CAM_HW_IDENTIFIER_LENGTH);
 
 	cpas_register_param.cell_index = soc_info->index;
 	cpas_register_param.dev = soc_info->dev;
+	cpas_register_param.cam_cpas_client_cb = cpas_cb;
+	cpas_register_param.userdata = data;
 	rc = cam_cpas_register_client(&cpas_register_param);
 	if (rc) {
 		CAM_ERR(CAM_ISP, "CPAS registration failed rc=%d", rc);
@@ -113,7 +128,7 @@ int cam_ife_csid_init_soc_resources(struct cam_hw_soc_info *soc_info,
 release_soc:
 	cam_soc_util_release_platform_resource(soc_info);
 free_soc_private:
-	kfree(soc_private);
+	CAM_MEM_FREE(soc_private);
 
 	return rc;
 }
@@ -153,7 +168,7 @@ int cam_ife_csid_enable_soc_resources(
 	soc_private = soc_info->soc_private;
 
 	ahb_vote.type = CAM_VOTE_ABSOLUTE;
-	ahb_vote.vote.level = CAM_LOWSVS_VOTE;
+	ahb_vote.vote.level = CAM_LOWSVS_D1_VOTE;
 	axi_vote.num_paths = 1;
 	axi_vote.axi_path[0].path_data_type = CAM_AXI_PATH_DATA_ALL;
 	axi_vote.axi_path[0].transac_type = CAM_AXI_TRANSACTION_WRITE;
@@ -174,10 +189,20 @@ int cam_ife_csid_enable_soc_resources(
 		goto end;
 	}
 
-	rc = cam_soc_util_enable_platform_resource(soc_info, true,
+	if (!soc_private->is_ife_csid_lite) {
+		/* query this everytime to support debugfs to disable clk drv */
+		rc = cam_cpas_query_drv_enable(NULL, &soc_info->is_clk_drv_en);
+		if (rc) {
+			CAM_ERR(CAM_ISP, "Failed to query DRV enable rc:%d", rc);
+			goto stop_cpas;
+		}
+	}
+
+	rc = cam_soc_util_enable_platform_resource(soc_info,
+		(soc_info->is_clk_drv_en ? soc_info->index : CAM_CLK_SW_CLIENT_IDX), true,
 		clk_level, true);
 	if (rc) {
-		CAM_ERR(CAM_ISP, "enable platform failed");
+		CAM_ERR(CAM_ISP, "enable platform failed rc %d", rc);
 		goto stop_cpas;
 	}
 
@@ -200,7 +225,9 @@ int cam_ife_csid_disable_soc_resources(struct cam_hw_soc_info *soc_info)
 	}
 	soc_private = soc_info->soc_private;
 
-	rc = cam_soc_util_disable_platform_resource(soc_info, true, true);
+	rc = cam_soc_util_disable_platform_resource(soc_info,
+		((soc_info->is_clk_drv_en && (!soc_private->is_ife_csid_lite)) ?
+		soc_info->index : CAM_CLK_SW_CLIENT_IDX), true, true);
 	if (rc)
 		CAM_ERR(CAM_ISP, "Disable platform failed");
 
@@ -228,7 +255,7 @@ int cam_ife_csid_enable_ife_force_clock_on(struct cam_hw_soc_info  *soc_info,
 	soc_private = soc_info->soc_private;
 	cpass_ife_force_clk_offset =
 		cpas_ife_base_offset + (0x4 * soc_info->index);
-	rc = cam_cpas_reg_write(soc_private->cpas_handle, CAM_CPAS_REG_CPASTOP,
+	rc = cam_cpas_reg_write(soc_private->cpas_handle, CAM_CPAS_REGBASE_CPASTOP,
 		cpass_ife_force_clk_offset, 1, 1);
 
 	if (rc)
@@ -256,7 +283,7 @@ int cam_ife_csid_disable_ife_force_clock_on(struct cam_hw_soc_info *soc_info,
 	soc_private = soc_info->soc_private;
 	cpass_ife_force_clk_offset =
 		cpas_ife_base_offset + (0x4 * soc_info->index);
-	rc = cam_cpas_reg_write(soc_private->cpas_handle, CAM_CPAS_REG_CPASTOP,
+	rc = cam_cpas_reg_write(soc_private->cpas_handle, CAM_CPAS_REGBASE_CPASTOP,
 		cpass_ife_force_clk_offset,  1, 0);
 
 	if (rc)

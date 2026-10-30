@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_MEM_MGR_API_H_
@@ -9,6 +9,66 @@
 
 #include <media/cam_req_mgr.h>
 #include "cam_smmu_api.h"
+
+/**
+ * CAM_MEM_ALLOC : Allocates memory without initializing it to zero.
+ *
+ * @size    : size of memory requested for allocation
+ * @flags   : GFP flags (GFP_KERNEL, GFP_DMA, GFP_ATOMIC etc)
+ *
+ * NOTE: GFP_ATOMIC is not supported by vmalloc, so if allocation
+ * fails with kmalloc for GFP_ATOMIC, then fallback option won't
+ * be present.
+ */
+#define CAM_MEM_ALLOC(size, flags) \
+	kvmalloc(size, flags)
+
+/**
+ * CAM_MEM_ZALLOC : Allocates memory and zero initialize it.
+ *
+ * @size    : size of memory requested for allocation
+ * @flags   : GFP flags (GPF_KERNEL,  GFP_DMA, GPF_ATOMIC etc)
+ *
+ * NOTE: GFP_ATOMIC is not supported by vmalloc, so if allocation
+ * fails with kmalloc for GFP_ATOMIC, then fallback option won't
+ * be present.
+ */
+#define CAM_MEM_ZALLOC(size, flags) \
+	kvzalloc(size, flags)
+
+/**
+ * CAM_MEM_ZALLOC_ARRAY : Allocates memory for array and zero initialises it.
+ *
+ * @count   : count of number of elements in array
+ * @size    : size of each element
+ * @flags   : GFP flags (GFP_KERNEL, GFP_DMA, GFP_ATOMIC etc)
+ *
+ * NOTE: GFP_ATOMIC is not supported by vmalloc, so if allocation
+ * fails with kmalloc for GFP_ATOMIC, then fallback option won't
+ * be present.
+ */
+#define CAM_MEM_ZALLOC_ARRAY(count, size, flags) \
+	kvcalloc(count, size, flags)
+
+/**
+ * CAM_MEM_FREE : Frees memory without initializing it to zero.
+ *
+ * @addr    : address of data object to be freed
+ */
+#define CAM_MEM_FREE(addr) \
+	kvfree(addr)
+
+/**
+ * CAM_MEM_ZFREE : Frees memory and zero initialize it.
+ *
+ * @addr   : address of data object to be freed
+ * @size   : size of the data object
+ */
+#define CAM_MEM_ZFREE(addr, size) \
+	if (likely(!ZERO_OR_NULL_PTR(addr))) { \
+		memset((void *)addr, 0x0,  size); \
+		kvfree(addr); \
+	}
 
 /**
  * struct cam_mem_mgr_request_desc
@@ -72,11 +132,13 @@ int cam_mem_mgr_release_mem(struct cam_mem_mgr_memory_desc *inp);
  * @iova_ptr  : Pointer to mmu's iova
  * @len_ptr   : Length of the buffer
  * @flags     : Flags the buffer was allocated with
+ * @buf_tracker: List of buffers we want to keep ref counts on
  *
  * @return Status of operation. Negative in case of error. Zero otherwise.
  */
 int cam_mem_get_io_buf(int32_t buf_handle, int32_t mmu_handle,
-	dma_addr_t *iova_ptr, size_t *len_ptr, uint32_t *flags);
+	dma_addr_t *iova_ptr, size_t *len_ptr, uint32_t *flags,
+	struct list_head *buf_tracker);
 
 /**
  * @brief: This indicates begin of CPU access.
@@ -98,6 +160,14 @@ int cam_mem_get_cpu_buf(int32_t buf_handle, uintptr_t *vaddr_ptr,
  *
  */
 void cam_mem_put_cpu_buf(int32_t buf_handle);
+
+/**
+ * @brief: decrements kref reference for a buf handle
+ *
+ * @buf_handle: Handle for the buffer
+ *
+ */
+void cam_mem_put_kref(int32_t buf_handle);
 
 static inline bool cam_mem_is_secure_buf(int32_t buf_handle)
 {

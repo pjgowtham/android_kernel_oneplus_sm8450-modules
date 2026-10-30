@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -14,10 +15,19 @@
 #include "cam_vfe680.h"
 #include "cam_vfe680_110.h"
 #include "cam_vfe780.h"
+#include "cam_vfe880.h"
+#include "cam_tfe980.h"
+#include "cam_tfe975.h"
+#include "cam_tfe970.h"
+#include "cam_tfe1080.h"
 #include "cam_vfe_lite17x.h"
 #include "cam_vfe_lite48x.h"
 #include "cam_vfe_lite68x.h"
 #include "cam_vfe_lite78x.h"
+#include "cam_vfe_lite88x.h"
+#include "cam_vfe_lite98x.h"
+#include "cam_vfe_lite97x.h"
+#include "cam_vfe_lite108x.h"
 #include "cam_vfe_hw_intf.h"
 #include "cam_vfe_core.h"
 #include "cam_vfe_dev.h"
@@ -65,6 +75,26 @@ static const struct of_device_id cam_vfe_dt_match[] = {
 		.data = &cam_vfe780_hw_info,
 	},
 	{
+		.compatible = "qcom,vfe880",
+		.data = &cam_vfe880_hw_info,
+	},
+	{
+		.compatible = "qcom,mc_tfe980",
+		.data  = &cam_tfe980_hw_info,
+	},
+	{
+		.compatible = "qcom,mc_tfe970",
+		.data  = &cam_tfe970_hw_info,
+	},
+	{
+		.compatible = "qcom,mc_tfe975",
+		.data  = &cam_tfe975_hw_info,
+	},
+	{
+		.compatible = "qcom,mc_tfe1080",
+		.data  = &cam_tfe1080_hw_info,
+	},
+	{
 		.compatible = "qcom,vfe-lite170",
 		.data = &cam_vfe_lite17x_hw_info,
 	},
@@ -95,6 +125,26 @@ static const struct of_device_id cam_vfe_dt_match[] = {
 	{
 		.compatible = "qcom,vfe-lite780",
 		.data = &cam_vfe_lite78x_hw_info,
+	},
+	{
+		.compatible = "qcom,vfe-lite880",
+		.data = &cam_vfe_lite88x_hw_info,
+	},
+	{
+		.compatible = "qcom,vfe-lite980",
+		.data = &cam_vfe_lite98x_hw_info,
+	},
+	{
+		.compatible = "qcom,vfe-lite970",
+		.data = &cam_vfe_lite97x_hw_info,
+	},
+	{
+		.compatible = "qcom,vfe-lite975",
+		.data = &cam_vfe_lite97x_hw_info,
+	},
+	{
+		.compatible = "qcom,vfe-lite1080",
+		.data = &cam_vfe_lite108x_hw_info,
 	},
 	{}
 };

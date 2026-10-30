@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #ifndef _CAM_OIS_CORE_H_
 #define _CAM_OIS_CORE_H_
@@ -9,6 +10,9 @@
 #include "cam_ois_dev.h"
 
 #define OIS_NAME_LEN 32
+#define OIS_ENDIANNESS_MASK_FW              0x0F
+#define OIS_ENDIANNESS_MASK_INPUTPARAM      0xF0
+
 
 /**
  * @power_info: power setting info to control the power
@@ -29,6 +33,8 @@ int cam_ois_driver_cmd(struct cam_ois_ctrl_t *e_ctrl, void *arg);
  * This API handles the shutdown ioctl/close
  */
 void cam_ois_shutdown(struct cam_ois_ctrl_t *o_ctrl);
+
+struct completion *cam_ois_get_i3c_completion(uint32_t index);
 
 #endif
 /* _CAM_OIS_CORE_H_ */

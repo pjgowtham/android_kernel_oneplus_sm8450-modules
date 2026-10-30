@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022, 2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/delay.h>
@@ -30,6 +31,8 @@
 #include "cam_debug_util.h"
 #include "cam_smmu_api.h"
 #include "camera_main.h"
+#include "cam_context_utils.h"
+#include "cam_mem_mgr_api.h"
 
 #define OPE_DEV_NAME        "cam-ope"
 
@@ -46,20 +49,34 @@ struct cam_ope_subdev {
 static struct cam_ope_subdev g_ope_dev;
 
 static void cam_ope_dev_iommu_fault_handler(
-	struct cam_smmu_pf_info *pf_info)
+	struct cam_smmu_pf_info *pf_smmu_info)
 {
-	int i = 0;
+	int i, rc;
 	struct cam_node *node = NULL;
+	struct cam_hw_dump_pf_args pf_args = {0};
 
-	if (!pf_info || !pf_info->token) {
-		CAM_ERR(CAM_ISP, "invalid token in page handler cb");
+	if (!pf_smmu_info || !pf_smmu_info->token) {
+		CAM_ERR(CAM_OPE, "invalid token in page handler cb");
 		return;
 	}
 
-	node = (struct cam_node *)pf_info->token;
+	node = (struct cam_node *)pf_smmu_info->token;
+	pf_args.pf_smmu_info = pf_smmu_info;
 
-	for (i = 0; i < node->ctx_size; i++)
-		cam_context_dump_pf_info(&(node->ctx_list[i]), pf_info);
+	for (i = 0; i < node->ctx_size; i++) {
+		cam_context_dump_pf_info(&(node->ctx_list[i]), &pf_args);
+		if (pf_args.pf_context_info.ctx_found)
+			/* found ctx and packet of the faulted address */
+			break;
+	}
+
+	if (i == node->ctx_size) {
+		/* Faulted ctx not found. But report PF to UMD anyway*/
+		rc = cam_context_send_pf_evt(NULL, &pf_args);
+		if (rc)
+			CAM_ERR(CAM_OPE,
+				"Failed to notify PF event to userspace rc: %d", rc);
+	}
 }
 
 static int cam_ope_subdev_open(struct v4l2_subdev *sd,
@@ -163,7 +180,10 @@ static int cam_ope_subdev_component_bind(struct device *dev,
 	struct cam_hw_mgr_intf *hw_mgr_intf;
 	int iommu_hdl = -1;
 	struct platform_device *pdev = to_platform_device(dev);
+	struct timespec64 ts_start, ts_end;
+	long microsec = 0;
 
+	CAM_GET_TIMESTAMP(ts_start);
 	CAM_DBG(CAM_OPE, "Binding OPE subdev component");
 	if (!pdev) {
 		CAM_ERR(CAM_OPE, "pdev is NULL");
@@ -182,7 +202,7 @@ static int cam_ope_subdev_component_bind(struct device *dev,
 
 	node = (struct cam_node *) g_ope_dev.sd.token;
 
-	hw_mgr_intf = kzalloc(sizeof(*hw_mgr_intf), GFP_KERNEL);
+	hw_mgr_intf = CAM_MEM_ZALLOC(sizeof(*hw_mgr_intf), GFP_KERNEL);
 	if (!hw_mgr_intf) {
 		rc = -EINVAL;
 		goto hw_alloc_fail;
@@ -220,6 +240,9 @@ static int cam_ope_subdev_component_bind(struct device *dev,
 
 	node->sd_handler = cam_ope_subdev_close_internal;
 	CAM_DBG(CAM_OPE, "Subdev component bound successfully");
+	CAM_GET_TIMESTAMP(ts_end);
+	CAM_GET_TIMESTAMP_DIFF_IN_MICRO(ts_start, ts_end, microsec);
+	cam_record_bind_latency(pdev->name, microsec);
 
 	return rc;
 
@@ -227,7 +250,7 @@ ctx_fail:
 	for (--i; i >= 0; i--)
 		cam_ope_context_deinit(&g_ope_dev.ctx_ope[i]);
 hw_init_fail:
-	kfree(hw_mgr_intf);
+	CAM_MEM_FREE(hw_mgr_intf);
 hw_alloc_fail:
 	cam_subdev_remove(&g_ope_dev.sd);
 	return rc;

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_IFE_CSID_680_110_H_
@@ -15,11 +15,20 @@
 #include "cam_irq_controller.h"
 
 static struct cam_ife_csid_ver2_reg_info cam_ife_csid_680_110_reg_info = {
-	.irq_reg_info                         = &cam_ife_csid_680_irq_reg_info,
+	.top_irq_reg_info      = cam_ife_csid_680_top_irq_reg_info,
+	.rx_irq_reg_info       = cam_ife_csid_680_rx_irq_reg_info,
+	.path_irq_reg_info     = {
+		&cam_ife_csid_680_path_irq_reg_info[CAM_IFE_PIX_PATH_RES_RDI_0],
+		&cam_ife_csid_680_path_irq_reg_info[CAM_IFE_PIX_PATH_RES_RDI_1],
+		&cam_ife_csid_680_path_irq_reg_info[CAM_IFE_PIX_PATH_RES_RDI_2],
+		&cam_ife_csid_680_path_irq_reg_info[CAM_IFE_PIX_PATH_RES_RDI_3],
+		&cam_ife_csid_680_path_irq_reg_info[CAM_IFE_PIX_PATH_RES_RDI_4],
+		&cam_ife_csid_680_path_irq_reg_info[CAM_IFE_PIX_PATH_RES_IPP],
+		&cam_ife_csid_680_path_irq_reg_info[CAM_IFE_PIX_PATH_RES_PPP],
+	},
+	.buf_done_irq_reg_info = &cam_ife_csid_680_buf_done_irq_reg_info,
 	.cmn_reg                              = &cam_ife_csid_680_cmn_reg_info,
 	.csi2_reg                             = &cam_ife_csid_680_csi2_reg_info,
-	.buf_done_irq_reg_info                =
-				    &cam_ife_csid_680_buf_done_irq_reg_info,
 	.path_reg[CAM_IFE_PIX_PATH_RES_IPP]   = &cam_ife_csid_680_ipp_reg_info,
 	.path_reg[CAM_IFE_PIX_PATH_RES_PPP]   = &cam_ife_csid_680_ppp_reg_info,
 	.path_reg[CAM_IFE_PIX_PATH_RES_RDI_0] = &cam_ife_csid_680_rdi_0_reg_info,
@@ -59,9 +68,13 @@ static struct cam_ife_csid_ver2_reg_info cam_ife_csid_680_110_reg_info = {
 	},
 	.need_top_cfg = 0x1,
 	.csid_cust_node_map = {0x1, 0x0, 0x2},
-	.rx_irq_desc        = cam_ife_csid_680_rx_irq_desc,
+	.rx_irq_desc        = &cam_ife_csid_680_rx_irq_desc,
 	.path_irq_desc      = cam_ife_csid_680_path_irq_desc,
-	.width_fuse_max_val = 3,
-	.fused_max_width = {5612, 6528, 7308, UINT_MAX},
+	.num_top_err_irqs   = cam_ife_csid_680_num_top_irq_desc,
+	.num_rx_err_irqs    = cam_ife_csid_680_num_rx_irq_desc,
+	.top_debug_mask     = &cam_ife_csid_680_top_debug_mask,
+	.rx_debug_mask      = &cam_ife_csid_680_rx_debug_mask,
+	.num_top_regs       = 1,
+	.num_rx_regs        = 1,
 };
 #endif /*_CAM_IFE_CSID_680_110_H_ */

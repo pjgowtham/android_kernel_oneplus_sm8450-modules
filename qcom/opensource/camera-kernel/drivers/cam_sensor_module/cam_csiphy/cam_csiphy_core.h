@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017-2018, 2020-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CAM_CSIPHY_CORE_H_
@@ -26,6 +26,16 @@ void cam_csiphy_cphy_irq_config(struct csiphy_device *csiphy_dev);
  * This API resets CSIPhy hardware
  */
 void cam_csiphy_reset(struct csiphy_device *csiphy_dev);
+
+/**
+ * @csiphy_dev: CSIPhy device structure
+ * @csiphybase: CSIPhy base addr
+ * @instance  : CSIPhy instance
+ *
+ * This API releases CSIPhy from reset
+ */
+int cam_csiphy_release_from_reset_state(struct csiphy_device *csiphy_dev,
+	void __iomem *csiphybase, int32_t instance);
 
 /**
  * @csiphy_dev: CSIPhy device structure
@@ -77,6 +87,13 @@ int cam_csiphy_util_update_aon_ops(bool get_access, uint32_t phy_idx);
 void cam_csiphy_update_auxiliary_mask(struct csiphy_device *csiphy_dev);
 
 /**
+ * @data:    Qmargin CSID register tuning feedback
+ * @phy_idx: PHY idx
+ *
+ */
+void cam_csiphy_update_qmargin_csid_vals(void *data, int phy_idx);
+
+/**
  * @csiphy_dev: CSIPhy device structure
  *
  * This API allows to print all the cphy/dphy specific status registers
@@ -84,11 +101,12 @@ void cam_csiphy_update_auxiliary_mask(struct csiphy_device *csiphy_dev);
 int cam_csiphy_dump_status_reg(struct csiphy_device *csiphy_dev);
 
 /**
- * @phy_idx    : To acquire the correct PHY hw to do the operation with
+ * @phy_idx         : To acquire the correct PHY hw to do the operation with
+ * @aon_camera_id   : AON Camera ID
  *
  * This API provides Utility/helper function to register AON Hw supprot for
  * correct PHY hw.
  *
  */
-int cam_csiphy_util_update_aon_registration(uint32_t phy_idx, bool is_aon_user);
+int cam_csiphy_util_update_aon_registration(uint32_t phy_idx, uint32_t aon_camera_id);
 #endif /* _CAM_CSIPHY_CORE_H_ */
