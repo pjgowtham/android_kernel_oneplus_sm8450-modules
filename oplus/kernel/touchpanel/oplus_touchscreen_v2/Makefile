@@ -28,11 +28,17 @@ oplus_bsp_tp_comon-y += message_list.o
 oplus_bsp_tp_comon-y += touch_pen/touch_pen_core.o
 oplus_bsp_tp_comon-y += touch_pen/touch_pen_algo.o
 
+ccflags-y += \
+	-DCONFIG_TOUCHPANEL_OPLUS_MODULE \
+	-I$(srctree)/$(src)
+
+KBUILD_EXTRA_SYMBOLS := $(M)/touch_custom/Module.symvers
+
 obj-$(CONFIG_TOUCHPANEL_OPLUS) += oplus_bsp_tp_comon.o
 
-oplus_bsp_tp_notify-y += touchpanel_notify/touchpanel_event_notify.o
+# oplus_bsp_tp_notify-y += touchpanel_notify/touchpanel_event_notify.o
 oplus_bsp_tp_comon-y += touchpanel_tui_support/touchpanel_tui_support.o
-obj-$(CONFIG_TOUCHPANEL_NOTIFY) += oplus_bsp_tp_notify.o
+# obj-$(CONFIG_TOUCHPANEL_NOTIFY) += oplus_bsp_tp_notify.o
 
 obj-$(CONFIG_TOUCHPANEL_SYNAPTICS) += Synaptics/
 obj-$(CONFIG_TOUCHPANEL_FOCAL) += Focal/
