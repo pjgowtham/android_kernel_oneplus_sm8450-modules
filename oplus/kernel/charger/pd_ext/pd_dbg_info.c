@@ -168,6 +168,7 @@ module_exit(pd_dbg_info_exit);
 
 MODULE_DESCRIPTION("PD Debug Info Module");
 MODULE_AUTHOR("Patrick Chang <patrick_chang@richtek.com>");
-MODULE_LICENSE("GPL");
 
 #endif	/* CONFIG_PD_DBG_INFO */
+
+MODULE_LICENSE("GPL");
