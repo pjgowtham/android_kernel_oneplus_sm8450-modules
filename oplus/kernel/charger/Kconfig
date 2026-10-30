@@ -6,6 +6,16 @@ menuconfig OPLUS_CHARGER
 	  Say Y here to enable OPLUS charging system support
 
 if OPLUS_CHARGER
+config OPLUS_PD_EXT_SUPPORT
+	bool "Oplus external Type-C controller support"
+	default y if OPLUS_SM8450_CHARGER || OPLUS_ADSP_SM8450_CHARGER
+	help
+	  Build the external Type-C controller stack used by Waipio charging.
+
+if OPLUS_PD_EXT_SUPPORT
+source "$(KCONFIG_EXT_PREFIX)drivers/power/oplus/pd_ext/Kconfig"
+endif
+
 config OPLUS_CHARGER_DDK_BUILD
 	bool "oplus charger module build by ddk"
 	default n
