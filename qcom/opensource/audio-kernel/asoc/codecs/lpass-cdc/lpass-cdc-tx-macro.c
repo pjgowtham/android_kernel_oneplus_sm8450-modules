@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2025, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -36,7 +36,6 @@
 #define  CF_MIN_3DB_150HZ		0x2
 
 #define LPASS_CDC_TX_MACRO_DMIC_SAMPLE_RATE_UNDEFINED 0
-#define LPASS_CDC_TX_MACRO_MCLK_FREQ 9600000
 #define LPASS_CDC_TX_MACRO_TX_PATH_OFFSET \
 	(LPASS_CDC_TX1_TX_PATH_CTL - LPASS_CDC_TX0_TX_PATH_CTL)
 #define LPASS_CDC_TX_MACRO_SWR_MIC_MUX_SEL_MASK 0xF
@@ -47,6 +46,7 @@
 #define LPASS_CDC_TX_MACRO_AMIC_UNMUTE_DELAY_MS	100
 #define LPASS_CDC_TX_MACRO_DMIC_HPF_DELAY_MS	300
 #define LPASS_CDC_TX_MACRO_AMIC_HPF_DELAY_MS	300
+#define LPASS_CDC_TX_MACRO_DEC_UNMUTE_DELAY_MS  10
 
 static int tx_unmute_delay = LPASS_CDC_TX_MACRO_DMIC_UNMUTE_DELAY_MS;
 module_param(tx_unmute_delay, int, 0664);
@@ -116,6 +116,12 @@ struct tx_mute_work {
 	struct delayed_work dwork;
 };
 
+struct tx_dec_unmute_work {
+	struct lpass_cdc_tx_macro_priv *tx_priv;
+	int dai_id;
+	struct delayed_work dwork;
+};
+
 struct hpf_work {
 	struct lpass_cdc_tx_macro_priv *tx_priv;
 	u8 decimator;
@@ -131,9 +137,10 @@ struct lpass_cdc_tx_macro_priv {
 	struct mutex mclk_lock;
 	struct mutex wlock;
 	struct snd_soc_component *component;
+	struct tx_dec_unmute_work tx_dec_unmute_work[LPASS_CDC_TX_MACRO_MAX_DAIS];
 	struct hpf_work tx_hpf_work[NUM_DECIMATORS];
 	struct tx_mute_work tx_mute_dwork[NUM_DECIMATORS];
-	u16 dmic_clk_div;
+	u16 dmic_clk_div[MIC_PAIR_MAX];
 	u32 version;
 	unsigned long active_ch_mask[LPASS_CDC_TX_MACRO_MAX_DAIS];
 	unsigned long active_ch_cnt[LPASS_CDC_TX_MACRO_MAX_DAIS];
@@ -148,6 +155,7 @@ struct lpass_cdc_tx_macro_priv {
 	bool hs_slow_insert_complete;
 	int pcm_rate[NUM_DECIMATORS];
 	bool swr_dmic_enable;
+	bool swr_dmic_gain_disable;
 	int wlock_holders;
 };
 
@@ -181,20 +189,20 @@ static bool lpass_cdc_tx_macro_get_data(struct snd_soc_component *component,
 {
 	*tx_dev = lpass_cdc_get_device_ptr(component->dev, TX_MACRO);
 	if (!(*tx_dev)) {
-		dev_err(component->dev,
+		dev_err_ratelimited(component->dev,
 			"%s: null device for macro!\n", func_name);
 		return false;
 	}
 
 	*tx_priv = dev_get_drvdata((*tx_dev));
 	if (!(*tx_priv)) {
-		dev_err(component->dev,
+		dev_err_ratelimited(component->dev,
 			"%s: priv is null for macro!\n", func_name);
 		return false;
 	}
 
 	if (!(*tx_priv)->component) {
-		dev_err(component->dev,
+		dev_err_ratelimited(component->dev,
 			"%s: tx_priv->component not initialized!\n", func_name);
 		return false;
 	}
@@ -210,7 +218,7 @@ static int lpass_cdc_tx_macro_mclk_enable(
 	int ret = 0;
 
 	if (regmap == NULL) {
-		dev_err(tx_priv->dev, "%s: regmap is NULL\n", __func__);
+		dev_err_ratelimited(tx_priv->dev, "%s: regmap is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -246,7 +254,7 @@ static int lpass_cdc_tx_macro_mclk_enable(
 		tx_priv->tx_mclk_users++;
 	} else {
 		if (tx_priv->tx_mclk_users <= 0) {
-			dev_err(tx_priv->dev, "%s: clock already disabled\n",
+			dev_err_ratelimited(tx_priv->dev, "%s: clock already disabled\n",
 				__func__);
 			tx_priv->tx_mclk_users = 0;
 			goto exit;
@@ -311,7 +319,7 @@ static int lpass_cdc_tx_macro_mclk_event(struct snd_soc_dapm_widget *w,
 			ret = lpass_cdc_tx_macro_mclk_enable(tx_priv, 0);
 		break;
 	default:
-		dev_err(tx_priv->dev,
+		dev_err_ratelimited(tx_priv->dev,
 			"%s: invalid DAPM event %d\n", __func__, event);
 		ret = -EINVAL;
 	}
@@ -378,6 +386,34 @@ static bool is_amic_enabled(struct snd_soc_component *component, int decimator)
 		if (!tx_priv->swr_dmic_enable)
 			return true;
 	}
+
+	return ret;
+}
+
+
+/* swr-dmic   ADC Mux Sel
+ *  0           0           MSM DMIC
+ *  0           1           SWR AMIC
+ *  1           0           INVALID
+ *  1           1           SWR DMIC
+ */
+ /* This function checks if the decimator is fed from SWR MIC or VA MIC (DMIC) */
+static bool is_msm_dmic_enabled(struct snd_soc_component *component, int decimator)
+{
+	u16 adc_mux_reg = 0;
+	bool ret = false;
+	struct device *tx_dev = NULL;
+	struct lpass_cdc_tx_macro_priv *tx_priv = NULL;
+
+	if (!lpass_cdc_tx_macro_get_data(component, &tx_dev, &tx_priv, __func__))
+		return ret;
+
+	adc_mux_reg = LPASS_CDC_TX_INP_MUX_ADC_MUX0_CFG1 +
+			LPASS_CDC_TX_MACRO_ADC_MUX_CFG_OFFSET * decimator;
+
+	/* ADC_MUX_SEL is VA_MIC and swr_dmic_enable is 0, then dec is for msm-dmic use-case */
+	if ((snd_soc_component_read(component, adc_mux_reg) & 0x3) == MSM_DMIC)
+		return true;
 
 	return ret;
 }
@@ -481,6 +517,37 @@ static void lpass_cdc_tx_macro_mute_update_callback(struct work_struct *work)
 	lpass_cdc_tx_macro_wake_enable(tx_priv, 0);
 }
 
+static void mute_stream_dec_unmute(struct work_struct *work)
+{
+	struct delayed_work *unmute_delayed_work = NULL;
+	struct tx_dec_unmute_work *tx_dec_unmute_work = NULL;
+	struct lpass_cdc_tx_macro_priv *tx_priv = NULL;
+	struct snd_soc_component *component = NULL;
+	int dai_id = 0;
+	u16 tx_mute_ctl_reg = 0;
+	u16 dec_gain_reg = 0;
+	u32 decimator = 0;
+
+	unmute_delayed_work = to_delayed_work(work);
+	tx_dec_unmute_work = container_of(unmute_delayed_work, struct tx_dec_unmute_work, dwork);
+	tx_priv = tx_dec_unmute_work->tx_priv;
+	component = tx_priv->component;
+	dai_id = tx_dec_unmute_work->dai_id;
+
+	for_each_set_bit(decimator, &tx_priv->active_ch_mask[dai_id],
+		LPASS_CDC_TX_MACRO_DEC_MAX) {
+		tx_mute_ctl_reg = LPASS_CDC_TX0_TX_PATH_CTL +
+			LPASS_CDC_TX_MACRO_TX_PATH_OFFSET * decimator;
+		snd_soc_component_update_bits(component, tx_mute_ctl_reg, 0x10, 0x00);
+
+		if (tx_priv->swr_dmic_gain_disable) {
+			dec_gain_reg = LPASS_CDC_TX0_TX_PATH_CFG1 +
+				LPASS_CDC_TX_MACRO_TX_PATH_OFFSET * decimator;
+			snd_soc_component_update_bits(component, dec_gain_reg, 0x01, 0x00);
+		}
+	}
+}
+
 static int lpass_cdc_tx_macro_put_dec_enum(struct snd_kcontrol *kcontrol,
 			      struct snd_ctl_elem_value *ucontrol)
 {
@@ -491,7 +558,6 @@ static int lpass_cdc_tx_macro_put_dec_enum(struct snd_kcontrol *kcontrol,
 	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
 	unsigned int val = 0;
 	u16 mic_sel_reg = 0;
-	u16 dmic_clk_reg = 0;
 	struct device *tx_dev = NULL;
 	struct lpass_cdc_tx_macro_priv *tx_priv = NULL;
 
@@ -531,7 +597,7 @@ static int lpass_cdc_tx_macro_put_dec_enum(struct snd_kcontrol *kcontrol,
 		mic_sel_reg = LPASS_CDC_TX7_TX_PATH_CFG0;
 		break;
 	default:
-		dev_err(component->dev, "%s: e->reg: 0x%x not expected\n",
+		dev_err_ratelimited(component->dev, "%s: e->reg: 0x%x not expected\n",
 			__func__, e->reg);
 		return -EINVAL;
 	}
@@ -548,12 +614,6 @@ static int lpass_cdc_tx_macro_put_dec_enum(struct snd_kcontrol *kcontrol,
 				snd_soc_component_update_bits(component,
 					LPASS_CDC_VA_TOP_CSR_DMIC_CFG,
 					0x80, 0x00);
-				dmic_clk_reg =
-					LPASS_CDC_TX_TOP_CSR_SWR_MIC0_CTL +
-						((val - 5)/2) * 4;
-				snd_soc_component_update_bits(component,
-					dmic_clk_reg,
-					0x0E, tx_priv->dmic_clk_div << 0x1);
 			}
 		}
 	} else {
@@ -610,11 +670,21 @@ static int lpass_cdc_tx_macro_tx_mixer_put(struct snd_kcontrol *kcontrol,
 		return -EINVAL;
 
 	if (enable) {
-		set_bit(dec_id, &tx_priv->active_ch_mask[dai_id]);
-		tx_priv->active_ch_cnt[dai_id]++;
+		if (test_bit(dec_id, &tx_priv->active_ch_mask[dai_id])) {
+			dev_err(component->dev, "%s: channel is already enabled, dec_id = %d, dai_id = %d\n",
+					__func__, dec_id, dai_id);
+		} else {
+			set_bit(dec_id, &tx_priv->active_ch_mask[dai_id]);
+			tx_priv->active_ch_cnt[dai_id]++;
+		}
 	} else {
-		tx_priv->active_ch_cnt[dai_id]--;
-		clear_bit(dec_id, &tx_priv->active_ch_mask[dai_id]);
+		if (!test_bit(dec_id, &tx_priv->active_ch_mask[dai_id])) {
+			dev_err(component->dev, "%s: channel is already disabled, dec_id = %d, dai_id = %d\n",
+					__func__, dec_id, dai_id);
+		} else {
+			tx_priv->active_ch_cnt[dai_id]--;
+			clear_bit(dec_id, &tx_priv->active_ch_mask[dai_id]);
+		}
 	}
 	snd_soc_dapm_mixer_update_power(widget->dapm, kcontrol, enable, update);
 
@@ -638,21 +708,21 @@ static inline int lpass_cdc_tx_macro_path_get(const char *wname,
 
 	path_name = strsep(&widget_name, " ");
 	if (!path_name) {
-		pr_err("%s: Invalid widget name = %s\n",
+		pr_err_ratelimited("%s: Invalid widget name = %s\n",
 			__func__, widget_name);
 		ret = -EINVAL;
 		goto err;
 	}
 	path_num_char = strpbrk(path_name, "01234567");
 	if (!path_num_char) {
-		pr_err("%s: tx path index not found\n",
+		pr_err_ratelimited("%s: tx path index not found\n",
 			__func__);
 		ret = -EINVAL;
 		goto err;
 	}
 	ret = kstrtouint(path_num_char, 10, path_num);
 	if (ret < 0)
-		pr_err("%s: Invalid tx path = %s\n",
+		pr_err_ratelimited("%s: Invalid tx path = %s\n",
 			__func__, w_name);
 
 err:
@@ -767,6 +837,40 @@ static int lpass_cdc_tx_macro_swr_dmic_put(struct snd_kcontrol *kcontrol,
 		return -EINVAL;
 
 	tx_priv->swr_dmic_enable = value;
+
+	return 0;
+}
+
+
+static int lpass_cdc_tx_macro_get_dec_gain_bypass(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component =
+			snd_soc_kcontrol_component(kcontrol);
+	struct lpass_cdc_tx_macro_priv *tx_priv = NULL;
+	struct device *tx_dev = NULL;
+
+	if (!lpass_cdc_tx_macro_get_data(component, &tx_dev, &tx_priv, __func__))
+	return -EINVAL;
+
+	ucontrol->value.integer.value[0] = tx_priv->swr_dmic_gain_disable;
+
+	return 0;
+}
+
+static int lpass_cdc_tx_macro_put_dec_gain_bypass(struct snd_kcontrol *kcontrol,
+			    struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component =
+			snd_soc_kcontrol_component(kcontrol);
+	struct lpass_cdc_tx_macro_priv *tx_priv = NULL;
+	struct device *tx_dev = NULL;
+	int value = ucontrol->value.integer.value[0];
+
+	if (!lpass_cdc_tx_macro_get_data(component, &tx_dev, &tx_priv, __func__))
+		return -EINVAL;
+
+	tx_priv->swr_dmic_gain_disable = value;
 
 	return 0;
 }
@@ -888,16 +992,19 @@ static int lpass_cdc_tx_macro_enable_dec(struct snd_soc_dapm_widget *w,
 	unsigned int decimator = 0;
 	u16 tx_vol_ctl_reg = 0;
 	u16 dec_cfg_reg = 0;
+	u16 dec_gain_reg = 0;
 	u16 hpf_gate_reg = 0;
 	u16 tx_gain_ctl_reg = 0;
 	u16 tx_fs_reg = 0;
-	u8 hpf_cut_off_freq = 0;
+	u8 hpf_cut_off_freq = 0, swr_micn = 0;
 	u16 adc_mux_reg = 0;
 	u16 adc_mux0_reg = 0;
+	u16 dmic_clk_reg = 0;
 	int hpf_delay = LPASS_CDC_TX_MACRO_DMIC_HPF_DELAY_MS;
 	int unmute_delay = LPASS_CDC_TX_MACRO_DMIC_UNMUTE_DELAY_MS;
 	struct device *tx_dev = NULL;
 	struct lpass_cdc_tx_macro_priv *tx_priv = NULL;
+	u32 mic_pair = 0;
 
 	if (!lpass_cdc_tx_macro_get_data(component, &tx_dev, &tx_priv, __func__))
 		return -EINVAL;
@@ -913,6 +1020,8 @@ static int lpass_cdc_tx_macro_enable_dec(struct snd_soc_dapm_widget *w,
 				LPASS_CDC_TX_MACRO_TX_PATH_OFFSET * decimator;
 	dec_cfg_reg = LPASS_CDC_TX0_TX_PATH_CFG0 +
 				LPASS_CDC_TX_MACRO_TX_PATH_OFFSET * decimator;
+	dec_gain_reg = LPASS_CDC_TX0_TX_PATH_CFG1 +
+				LPASS_CDC_TX_MACRO_TX_PATH_OFFSET * decimator;
 	tx_gain_ctl_reg = LPASS_CDC_TX0_TX_VOL_CTL +
 				LPASS_CDC_TX_MACRO_TX_PATH_OFFSET * decimator;
 	adc_mux_reg = LPASS_CDC_TX_INP_MUX_ADC_MUX0_CFG1 +
@@ -925,7 +1034,7 @@ static int lpass_cdc_tx_macro_enable_dec(struct snd_soc_dapm_widget *w,
 	tx_priv->pcm_rate[decimator] = (snd_soc_component_read(component,
 				     tx_fs_reg) & 0x0F);
 
-	if(!is_amic_enabled(component, decimator))
+	if (is_msm_dmic_enabled(component, decimator))
 		lpass_cdc_tx_macro_enable_dmic(w, kcontrol, event, adc_mux0_reg);
 
 	switch (event) {
@@ -933,11 +1042,28 @@ static int lpass_cdc_tx_macro_enable_dec(struct snd_soc_dapm_widget *w,
 		snd_soc_component_update_bits(component,
 			dec_cfg_reg, 0x06, tx_priv->dec_mode[decimator] <<
 			LPASS_CDC_TX_MACRO_ADC_MODE_CFG0_SHIFT);
-		/* Enable TX PGA Mute */
-		snd_soc_component_update_bits(component,
-			tx_vol_ctl_reg, 0x10, 0x10);
 		break;
 	case SND_SOC_DAPM_POST_PMU:
+		/* if SWR DMIC is used, set SWR_MICn clk div */
+		if (tx_priv->swr_dmic_enable) {
+			swr_micn = snd_soc_component_read(component, adc_mux0_reg) & 0xf;
+			if (swr_micn > 0 && swr_micn <= 4) {
+				dmic_clk_reg = LPASS_CDC_TX_TOP_CSR_SWR_MIC0_CTL;
+				mic_pair = MIC_PAIR01;
+			} else if (swr_micn > 4 && swr_micn <= 7) {
+				dmic_clk_reg = LPASS_CDC_TX_TOP_CSR_SWR_MIC1_CTL;
+				mic_pair = MIC_PAIR23;
+			} else if (swr_micn > 7 && swr_micn <= 11) {
+				dmic_clk_reg = LPASS_CDC_TX_TOP_CSR_SWR_MIC2_CTL;
+				mic_pair = MIC_PAIR45;
+			}
+
+			if (dmic_clk_reg)
+				snd_soc_component_update_bits(component,
+						dmic_clk_reg,
+						0x0E, tx_priv->dmic_clk_div[mic_pair] << 0x1);
+					/* TODO: Add all DIV support */
+		}
 		snd_soc_component_update_bits(component,
 			tx_vol_ctl_reg, 0x20, 0x20);
 		if (!is_amic_enabled(component, decimator)) {
@@ -964,13 +1090,6 @@ static int lpass_cdc_tx_macro_enable_dec(struct snd_soc_dapm_widget *w,
 			hpf_delay = LPASS_CDC_TX_MACRO_AMIC_HPF_DELAY_MS;
 			unmute_delay = LPASS_CDC_TX_MACRO_AMIC_UNMUTE_DELAY_MS;
 		}
-		if (tx_unmute_delay < unmute_delay)
-			tx_unmute_delay = unmute_delay;
-		lpass_cdc_tx_macro_wake_enable(tx_priv, 1);
-		/* schedule work queue to Remove Mute */
-		queue_delayed_work(system_freezable_wq,
-				   &tx_priv->tx_mute_dwork[decimator].dwork,
-				   msecs_to_jiffies(tx_unmute_delay));
 		if (tx_priv->tx_hpf_work[decimator].hpf_cut_off_freq !=
 							CF_MIN_3DB_150HZ) {
 			lpass_cdc_tx_macro_wake_enable(tx_priv, 1);
@@ -1039,15 +1158,17 @@ static int lpass_cdc_tx_macro_enable_dec(struct snd_soc_dapm_widget *w,
 			}
 		}
 		lpass_cdc_tx_macro_wake_enable(tx_priv, 0);
-		cancel_delayed_work_sync(
-				&tx_priv->tx_mute_dwork[decimator].dwork);
-		lpass_cdc_tx_macro_wake_enable(tx_priv, 0);
 
 		if (snd_soc_component_read(component, adc_mux_reg)
 						& SWR_MIC)
 			snd_soc_component_update_bits(component,
 				LPASS_CDC_TX_TOP_CSR_SWR_CTRL,
 				0x01, 0x00);
+
+		if (tx_priv->swr_dmic_gain_disable)
+			snd_soc_component_update_bits(component, dec_gain_reg,
+					0x01, 0x01);
+
 		break;
 	case SND_SOC_DAPM_POST_PMD:
 		snd_soc_component_update_bits(component, tx_vol_ctl_reg,
@@ -1060,6 +1181,8 @@ static int lpass_cdc_tx_macro_enable_dec(struct snd_soc_dapm_widget *w,
 			dec_cfg_reg, 0x06, 0x00);
 		snd_soc_component_update_bits(component, tx_vol_ctl_reg,
 						0x10, 0x00);
+		snd_soc_component_update_bits(component, tx_fs_reg,
+						0x0F, 0x04);
 		if (tx_priv->bcs_enable) {
 			snd_soc_component_update_bits(component, dec_cfg_reg,
 					0x01, 0x00);
@@ -1110,6 +1233,7 @@ static int lpass_cdc_tx_macro_hw_params(struct snd_pcm_substream *substream,
 	int tx_fs_rate = -EINVAL;
 	struct snd_soc_component *component = dai->component;
 	u32 decimator = 0;
+	u16 tx_vol_ctl_reg = 0;
 	u32 sample_rate = 0;
 	u16 tx_fs_reg = 0;
 	struct device *tx_dev = NULL;
@@ -1146,7 +1270,7 @@ static int lpass_cdc_tx_macro_hw_params(struct snd_pcm_substream *substream,
 		tx_fs_rate = 7;
 		break;
 	default:
-		dev_err(component->dev, "%s: Invalid TX sample rate: %d\n",
+		dev_err_ratelimited(component->dev, "%s: Invalid TX sample rate: %d\n",
 			__func__, params_rate(params));
 		return -EINVAL;
 	}
@@ -1155,12 +1279,17 @@ static int lpass_cdc_tx_macro_hw_params(struct snd_pcm_substream *substream,
 		if (decimator >= 0) {
 			tx_fs_reg = LPASS_CDC_TX0_TX_PATH_CTL +
 				    LPASS_CDC_TX_MACRO_TX_PATH_OFFSET * decimator;
+			tx_vol_ctl_reg = LPASS_CDC_TX0_TX_PATH_CTL +
+						LPASS_CDC_TX_MACRO_TX_PATH_OFFSET * decimator;
 			dev_dbg(component->dev, "%s: set DEC%u rate to %u\n",
 				__func__, decimator, sample_rate);
 			snd_soc_component_update_bits(component, tx_fs_reg,
 						0x0F, tx_fs_rate);
+			/* Enable TX PGA Mute */
+			snd_soc_component_update_bits(component,
+				tx_vol_ctl_reg, 0x10, 0x10);
 		} else {
-			dev_err(component->dev,
+			dev_err_ratelimited(component->dev,
 				"%s: ERROR: Invalid decimator: %d\n",
 				__func__, decimator);
 			return -EINVAL;
@@ -1188,8 +1317,56 @@ static int lpass_cdc_tx_macro_get_channel_map(struct snd_soc_dai *dai,
 		*tx_num = tx_priv->active_ch_cnt[dai->id];
 		break;
 	default:
-		dev_err(tx_dev, "%s: Invalid AIF\n", __func__);
+		dev_err_ratelimited(tx_dev, "%s: Invalid AIF\n", __func__);
 		break;
+	}
+	return 0;
+}
+
+static int lpass_cdc_tx_mute_stream(struct snd_soc_dai *dai, int mute, int stream)
+{
+	u32 decimator = 0;
+	struct snd_soc_component *component = dai->component;
+	struct lpass_cdc_tx_macro_priv *tx_priv = NULL;
+	struct device *tx_dev = NULL;
+	u16 tx_mute_ctl_reg = 0;
+	u16 adc_mux_reg = 0;
+
+	if (!lpass_cdc_tx_macro_get_data(component, &tx_dev, &tx_priv, __func__))
+		return -EINVAL;
+
+	for_each_set_bit(decimator, &tx_priv->active_ch_mask[dai->id],
+			LPASS_CDC_TX_MACRO_DEC_MAX) {
+		adc_mux_reg = LPASS_CDC_TX_INP_MUX_ADC_MUX0_CFG1 +
+			LPASS_CDC_TX_MACRO_ADC_MUX_CFG_OFFSET * decimator;
+		if (snd_soc_component_read(component, adc_mux_reg) & 0x3) {
+			if (!tx_priv->swr_dmic_enable)
+				continue;
+		}
+		tx_mute_ctl_reg = LPASS_CDC_TX0_TX_PATH_CTL +
+			LPASS_CDC_TX_MACRO_TX_PATH_OFFSET * decimator;
+		if (mute) {
+			snd_soc_component_update_bits(component, tx_mute_ctl_reg, 0x10, 0x10);
+		} else {
+			if (!is_msm_dmic_enabled(component, decimator)) {
+				snd_soc_component_update_bits(component, tx_mute_ctl_reg,
+							0x40, 0x40);
+				usleep_range(2000, 2100);
+				snd_soc_component_update_bits(component, tx_mute_ctl_reg,
+							0x40, 0x00);
+			}
+		}
+		dev_dbg(component->dev, "capture: TX decimator %d %s\n", decimator,
+				(mute ? "muted" : "unmuted"));
+	}
+	if (!mute) {
+		/*
+		 * Schedule dwork after 10MS to unmute the dec to unblock the main thread
+		 */
+		tx_priv->tx_dec_unmute_work[dai->id].dai_id = dai->id;
+		queue_delayed_work(system_freezable_wq,
+			&tx_priv->tx_dec_unmute_work[dai->id].dwork,
+			msecs_to_jiffies(LPASS_CDC_TX_MACRO_DEC_UNMUTE_DELAY_MS));
 	}
 	return 0;
 }
@@ -1197,6 +1374,7 @@ static int lpass_cdc_tx_macro_get_channel_map(struct snd_soc_dai *dai,
 static struct snd_soc_dai_ops lpass_cdc_tx_macro_dai_ops = {
 	.hw_params = lpass_cdc_tx_macro_hw_params,
 	.get_channel_map = lpass_cdc_tx_macro_get_channel_map,
+	.mute_stream = lpass_cdc_tx_mute_stream,
 };
 
 static struct snd_soc_dai_driver lpass_cdc_tx_macro_dai[] = {
@@ -1856,10 +2034,13 @@ static const struct snd_kcontrol_new lpass_cdc_tx_macro_snd_controls[] = {
 		     lpass_cdc_tx_macro_bcs_ch_get, lpass_cdc_tx_macro_bcs_ch_put),
 
 	SOC_ENUM_EXT("BCS CH_SEL", bcs_ch_sel_mux_enum,
-		     lpass_cdc_tx_macro_get_bcs_ch_sel, lpass_cdc_tx_macro_put_bcs_ch_sel),
+		       lpass_cdc_tx_macro_get_bcs_ch_sel, lpass_cdc_tx_macro_put_bcs_ch_sel),
+
+	SOC_SINGLE_EXT("DEC_GAIN_BYPASS Enable", SND_SOC_NOPM, 0, 1, 0,
+		     lpass_cdc_tx_macro_get_dec_gain_bypass, lpass_cdc_tx_macro_put_dec_gain_bypass),
 };
 
-static int lpass_cdc_tx_macro_clk_div_get(struct snd_soc_component *component)
+static int lpass_cdc_tx_macro_clk_div_get(struct snd_soc_component *component, u32 mic_pair)
 {
 	struct device *tx_dev = NULL;
 	struct lpass_cdc_tx_macro_priv *tx_priv = NULL;
@@ -1867,57 +2048,47 @@ static int lpass_cdc_tx_macro_clk_div_get(struct snd_soc_component *component)
 	if (!lpass_cdc_tx_macro_get_data(component, &tx_dev, &tx_priv, __func__))
 		return -EINVAL;
 
-	return tx_priv->dmic_clk_div;
+	if (mic_pair >= MIC_PAIR_MAX)
+		return -EINVAL;
+
+	return (int)tx_priv->dmic_clk_div[mic_pair];
 }
 
-static int lpass_cdc_tx_macro_validate_dmic_sample_rate(u32 dmic_sample_rate,
-				      struct lpass_cdc_tx_macro_priv *tx_priv)
+static void lpass_cdc_tx_macro_update_clk_div_factor(u32 div_factor,
+				      struct lpass_cdc_tx_macro_priv *tx_priv,
+				      u32 mic_pair)
 {
-	u32 div_factor = LPASS_CDC_TX_MACRO_CLK_DIV_2;
-	u32 mclk_rate = LPASS_CDC_TX_MACRO_MCLK_FREQ;
 
-	if (dmic_sample_rate == LPASS_CDC_TX_MACRO_DMIC_SAMPLE_RATE_UNDEFINED ||
-	    mclk_rate % dmic_sample_rate != 0)
-		goto undefined_rate;
+	dev_dbg(tx_priv->dev, "%s: div_factor = %u, mic_pair %d\n",
+		__func__, div_factor, mic_pair);
 
-	div_factor = mclk_rate / dmic_sample_rate;
+	if (mic_pair >= MIC_PAIR_MAX)
+		return;
 
 	switch (div_factor) {
 	case 2:
-		tx_priv->dmic_clk_div = LPASS_CDC_TX_MACRO_CLK_DIV_2;
+		tx_priv->dmic_clk_div[mic_pair] = LPASS_CDC_TX_MACRO_CLK_DIV_2;
 		break;
 	case 3:
-		tx_priv->dmic_clk_div = LPASS_CDC_TX_MACRO_CLK_DIV_3;
+		tx_priv->dmic_clk_div[mic_pair] = LPASS_CDC_TX_MACRO_CLK_DIV_3;
 		break;
 	case 4:
-		tx_priv->dmic_clk_div = LPASS_CDC_TX_MACRO_CLK_DIV_4;
+		tx_priv->dmic_clk_div[mic_pair] = LPASS_CDC_TX_MACRO_CLK_DIV_4;
 		break;
 	case 6:
-		tx_priv->dmic_clk_div = LPASS_CDC_TX_MACRO_CLK_DIV_6;
+		tx_priv->dmic_clk_div[mic_pair] = LPASS_CDC_TX_MACRO_CLK_DIV_6;
 		break;
 	case 8:
-		tx_priv->dmic_clk_div = LPASS_CDC_TX_MACRO_CLK_DIV_8;
+		tx_priv->dmic_clk_div[mic_pair] = LPASS_CDC_TX_MACRO_CLK_DIV_8;
 		break;
 	case 16:
-		tx_priv->dmic_clk_div = LPASS_CDC_TX_MACRO_CLK_DIV_16;
+		tx_priv->dmic_clk_div[mic_pair] = LPASS_CDC_TX_MACRO_CLK_DIV_16;
 		break;
 	default:
 		/* Any other DIV factor is invalid */
-		goto undefined_rate;
+		dev_err(tx_priv->dev, "%s: Invalid div factor %d, for mic_pair %d\n",
+			 __func__, div_factor, mic_pair);
 	}
-
-	/* Valid dmic DIV factors */
-	dev_dbg(tx_priv->dev, "%s: DMIC_DIV = %u, mclk_rate = %u\n",
-		__func__, div_factor, mclk_rate);
-
-	return dmic_sample_rate;
-
-undefined_rate:
-	dev_dbg(tx_priv->dev, "%s: Invalid rate %d, for mclk %d\n",
-		 __func__, dmic_sample_rate, mclk_rate);
-	dmic_sample_rate = LPASS_CDC_TX_MACRO_DMIC_SAMPLE_RATE_UNDEFINED;
-
-	return dmic_sample_rate;
 }
 
 static const struct lpass_cdc_tx_macro_reg_mask_val
@@ -1929,7 +2100,7 @@ static int lpass_cdc_tx_macro_init(struct snd_soc_component *component)
 {
 	struct snd_soc_dapm_context *dapm =
 			snd_soc_component_get_dapm(component);
-	int ret = 0, i = 0;
+	int ret = 0, i = 0, dai_idx;
 	struct device *tx_dev = NULL;
 	struct lpass_cdc_tx_macro_priv *tx_priv = NULL;
 
@@ -1996,6 +2167,12 @@ static int lpass_cdc_tx_macro_init(struct snd_soc_component *component)
 		INIT_DELAYED_WORK(&tx_priv->tx_mute_dwork[i].dwork,
 			  lpass_cdc_tx_macro_mute_update_callback);
 	}
+
+	for (dai_idx = 0; dai_idx < LPASS_CDC_TX_MACRO_MAX_DAIS; ++dai_idx) {
+		tx_priv->tx_dec_unmute_work[dai_idx].tx_priv = tx_priv;
+		INIT_DELAYED_WORK(&tx_priv->tx_dec_unmute_work[dai_idx].dwork,
+				mute_stream_dec_unmute);
+	}
 	tx_priv->component = component;
 
 	for (i = 0; i < ARRAY_SIZE(lpass_cdc_tx_macro_reg_init); i++)
@@ -2037,10 +2214,11 @@ static int lpass_cdc_tx_macro_probe(struct platform_device *pdev)
 {
 	struct macro_ops ops = {0};
 	struct lpass_cdc_tx_macro_priv *tx_priv = NULL;
-	u32 tx_base_addr = 0, sample_rate = 0;
+	u32 tx_base_addr = 0, prop_size, *temp;
 	char __iomem *tx_io_base = NULL;
-	int ret = 0;
-	const char *dmic_sample_rate = "qcom,tx-dmic-sample-rate";
+	int ret = 0, i;
+
+	const char *dmic_clk_div_factor = "qcom,tx-dmic-clk-div-factor";
 
 	if (!lpass_cdc_is_va_macro_registered(&pdev->dev)) {
 		dev_err(&pdev->dev,
@@ -2072,18 +2250,27 @@ static int lpass_cdc_tx_macro_probe(struct platform_device *pdev)
 	}
 	tx_priv->tx_io_base = tx_io_base;
 	tx_priv->swr_dmic_enable = false;
+	tx_priv->swr_dmic_gain_disable = false;
 	tx_priv->wlock_holders = 0;
-	ret = of_property_read_u32(pdev->dev.of_node, dmic_sample_rate,
-				   &sample_rate);
-	if (ret) {
+
+	for (i = 0; i < MIC_PAIR_MAX; i++)
+		tx_priv->dmic_clk_div[i] = LPASS_CDC_TX_MACRO_CLK_DIV_2;
+
+	if (!of_find_property(pdev->dev.of_node, dmic_clk_div_factor, &prop_size)) {
 		dev_err(&pdev->dev,
-			"%s: could not find sample_rate entry in dt\n",
+			"%s: could not find div_clk_factor entry in dt\n",
 			__func__);
-		tx_priv->dmic_clk_div = LPASS_CDC_TX_MACRO_CLK_DIV_2;
 	} else {
-		if (lpass_cdc_tx_macro_validate_dmic_sample_rate(
-		sample_rate, tx_priv) == LPASS_CDC_TX_MACRO_DMIC_SAMPLE_RATE_UNDEFINED)
-			return -EINVAL;
+		temp = devm_kzalloc(&pdev->dev, prop_size, GFP_KERNEL);
+		if (!temp)
+			return -ENOMEM;
+		if (!of_property_read_u32_array(pdev->dev.of_node,
+					dmic_clk_div_factor, temp, prop_size/sizeof(u32)))
+			/* Limit the loop iteration to match the array size MIC_PAIR_MAX. */
+			for (i = 0; i < MIC_PAIR_MAX; i++)
+				lpass_cdc_tx_macro_update_clk_div_factor(
+						temp[i], tx_priv, i);
+
 	}
 
 	mutex_init(&tx_priv->mclk_lock);
@@ -2113,12 +2300,16 @@ err_reg_macro:
 static int lpass_cdc_tx_macro_remove(struct platform_device *pdev)
 {
 	struct lpass_cdc_tx_macro_priv *tx_priv = NULL;
+	int dai_idx;
 
 	tx_priv = platform_get_drvdata(pdev);
 
 	if (!tx_priv)
 		return -EINVAL;
 
+	for (dai_idx = 0; dai_idx < LPASS_CDC_TX_MACRO_MAX_DAIS; ++dai_idx)
+		cancel_delayed_work_sync(
+				&tx_priv->tx_dec_unmute_work[dai_idx].dwork);
 	pm_runtime_disable(&pdev->dev);
 	pm_runtime_set_suspended(&pdev->dev);
 	mutex_destroy(&tx_priv->mclk_lock);

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _SWR_WCD_CTRL_H
@@ -15,7 +16,7 @@
 #include <linux/debugfs.h>
 #include <linux/uaccess.h>
 
-#define SWR_MSTR_MAX_REG_ADDR	0x1740
+#define SWR_MSTR_MAX_REG_ADDR	0x60A8
 #define SWR_MSTR_START_REG_ADDR	0x00
 #define SWR_MSTR_MAX_BUF_LEN     32
 #define BYTES_PER_LINE          12
@@ -30,9 +31,9 @@
 #define SWR_MAX_COL		7 /* Cols = 16 */
 #define SWR_MIN_COL		0 /* Cols = 2 */
 
-#define SWR_WCD_NAME	"swr-wcd"
+#define SWR_NAME	"swr-mgr"
 
-#define SWR_MSTR_PORT_LEN	8 /* Number of master ports */
+#define SWR_MSTR_PORT_LEN	13 /* Number of master ports */
 
 #define SWRM_VERSION_1_0 0x01010000
 #define SWRM_VERSION_1_2 0x01030000
@@ -41,6 +42,7 @@
 #define SWRM_VERSION_1_5_1 0x01050001
 #define SWRM_VERSION_1_6   0x01060000
 #define SWRM_VERSION_1_7   0x01070000
+#define SWRM_VERSION_2_0   0x02000000
 
 #define SWR_MAX_CH_PER_PORT 8
 
@@ -64,13 +66,6 @@ enum swrm_pm_state {
 enum {
 	SWR_IRQ_FREE,
 	SWR_IRQ_REGISTER,
-};
-
-enum {
-	SWR_DAC_PORT,
-	SWR_COMP_PORT,
-	SWR_BOOST_PORT,
-	SWR_VISENSE_PORT,
 };
 
 enum {
@@ -142,6 +137,7 @@ struct swr_mstr_ctrl {
 	char __iomem *swrm_hctl_reg;
 	u8 rcmd_id;
 	u8 wcmd_id;
+	u8 cmd_id;
 	u32 master_id;
 	u32 ee_val;
 	u32 dynamic_port_map_supported;
@@ -190,7 +186,6 @@ struct swr_mstr_ctrl {
 	struct clk *lpass_core_hw_vote;
 	struct clk *lpass_core_audio;
 	u8 num_usecase;
-	u32 pcm_enable_count;
 	u32 swr_irq_wakeup_capable;
 	int hw_core_clk_en;
 	int aud_core_clk_en;
@@ -210,6 +205,10 @@ struct swr_mstr_ctrl {
 	struct dentry *debugfs_reg_dump;
 	unsigned int read_data;
 #endif
+#ifdef OPLUS_ARCH_EXTENDS
+	struct delayed_work adsp_ssr_work;
+#endif /* OPLUS_ARCH_EXTENDS */
+	struct proc_dir_entry *swr_mstr_ctrl_proc_entry;
 };
 
 #endif /* _SWR_WCD_CTRL_H */

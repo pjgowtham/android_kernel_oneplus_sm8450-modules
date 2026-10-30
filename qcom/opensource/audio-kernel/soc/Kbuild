@@ -45,19 +45,31 @@ ifeq ($(KERNEL_BUILD), 0)
 		include $(AUDIO_ROOT)/config/waipioauto.conf
 		INCS    +=  -include $(AUDIO_ROOT)/config/waipioautoconf.h
 	endif
-	ifeq ($(CONFIG_ARCH_PARROT), y)
-		include $(AUDIO_ROOT)/config/waipioauto.conf
-		INCS    +=  -include $(AUDIO_ROOT)/config/waipioautoconf.h
+	ifeq ($(CONFIG_ARCH_KALAMA), y)
+		include $(AUDIO_ROOT)/config/kalamaauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/kalamaautoconf.h
+	endif
+	ifeq ($(CONFIG_ARCH_PINEAPPLE), y)
+		include $(AUDIO_ROOT)/config/pineappleauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/pineappleautoconf.h
 	endif
 	ifeq ($(CONFIG_ARCH_LITO), y)
 		include $(AUDIO_ROOT)/config/litoauto.conf
 		export
 		INCS    +=  -include $(AUDIO_ROOT)/config/litoautoconf.h
 	endif
-	ifeq ($(CONFIG_ARCH_BENGAL), y)
+	ifeq ($(CONFIG_ARCH_KHAJE), y)
 		include $(AUDIO_ROOT)/config/bengalauto.conf
 		export
 		INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+	endif
+	ifeq ($(CONFIG_ARCH_HOLI), y)
+		include $(AUDIO_ROOT)/config/holiauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/holiautoconf.h
+	endif
+	ifeq ($(CONFIG_ARCH_BLAIR), y)
+		include $(AUDIO_ROOT)/config/holiauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/holiautoconf.h
 	endif
 	ifeq ($(CONFIG_ARCH_SM6150), y)
 		ifdef CONFIG_SND_SOC_SA6155
@@ -151,6 +163,7 @@ ifdef CONFIG_SOUNDWIRE_MSTR_CTRL
 endif
 
 ifdef CONFIG_SOUNDWIRE
+	INCS += -include $(KERNEL_SRC)/drivers/base/regmap/internal.h
 	SWR_OBJS += regmap-swr.o
 	SWR_OBJS += soundwire.o
 endif
@@ -221,3 +234,6 @@ swr_ctrl_dlkm-y := $(SWR_CTRL_OBJS)
 
 obj-$(CONFIG_WCD_SPI_AC) += wcd_spi_acc_ctl_dlkm.o
 wcd_spi_acc_ctl_dlkm-y := $(WCD_SPI_ACC_CTL_OBJS)
+
+# inject some build related information
+DEFINES += -DBUILD_TIMESTAMP=\"$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')\"

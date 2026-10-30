@@ -31,6 +31,21 @@
 #include <dsp/spf-core.h>
 #include <dsp/msm_audio_ion.h>
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include "feedback/oplus_audio_kernel_fb.h"
+#ifdef dev_err
+#undef dev_err
+#define dev_err dev_err_fb_fatal_delay
+#endif
+#endif /*CONFIG_OPLUS_FEATURE_MM_FEEDBACK*/
+
+#ifdef OPLUS_ARCH_EXTENDS
+#define GLOBAL_SKB_LEN  128
+static struct sk_buff *gskb = NULL;
+static bool gskb_used = false;
+static spinlock_t gskb_lock;
+#endif /* OPLUS_ARCH_EXTENDS */
+
 /* Define IPC Logging Macros */
 #define AUDIO_PKT_IPC_LOG_PAGE_CNT 2
 static void *audio_pkt_ilctxt;
@@ -64,6 +79,7 @@ do {									      \
 #define AUDPKT_DRIVER_NAME "aud_pasthru_adsp"
 #define CHANNEL_NAME "adsp_apps"
 #define MAX_PACKET_SIZE 4096
+
 
 enum audio_pkt_state {
 	AUDIO_PKT_INIT,
@@ -188,7 +204,18 @@ int audio_pkt_release(struct inode *inode, struct file *file)
 	/* Discard all SKBs */
 	while (!skb_queue_empty(&audpkt_dev->queue)) {
 		skb = skb_dequeue(&audpkt_dev->queue);
+#ifndef OPLUS_ARCH_EXTENDS
 		kfree_skb(skb);
+#else /* OPLUS_ARCH_EXTENDS */
+		if (skb != gskb) {
+			kfree_skb(skb);
+		} else {
+			// clear gskb
+			skb_reset_tail_pointer(gskb);
+			skb_trim(gskb, 0);
+			gskb_used = false;
+		}
+#endif /* OPLUS_ARCH_EXTENDS */
 	}
 	wake_up_interruptible(&audpkt_dev->readq);
 	spin_unlock_irqrestore(&audpkt_dev->queue_lock, flags);
@@ -218,7 +245,18 @@ static int audio_pkt_internal_release(struct platform_device *adev)
 	/* Discard all SKBs */
 	while (!skb_queue_empty(&audpkt_dev->queue)) {
 		skb = skb_dequeue(&audpkt_dev->queue);
+#ifndef OPLUS_ARCH_EXTENDS
 		kfree_skb(skb);
+#else /* OPLUS_ARCH_EXTENDS */
+		if (skb != gskb) {
+			kfree_skb(skb);
+		} else {
+			// clear gskb
+			skb_reset_tail_pointer(gskb);
+			skb_trim(gskb, 0);
+			gskb_used = false;
+		}
+#endif /* OPLUS_ARCH_EXTENDS */
 	}
 	spin_unlock_irqrestore(&audpkt_dev->queue_lock, flags);
 
@@ -288,8 +326,18 @@ ssize_t audio_pkt_read(struct file *file, char __user *buf,
 	if (copy_to_user(buf, skb->data, use))
 		use = -EFAULT;
 	temp = (uint32_t *) skb->data;
+#ifndef OPLUS_ARCH_EXTENDS
 	kfree_skb(skb);
-
+#else /* OPLUS_ARCH_EXTENDS */
+	if (skb != gskb) {
+		kfree_skb(skb);
+	} else {
+		// clear gskb
+		skb_reset_tail_pointer(gskb);
+		skb_trim(gskb, 0);
+		gskb_used = false;
+	}
+#endif  /* OPLUS_ARCH_EXTENDS */
 	return use;
 }
 
@@ -335,11 +383,18 @@ int audpkt_chk_and_update_physical_addr(struct audio_gpr_pkt *gpr_pkt)
 ssize_t audio_pkt_write(struct file *file, const char __user *buf,
 			size_t count, loff_t *ppos)
 {
-	struct audio_pkt_priv *ap_priv = file->private_data;
-	struct audio_pkt_device *audpkt_dev = ap_priv->ap_dev;
+	struct audio_pkt_priv *ap_priv = NULL;
+	struct audio_pkt_device *audpkt_dev = NULL;
 	struct gpr_hdr *audpkt_hdr = NULL;
 	void *kbuf;
 	int ret;
+
+	if (file == NULL || file->private_data == NULL || buf == NULL) {
+		AUDIO_PKT_ERR("invalid parameters\n");
+		return -EINVAL;
+	}
+	ap_priv = file->private_data;
+	audpkt_dev = ap_priv->ap_dev;
 
 	if (!audpkt_dev)  {
 		AUDIO_PKT_ERR("invalid device handle\n");
@@ -355,7 +410,7 @@ ssize_t audio_pkt_write(struct file *file, const char __user *buf,
 	}
 	mutex_unlock(&ap_priv->lock);
 	if (count < sizeof(struct gpr_hdr)) {
-		AUDIO_PKT_ERR("Invalid count %zu\n",count);
+		AUDIO_PKT_ERR("Invalid count %zu\n", count);
 		return  -EINVAL;
 	}
 
@@ -373,8 +428,8 @@ ssize_t audio_pkt_write(struct file *file, const char __user *buf,
 	}
 
 	if (audpkt_hdr->opcode == APM_CMD_SHARED_MEM_MAP_REGIONS) {
-		if (count < sizeof(struct audio_gpr_pkt )) {
-			AUDIO_PKT_ERR("Invalid count %zu\n",count);
+		if (count < sizeof(struct audio_gpr_pkt)) {
+			AUDIO_PKT_ERR("Invalid count %zu\n", count);
 			ret = -EINVAL;
 			goto free_kbuf;
 		}
@@ -390,7 +445,7 @@ ssize_t audio_pkt_write(struct file *file, const char __user *buf,
 		goto free_kbuf;
 	}
 	if (count < sizeof(struct gpr_pkt )) {
-		AUDIO_PKT_ERR("Invalid count %zu\n",count);
+		AUDIO_PKT_ERR("Invalid count %zu\n", count);
 		ret = -EINVAL;
 		mutex_unlock(&audpkt_dev->lock);
 		goto free_kbuf;
@@ -464,7 +519,11 @@ static int audio_pkt_srvc_callback(struct gpr_device *adev,
 	struct audio_pkt_device *audpkt_dev = ap_priv->ap_dev;
 
 	unsigned long flags;
+#ifndef OPLUS_ARCH_EXTENDS
 	struct sk_buff *skb;
+#else /* OPLUS_ARCH_EXTENDS */
+	struct sk_buff *skb = NULL;
+#endif /* OPLUS_ARCH_EXTENDS */
 	struct gpr_hdr *hdr = (struct gpr_hdr *)data;
 	uint16_t hdr_size, pkt_size;
 	hdr_size = GPR_PKT_GET_HEADER_BYTE_SIZE(hdr->header);
@@ -474,8 +533,30 @@ static int audio_pkt_srvc_callback(struct gpr_device *adev,
 		__func__,hdr_size, pkt_size);
 
 	skb = alloc_skb(pkt_size, GFP_ATOMIC);
-	if (!skb)
+#ifndef OPLUS_ARCH_EXTENDS
+	if (!skb) {
+		dev_err(&adev->dev, "%s: alloc_skb failed pkt_size %d\n",
+				__func__, pkt_size);
 		return -ENOMEM;
+	}
+#else /* OPLUS_ARCH_EXTENDS */
+	if (!skb) {
+		AUDIO_PKT_ERR("alloc_skb failed, pkt_size = 0x%x, gskb_used = %d\n", pkt_size, gskb_used);
+		spin_lock_irqsave(&gskb_lock, flags);
+		if (!gskb_used && gskb && (pkt_size <= GLOBAL_SKB_LEN)) {
+			gskb_used = true;
+			skb = gskb;
+			dev_info(&adev->dev, "%s: gskb_used=%d\n", __func__, gskb_used);
+		}
+		spin_unlock_irqrestore(&gskb_lock, flags);
+	}
+
+	if (!skb) {
+		dev_err(&adev->dev, "%s: alloc_skb failed pkt_size %d\n",
+				__func__, pkt_size);
+		return -ENOMEM;
+	}
+#endif /* OPLUS_ARCH_EXTENDS */
 
 	skb_put_data(skb, data, pkt_size);
 
@@ -509,6 +590,14 @@ static int audio_pkt_probe(struct gpr_device *adev)
 
 		dev_set_drvdata(&adev->dev, ap_priv);
 
+#ifdef OPLUS_ARCH_EXTENDS
+		gskb = alloc_skb(GLOBAL_SKB_LEN, GFP_ATOMIC);
+		if (!gskb) {
+			dev_dbg(&adev->dev, "%s: alloc_skb 256 failed \n", __func__);
+		}
+		spin_lock_init(&gskb_lock);
+#endif /* OPLUS_ARCH_EXTENDS */
+
 		dev_dbg(&adev->dev, "%s: Driver[%s] Probed\n",
 		 __func__, adev->name);
 	}
@@ -541,6 +630,13 @@ static int audio_pkt_remove(struct gpr_device *adev)
 		ap_priv->adev = NULL;
 		ap_priv->status = AUDIO_PKT_REMOVED;
 		mutex_unlock(&ap_priv->lock);
+
+#ifdef OPLUS_ARCH_EXTENDS
+		if (gskb) {
+			kfree_skb(gskb);
+		}
+#endif /* OPLUS_ARCH_EXTENDS */
+
 		dev_dbg(&adev->dev, "%s: Driver[%s] Removing\n",
 		 __func__, adev->name);
 		dev_set_drvdata(&adev->dev, NULL);
@@ -580,16 +676,17 @@ static int audio_pkt_plaform_driver_register_gpr(struct platform_device *pdev,
 	if (!ap_priv)
 		return -ENOMEM;
 
+	ap_priv->status = AUDIO_PKT_INIT;
+	mutex_init(&ap_priv->lock);
+	ap_priv->ap_dev = audpkt_dev;
 	ret = gpr_driver_register(&audio_pkt_driver);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "%s: registering to gpr driver failed, err = %d\n",
 			__func__, ret);
+		mutex_destroy(&ap_priv->lock);
 		goto err;
 	}
 
-	mutex_init(&ap_priv->lock);
-	ap_priv->status = AUDIO_PKT_INIT;
-	ap_priv->ap_dev = audpkt_dev;
 	ap_priv->dev = audpkt_dev->dev;
 err:
 	return ret;
@@ -638,8 +735,8 @@ static int audio_pkt_platform_driver_probe(struct platform_device *pdev)
 			      PTR_ERR(audpkt_dev->dev));
 		goto err_device;
 	}
-	strlcpy(audpkt_dev->dev_name, AUDPKT_DRIVER_NAME, 20);
-	strlcpy(audpkt_dev->ch_name, CHANNEL_NAME, 20);
+	strscpy(audpkt_dev->dev_name, AUDPKT_DRIVER_NAME, 20);
+	strscpy(audpkt_dev->ch_name, CHANNEL_NAME, 20);
 	dev_set_name(audpkt_dev->dev, audpkt_dev->dev_name);
 
 	mutex_init(&audpkt_dev->lock);
@@ -711,6 +808,7 @@ static int audio_pkt_platform_driver_remove(struct platform_device *adev)
 		unregister_chrdev_region(MAJOR(audpkt_dev->audio_pkt_major),
 				 MINOR_NUMBER_COUNT);
 	}
+	mutex_destroy(&ap_priv->lock);
 
 	//of_platform_depopulate(&adev->dev);
 	AUDIO_PKT_INFO("Audio Packet Port Driver Removed\n");

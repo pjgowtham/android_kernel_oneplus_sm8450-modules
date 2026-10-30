@@ -16,6 +16,7 @@
 #include <linux/dma-buf.h>
 #include <linux/iosys-map.h>
 #include <linux/platform_device.h>
+#include <linux/of_platform.h>
 #include <linux/of_device.h>
 #include <linux/export.h>
 #include <linux/ioctl.h>
@@ -30,6 +31,11 @@
 #include <linux/msm_audio.h>
 #include <linux/firmware/qcom/qcom_scm.h>
 #include <soc/qcom/secure_buffer.h>
+#include <linux/of.h>
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include "feedback/oplus_audio_kernel_fb.h"
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 
 MODULE_IMPORT_NS(DMA_BUF);
 
@@ -109,7 +115,6 @@ static int msm_audio_ion_map_kernel(struct dma_buf *dma_buf,
 	struct msm_audio_ion_private *ion_data, struct iosys_map *iosys_vmap)
 {
 	int rc = 0;
-	//void *addr = NULL;
 	struct msm_audio_alloc_data *alloc_data = NULL;
 
 	rc = dma_buf_begin_cpu_access(dma_buf, DMA_BIDIRECTIONAL);
@@ -687,7 +692,11 @@ static int msm_audio_ion_open(struct inode *inode, struct file *file)
 						cdev);
 	struct device *dev = ion_data->chardev;
 
+#ifdef OPLUS_ARCH_EXTENDS
+	pr_err("Inside %s\n", __func__);
+#else /* OPLUS_ARCH_EXTENDS */
 	pr_debug("Inside %s\n", __func__);
+#endif /* OPLUS_ARCH_EXTENDS */
 	get_device(dev);
 	return ret;
 }
@@ -699,7 +708,11 @@ static int msm_audio_ion_release(struct inode *inode, struct file *file)
 						cdev);
 	struct device *dev = ion_data->chardev;
 
+#ifdef OPLUS_ARCH_EXTENDS
+	pr_err("Inside %s\n", __func__);
+#else /* OPLUS_ARCH_EXTENDS */
 	pr_debug("Inside %s\n", __func__);
+#endif /* OPLUS_ARCH_EXTENDS */
 	put_device(dev);
 	return 0;
 }
@@ -740,6 +753,9 @@ static long msm_audio_ion_ioctl(struct file *file, unsigned int ioctl_num,
 			pr_err("%s Memory map Failed %d\n", __func__, ret);
 			kfree(iosys_vmap);
 			kfree(msm_audio_fd_data);
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+			ratelimited_fb("payload@@%s: Memory map Failed %d", __func__, ret);
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 			return ret;
 		}
 		msm_audio_fd_data->fd = (int)ioctl_param;
@@ -817,6 +833,13 @@ static const struct file_operations msm_audio_ion_fops = {
 	.unlocked_ioctl = msm_audio_ion_ioctl,
 };
 
+#ifdef OPLUS_ARCH_EXTENDS
+#undef pr_debug
+#define pr_debug pr_err
+#undef dev_dbg
+#define dev_dbg dev_err
+#endif /* OPLUS_ARCH_EXTENDS */
+
 static int msm_audio_ion_reg_chrdev(struct msm_audio_ion_private *ion_data)
 {
 	int ret = 0;
@@ -849,6 +872,9 @@ static int msm_audio_ion_reg_chrdev(struct msm_audio_ion_private *ion_data)
 		pr_err("%s cdev add failed, ret : %d\n", __func__, ret);
 		goto err_cdev;
 	}
+#ifdef OPLUS_ARCH_EXTENDS
+	pr_err("%s success ret : %d\n", __func__, ret);
+#endif /* OPLUS_ARCH_EXTENDS */
 	return ret;
 
 err_cdev:
@@ -857,6 +883,9 @@ err_device:
 	class_destroy(ion_data->ion_class);
 err_class:
 	unregister_chrdev_region(0, MINOR_NUMBER_COUNT);
+#ifdef OPLUS_ARCH_EXTENDS
+	pr_err("%s failed ret : %d\n", __func__, ret);
+#endif /* OPLUS_ARCH_EXTENDS */
 	return ret;
 }
 
@@ -957,6 +986,9 @@ static int msm_audio_ion_probe(struct platform_device *pdev)
 			smmu_sid << MSM_AUDIO_SMMU_SID_OFFSET;
 	} else {
 		msm_audio_ion_data->driver_name = "msm_audio_ion_cma";
+#ifdef OPLUS_ARCH_EXTENDS
+		dev_err(dev, "%s: SMMU is not Enabled \n", __func__);
+#endif /* OPLUS_ARCH_EXTENDS */
 	}
 
 	if (!rc)
@@ -976,6 +1008,9 @@ static int msm_audio_ion_probe(struct platform_device *pdev)
 		pr_err("%s register char dev failed, rc : %d", __func__, rc);
 		return rc;
 	}
+#ifdef OPLUS_ARCH_EXTENDS
+	pr_err("%s success, rc : %d", __func__, rc);
+#endif /* OPLUS_ARCH_EXTENDS */
 	return rc;
 }
 

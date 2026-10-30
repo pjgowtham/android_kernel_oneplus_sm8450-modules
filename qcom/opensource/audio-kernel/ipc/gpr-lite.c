@@ -1,5 +1,6 @@
 /* Copyright (c) 2011-2017, 2019-2021 The Linux Foundation. All rights reserved.
  * Copyright (c) 2018, Linaro Limited
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -9,9 +10,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
- * SPDX-License-Identifier: GPL-2.0-only
- * Copyright (c) 2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/kernel.h>
@@ -27,6 +25,14 @@
 
 #include <soc/snd_event.h>
 #include <dsp/audio_notifier.h>
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include "feedback/oplus_audio_kernel_fb.h"
+#ifdef dev_err_ratelimited
+#undef dev_err_ratelimited
+#define dev_err_ratelimited dev_err_ratelimited_fb_delay_no_dm
+#endif
+#endif /*CONFIG_OPLUS_FEATURE_MM_FEEDBACK*/
 
 #define APM_EVENT_MODULE_TO_CLIENT	0x03001000
 #define WAKELOCK_TIMEOUT 200
@@ -125,11 +131,19 @@ int gpr_send_pkt(struct gpr_device *adev, struct gpr_pkt *pkt)
 
 	if ((adev->domain_id == GPR_DOMAIN_ADSP) &&
 	    (gpr_get_q6_state() != GPR_SUBSYS_LOADED)) {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+		dev_err_ratelimited_not_fb(gpr->dev, "%s: Still Dsp is not Up\n", __func__);
+#else /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 		dev_err_ratelimited(gpr->dev, "%s: Still Dsp is not Up\n", __func__);
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 		return -ENETRESET;
 	} else if ((adev->domain_id == GPR_DOMAIN_MODEM) &&
 		   (gpr_get_modem_state() == GPR_SUBSYS_DOWN)) {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+		dev_err_ratelimited_not_fb(gpr->dev, "%s: Still Modem is not Up\n", __func__);
+#else /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 		dev_err_ratelimited(gpr->dev, "%s: Still Modem is not Up\n", __func__);
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 		return -ENETRESET;
 	}
 
@@ -287,7 +301,7 @@ static int gpr_callback(struct rpmsg_device *rpdev, void *buf,
 	unsigned long flags;
 	//uint32_t opcode_type;
 
-	if (len <= GPR_HDR_SIZE) {
+	if (len < GPR_HDR_SIZE) {
 		dev_err_ratelimited(gpr->dev, "GPR: Improper gpr pkt received:%p %d\n",
 			buf, len);
 		return -EINVAL;
@@ -313,7 +327,7 @@ static int gpr_callback(struct rpmsg_device *rpdev, void *buf,
 	__func__ , hdr->dst_port, hdr_size, pkt_size);
 
 	if (hdr->opcode == APM_EVENT_MODULE_TO_CLIENT) {
-		dev_err(gpr->dev, "%s: Acquire wakelock in case of module event with timeout %d",
+		dev_dbg(gpr->dev, "%s: Acquire wakelock in case of module event with timeout %d",
 			__func__, WAKELOCK_TIMEOUT);
 		pm_wakeup_ws_event(gpr_priv->wsource, WAKELOCK_TIMEOUT, true);
 	}

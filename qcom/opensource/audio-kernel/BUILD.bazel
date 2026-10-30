@@ -6,11 +6,6 @@ package(
 
 load("//build/kernel/kleaf:kernel.bzl", "ddk_headers")
 
-filegroup(
-    name = "audio_dt_bindings",
-    srcs = glob(["include/bindings/**"]),
-)
-
 ddk_headers(
     name = "audio_common_headers",
     hdrs = glob([
@@ -18,6 +13,10 @@ ddk_headers(
         "include/bindings/*.h",
         "include/dsp/*.h",
         "include/ipc/*.h",
+#ifdef CONFIG_OPLUS_FEATURE_MM_FEEDBACK
+#Add for feedback
+        "include/feedback/*.h",
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
         "include/soc/*.h"
     ]),
     includes = ["include"]
@@ -45,15 +44,71 @@ ddk_headers(
     ]),
     includes = ["config"]
 )
+
+# add for oplus audio daemon kernel
 ddk_headers(
-    name = "audio_headers",
-    hdrs = [":audio_common_headers",  ":audio_uapi_headers", ":audio_src_headers", ":audio_configs"]
+    name = "audio_daemon_headers",
+    hdrs = glob([
+        "oplus/oplus_audio_daemon/*.h"
+    ]),
+    includes = ["oplus/oplus_audio_daemon"]
 )
 
-load(":build/parrot.bzl", "define_parrot")
+# add for oplus audio netlink kernel communication
+ddk_headers(
+    name = "audio_netlink_headers",
+    hdrs = glob([
+        "oplus/oplus_audio_netlink/*.h"
+    ]),
+    includes = ["oplus/oplus_audio_netlink"]
+)
 
-define_parrot()
+ddk_headers(
+    name = "audio_headers",
+    hdrs = [":audio_common_headers",  ":audio_uapi_headers", ":audio_src_headers", ":audio_configs", ":audio_daemon_headers"]
+)
 
-load(":build/waipio.bzl", "define_waipio")
+#ifdef OPLUS_ARCH_EXTENDS
+#add for oplus audio extends driver
+ddk_headers(
+    name = "aw882xx_headers",
+    hdrs = glob([
+        "oplus/codecs/aw882xx/*.h"
+    ])
+)
+ddk_headers(
+    name = "tfa98xx_headers",
+    hdrs = glob([
+        "oplus/codecs/tfa98xx-v6/*.h"
+    ])
+)
+ddk_headers(
+    name = "sipa_headers",
+    hdrs = glob([
+        "oplus/codecs/sipa/*.h"
+    ]),
+    includes = ["oplus/codecs/sipa"]
+)
+ddk_headers(
+    name = "oplus_speaker_headers",
+    hdrs = glob([
+        "oplus/qcom/oplus_speaker_manager/*.h"
+    ])
+)
+ddk_headers(
+    name = "aw87xxx_headers",
+    hdrs = glob([
+        "oplus/codecs/aw87xxx/*.h"
+    ])
+)
+#endif /* OPLUS_ARCH_EXTENDS */
 
-define_waipio()
+load(":build/sun.bzl", "define_sun")
+load(":build/pineapple.bzl", "define_pineapple")
+load(":build/kalama.bzl", "define_kalama")
+load(":build/blair.bzl", "define_blair")
+
+define_sun()
+define_kalama()
+define_pineapple()
+define_blair()

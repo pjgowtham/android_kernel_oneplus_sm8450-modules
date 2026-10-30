@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _LPASS_CDC_INTERNAL_H
@@ -17,6 +18,7 @@ enum {
 	LPASS_CDC_WCD_EVT_SSR_UP,
 	LPASS_CDC_WCD_EVT_PA_ON_POST_FSCLK,
 	LPASS_CDC_WCD_EVT_PA_ON_POST_FSCLK_ADIE_LB,
+	LPASS_CDC_WCD_EVT_CLK_NOTIFY,
 };
 
 enum {
@@ -50,6 +52,7 @@ struct lpass_cdc_priv {
 	struct device *dev;
 	struct snd_soc_component *component;
 	struct regmap *regmap;
+	struct mutex macro_lock;
 	struct mutex io_lock;
 	struct mutex clk_lock;
 	struct mutex vote_lock;
@@ -70,6 +73,7 @@ struct lpass_cdc_priv {
 	struct clk *lpass_audio_hw_vote;
 	int core_hw_vote_count;
 	int core_audio_vote_count;
+	int core_clk_vote_count;
 
 	/* Entry for version info */
 	struct snd_info_entry *entry;
@@ -95,6 +99,7 @@ struct lpass_cdc_priv {
 	u8 dmic_2_3_clk_div;
 	u8 dmic_4_5_clk_div;
 	u8 dmic_6_7_clk_div;
+	struct proc_dir_entry *lpass_cdc_proc_entry;
 };
 
 struct regmap *lpass_cdc_regmap_init(struct device *dev,

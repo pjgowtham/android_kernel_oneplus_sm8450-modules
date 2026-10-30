@@ -26,7 +26,7 @@ ifeq ($(KERNEL_BUILD), 0)
 		export
 		INCS    +=  -include $(AUDIO_ROOT)/config/sm6150autoconf.h
 	endif
-	ifeq ($(CONFIG_ARCH_BENGAL), y)
+	ifeq ($(CONFIG_ARCH_KHAJE), y)
 		include $(AUDIO_ROOT)/config/bengalauto.conf
 		export
 		INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
@@ -40,9 +40,13 @@ ifeq ($(KERNEL_BUILD), 0)
 		include $(AUDIO_ROOT)/config/waipioauto.conf
 		INCS    +=  -include $(AUDIO_ROOT)/config/waipioautoconf.h
 	endif
-	ifeq ($(CONFIG_ARCH_PARROT), y)
-		include $(AUDIO_ROOT)/config/waipioauto.conf
-		INCS    +=  -include $(AUDIO_ROOT)/config/waipioautoconf.h
+	ifeq ($(CONFIG_ARCH_HOLI), y)
+		include $(AUDIO_ROOT)/config/holiauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/holiautoconf.h
+	endif
+	ifeq ($(CONFIG_ARCH_BLAIR), y)
+		include $(AUDIO_ROOT)/config/holiauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/holiautoconf.h
 	endif
 endif
 
@@ -124,3 +128,6 @@ wcd937x_dlkm-y := $(WCD937X_OBJS)
 
 obj-$(CONFIG_SND_SOC_WCD937X_SLAVE) += wcd937x_slave_dlkm.o
 wcd937x_slave_dlkm-y := $(WCD937X_SLAVE_OBJS)
+
+# inject some build related information
+DEFINES += -DBUILD_TIMESTAMP=\"$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')\"

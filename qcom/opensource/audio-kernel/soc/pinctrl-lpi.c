@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/gpio.h>
@@ -67,6 +67,15 @@
 #define LPI_GPIO_FUNC_FUNC3              "func3"
 #define LPI_GPIO_FUNC_FUNC4              "func4"
 #define LPI_GPIO_FUNC_FUNC5              "func5"
+
+#define LPI_GPIO_DRV_2_MA      2
+#define LPI_GPIO_DRV_4_MA      4
+#define LPI_GPIO_DRV_6_MA      6
+#define LPI_GPIO_DRV_8_MA      8
+#define LPI_GPIO_DRV_10_MA      10
+#define LPI_GPIO_DRV_12_MA      12
+#define LPI_GPIO_DRV_14_MA      14
+#define LPI_GPIO_DRV_16_MA      16
 
 static bool lpi_dev_up;
 static struct device *lpi_dev;
@@ -151,12 +160,21 @@ int lpi_pinctrl_runtime_suspend(struct device *dev);
 static int lpi_gpio_read(struct lpi_gpio_pad *pad, unsigned int addr)
 {
 	int ret = 0;
-	struct lpi_gpio_state *state = dev_get_drvdata(lpi_dev);
+	struct lpi_gpio_state *state = NULL;
 	static DEFINE_RATELIMIT_STATE(rtl, 1 * HZ, 1);
+
+	if (!lpi_dev) {
+		if (__ratelimit(&rtl))
+			pr_err_ratelimited("%s: lpi_dev is NULL, return\n",
+							__func__);
+		return -EINVAL;
+	}
+
+	state = dev_get_drvdata(lpi_dev);
 
 	if (!lpi_dev_up) {
 		if (__ratelimit(&rtl))
-			pr_err("%s: ADSP is down due to SSR, return\n",
+			pr_err_ratelimited("%s: ADSP is down due to SSR, return\n",
 				   __func__);
 		return 0;
 	}
@@ -164,7 +182,7 @@ static int lpi_gpio_read(struct lpi_gpio_pad *pad, unsigned int addr)
 	mutex_lock(&state->core_hw_vote_lock);
 	if (!state->core_hw_vote_status) {
 		if (__ratelimit(&rtl))
-			pr_err("%s: core hw vote clk is not enabled\n",
+			pr_err_ratelimited("%s: core hw vote clk is not enabled\n",
 				__func__);
 		ret = -EINVAL;
 		goto err;
@@ -172,7 +190,7 @@ static int lpi_gpio_read(struct lpi_gpio_pad *pad, unsigned int addr)
 
 	ret = ioread32(pad->base + pad->offset + addr);
 	if (ret < 0)
-		pr_err("%s: read 0x%x failed\n", __func__, addr);
+		pr_err_ratelimited("%s: read 0x%x failed\n", __func__, addr);
 
 err:
 	mutex_unlock(&state->core_hw_vote_lock);
@@ -184,9 +202,18 @@ err:
 static int lpi_gpio_write(struct lpi_gpio_pad *pad, unsigned int addr,
 			  unsigned int val)
 {
-	struct lpi_gpio_state *state = dev_get_drvdata(lpi_dev);
+	struct lpi_gpio_state *state = NULL;
 	int ret = 0;
 	static DEFINE_RATELIMIT_STATE(rtl, 1 * HZ, 1);
+
+	if (!lpi_dev) {
+		if (__ratelimit(&rtl))
+			pr_err_ratelimited("%s: lpi_dev is NULL, return\n",
+							__func__);
+		return -EINVAL;
+	}
+
+	state = dev_get_drvdata(lpi_dev);
 
 	if (!lpi_dev_up) {
 		return 0;
@@ -195,7 +222,7 @@ static int lpi_gpio_write(struct lpi_gpio_pad *pad, unsigned int addr,
 	mutex_lock(&state->core_hw_vote_lock);
 	if (!state->core_hw_vote_status) {
 		if (__ratelimit(&rtl))
-			pr_err("%s: core hw vote clk is not enabled\n",
+			pr_err_ratelimited("%s: core hw vote clk is not enabled\n",
 				__func__);
 		ret = -EINVAL;
 		goto err;
@@ -321,6 +348,11 @@ static int lpi_config_get(struct pinctrl_dev *pctldev,
 
 static unsigned int lpi_drive_to_regval(u32 arg)
 {
+	if (arg < LPI_GPIO_DRV_2_MA)
+		arg = LPI_GPIO_DRV_2_MA;
+	if (arg > LPI_GPIO_DRV_16_MA)
+		arg = LPI_GPIO_DRV_16_MA;
+
 	return (arg/2 - 1);
 }
 
@@ -373,8 +405,8 @@ static int lpi_config_set(struct pinctrl_dev *pctldev, unsigned int pin,
 				goto set_gpio;
 			}
 			if (arg > LPI_SLEW_RATE_MAX) {
-				dev_err(pctldev->dev, "%s: invalid slew rate %u for pin: %d\n",
-					__func__, arg, pin);
+				dev_err_ratelimited(pctldev->dev, "%s: invalid slew rate %u for \
+					pin: %d\n", __func__, arg, pin);
 				goto set_gpio;
 			}
 			pad->base = pad->slew_base;
@@ -382,9 +414,24 @@ static int lpi_config_set(struct pinctrl_dev *pctldev, unsigned int pin,
 			mutex_lock(&state->slew_access_lock);
 			if (pad->lpi_slew_reg != NULL) {
 				pad->base = pad->lpi_slew_reg;
+				if (pad->slew_offset != LPI_SLEW_OFFSET_INVALID) {
+					val = lpi_gpio_read(pad, LPI_SLEW_REG_VAL_CTL);  //16-bit
+					pad->offset = pad->slew_offset;
+					for (i = 0; i < LPI_SLEW_BITS_SIZE; i++) {
+						if (arg & 0x01)
+							set_bit(pad->offset, &val);
+						else
+							clear_bit(pad->offset, &val);
+					pad->offset++;
+					arg = arg >> 1;
+				}
+				pad->offset = 0;
+				lpi_gpio_write(pad, LPI_SLEW_REG_VAL_CTL, val);
+			} else {
 				lpi_gpio_write(pad, LPI_SLEW_REG_VAL_CTL, arg);
-				pad->base = pad->slew_base;
-				goto slew_exit;
+			}
+			pad->base = pad->slew_base;
+			goto slew_exit;
 			}
 			val = lpi_gpio_read(pad, LPI_SLEW_REG_VAL_CTL);
 			pad->offset = pad->slew_offset;
@@ -489,12 +536,11 @@ static int lpi_notifier_service_cb(struct notifier_block *this,
 		lpi_dev_up = false;
 		break;
 	case AUDIO_NOTIFIER_SERVICE_UP:
-		if (initial_boot) {
+		if (initial_boot)
 			initial_boot = false;
 
-			lpi_dev_up = true;
-			snd_event_notify(lpi_dev, SND_EVENT_UP);
-		}
+		lpi_dev_up = true;
+		snd_event_notify(lpi_dev, SND_EVENT_UP);
 		break;
 	default:
 		break;
@@ -548,8 +594,15 @@ static void lpi_pinctrl_ssr_disable(struct device *dev, void *data)
 
 static int lpi_pinctrl_ssr_enable(struct device *dev, void *data)
 {
-	struct lpi_gpio_state *state = dev_get_drvdata(lpi_dev);
+	struct lpi_gpio_state *state = NULL;
 	dev_dbg(dev, "%s: enter\n", __func__);
+
+	if (!lpi_dev) {
+		dev_err(dev, "%s: lpi_dev is NULL, return\n", __func__);
+		return -EINVAL;
+	}
+
+	state = dev_get_drvdata(lpi_dev);
 
 	if (!initial_boot) {
 		if (!lpi_dev_up) {
@@ -728,8 +781,8 @@ static int lpi_pinctrl_probe(struct platform_device *pdev)
 		}
 	} else {
 		slew_base = NULL;
-		dev_dbg(dev, "%s: error in reading lpi slew register: %d\n",
-			__func__, ret);
+		dev_dbg(dev, "error in reading lpi slew register: %d\n",
+			ret);
 	}
 
 	pindesc = devm_kcalloc(dev, npins, sizeof(*pindesc), GFP_KERNEL);
@@ -912,7 +965,7 @@ int lpi_pinctrl_runtime_resume(struct device *dev)
 	if (ret < 0) {
 		pm_runtime_set_autosuspend_delay(dev,
 						 LPI_AUTO_SUSPEND_DELAY_ERROR);
-		dev_err(dev, "%s:lpass core hw island enable failed\n",
+		dev_err_ratelimited(dev, "%s:lpass core hw island enable failed\n",
 			__func__);
 		goto exit;
 	} else {

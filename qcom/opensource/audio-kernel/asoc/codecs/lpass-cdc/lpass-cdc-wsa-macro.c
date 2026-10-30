@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -12,6 +12,7 @@
 #include <linux/pm_runtime.h>
 #include <sound/soc.h>
 #include <sound/soc-dapm.h>
+#include <sound/pcm_params.h>
 #include <sound/tlv.h>
 #include <soc/swr-common.h>
 #include <soc/swr-wcd.h>
@@ -31,17 +32,21 @@
 			SNDRV_PCM_RATE_96000 | SNDRV_PCM_RATE_192000)
 #define LPASS_CDC_WSA_MACRO_RX_MIX_RATES (SNDRV_PCM_RATE_48000 |\
 			SNDRV_PCM_RATE_96000 | SNDRV_PCM_RATE_192000)
-#define LPASS_CDC_WSA_MACRO_VI_RATES (SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000 |\
-			SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_48000)
 #define LPASS_CDC_WSA_MACRO_RX_FORMATS (SNDRV_PCM_FMTBIT_S16_LE |\
 		SNDRV_PCM_FMTBIT_S24_LE |\
 		SNDRV_PCM_FMTBIT_S24_3LE | SNDRV_PCM_FMTBIT_S32_LE)
 
+#define LPASS_CDC_WSA_MACRO_VI_FEEDBACK_RATES (SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000 |\
+			SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_96000)
 #define LPASS_CDC_WSA_MACRO_ECHO_RATES (SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000 |\
 			SNDRV_PCM_RATE_48000)
 #define LPASS_CDC_WSA_MACRO_ECHO_FORMATS (SNDRV_PCM_FMTBIT_S16_LE |\
 		SNDRV_PCM_FMTBIT_S24_LE |\
 		SNDRV_PCM_FMTBIT_S24_3LE)
+
+#define LPASS_CDC_WSA_MACRO_CPS_RATES (48000)
+#define LPASS_CDC_WSA_MACRO_CPS_FORMATS (SNDRV_PCM_FMTBIT_S32_LE)
+#define LPASS_CDC_WSA_MACRO_VI_DEC_ENABLE_DELAY_MS  5
 
 #define NUM_INTERPOLATORS 2
 
@@ -73,6 +78,9 @@ enum {
 	LPASS_CDC_WSA_MACRO_RX_MIX1,
 	LPASS_CDC_WSA_MACRO_RX4,
 	LPASS_CDC_WSA_MACRO_RX5,
+	LPASS_CDC_WSA_MACRO_RX6,
+	LPASS_CDC_WSA_MACRO_RX7,
+	LPASS_CDC_WSA_MACRO_RX8,
 	LPASS_CDC_WSA_MACRO_RX_MAX,
 };
 
@@ -108,6 +116,9 @@ enum {
 	INTn_1_INP_SEL_RX3,
 	INTn_1_INP_SEL_RX4,
 	INTn_1_INP_SEL_RX5,
+	INTn_1_INP_SEL_RX6,
+	INTn_1_INP_SEL_RX7,
+	INTn_1_INP_SEL_RX8,
 	INTn_1_INP_SEL_DEC0,
 	INTn_1_INP_SEL_DEC1,
 };
@@ -120,25 +131,19 @@ enum {
 	INTn_2_INP_SEL_RX3,
 	INTn_2_INP_SEL_RX4,
 	INTn_2_INP_SEL_RX5,
+	INTn_2_INP_SEL_RX6,
+	INTn_2_INP_SEL_RX7,
+	INTn_2_INP_SEL_RX8,
 };
 
 enum {
-	WSA_MODE_21DB,
-	WSA_MODE_19P5DB,
-	WSA_MODE_18DB,
-	WSA_MODE_16P5DB,
-	WSA_MODE_15DB,
-	WSA_MODE_13P5DB,
-	WSA_MODE_12DB,
-	WSA_MODE_10P5DB,
-	WSA_MODE_9DB,
-	WSA881X_MODE_18DB,
-	WSA881x_MODE_13P5DB,
-	WSA_MODE_MAX
+	IDLE_DETECT,
+	NG1,
+	NG2,
+	NG3,
 };
 
-static struct lpass_cdc_comp_setting comp_setting_table[WSA_MODE_MAX] =
-{
+static struct lpass_cdc_comp_setting comp_setting_table[G_MAX_DB] = {
 	{42, 0, 42},
 	{39, 0, 42},
 	{36, 0, 42},
@@ -148,8 +153,6 @@ static struct lpass_cdc_comp_setting comp_setting_table[WSA_MODE_MAX] =
 	{24, 0, 42},
 	{21, 0, 42},
 	{18, 0, 42},
-	{36, 0, 36},
-	{27, 0, 36},
 };
 
 struct interp_sample_rate {
@@ -195,11 +198,13 @@ static int lpass_cdc_wsa_macro_get_channel_map(struct snd_soc_dai *dai,
 				unsigned int *tx_num, unsigned int *tx_slot,
 				unsigned int *rx_num, unsigned int *rx_slot);
 static int lpass_cdc_wsa_macro_mute_stream(struct snd_soc_dai *dai, int mute, int stream);
+
+#define LPASS_CDC_WSA_MACRO_VTH_TO_REG(vth) ((vth) == 0 ? 255 : (vth))
 /* Hold instance to soundwire platform device */
 struct lpass_cdc_wsa_macro_swr_ctrl_data {
 	struct platform_device *wsa_swr_pdev;
 };
-static int lpass_cdc_wsa_macro_enable_vi_decimator(struct snd_soc_component *component);
+static void lpass_cdc_wsa_macro_enable_vi_decimator(struct work_struct *work);
 
 #define LPASS_CDC_WSA_MACRO_SET_VOLUME_TLV(xname, xreg, xmin, xmax, tlv_array) \
 {	.iface  = SNDRV_CTL_ELEM_IFACE_MIXER, .name = (xname), \
@@ -210,7 +215,7 @@ static int lpass_cdc_wsa_macro_enable_vi_decimator(struct snd_soc_component *com
 	.put = lpass_cdc_wsa_macro_set_digital_volume, \
 	.private_value = (unsigned long)&(struct soc_mixer_control) \
 	{.reg = xreg, .rreg = xreg,  \
-	.min = xmin, .max = xmax, .platform_max = xmax, \
+	.min = xmin, .max = xmax, \
 	.sign_bit = 7,} }
 
 struct lpass_cdc_wsa_macro_swr_ctrl_platform_data {
@@ -233,7 +238,14 @@ enum {
 	LPASS_CDC_WSA_MACRO_AIF_MIX1_PB,
 	LPASS_CDC_WSA_MACRO_AIF_VI,
 	LPASS_CDC_WSA_MACRO_AIF_ECHO,
+	LPASS_CDC_WSA_MACRO_AIF_CPS,
+	LPASS_CDC_WSA_MACRO_AIF4_PB,
 	LPASS_CDC_WSA_MACRO_MAX_DAIS,
+};
+
+struct wsa_vi_dec_enable_work {
+	struct lpass_cdc_wsa_macro_priv *wsa_priv;
+	struct delayed_work dwork;
 };
 
 #define LPASS_CDC_WSA_MACRO_CHILD_DEVICES_MAX 3
@@ -259,6 +271,9 @@ enum {
  * @active_ch_cnt: channel count of all AIF DAIs
  * @rx_port_value: mixer ctl value of WSA RX MUXes
  * @wsa_io_base: Base address of WSA macro addr space
+ * @wsa_sys_gain System gain value, see wsa driver
+ * @wsa_bat_cfg Battery Configuration value, see wsa driver
+ * @wsa_rload Resistor load value for WSA Speaker, see wsa driver
  */
 struct lpass_cdc_wsa_macro_priv {
 	struct device *dev;
@@ -267,6 +282,7 @@ struct lpass_cdc_wsa_macro_priv {
 	int ec_hq[LPASS_CDC_WSA_MACRO_RX1 + 1];
 	u16 prim_int_users[LPASS_CDC_WSA_MACRO_RX1 + 1];
 	u16 wsa_mclk_users;
+	struct wsa_vi_dec_enable_work wsa_vi_dec_enable_work;
 	u16 swr_clk_users;
 	bool dapm_mclk_enable;
 	bool reset_swr;
@@ -282,6 +298,7 @@ struct lpass_cdc_wsa_macro_priv {
 	int rx_1_count;
 	unsigned long active_ch_mask[LPASS_CDC_WSA_MACRO_MAX_DAIS];
 	unsigned long active_ch_cnt[LPASS_CDC_WSA_MACRO_MAX_DAIS];
+	u16 bit_width[LPASS_CDC_WSA_MACRO_MAX_DAIS];
 	int rx_port_value[LPASS_CDC_WSA_MACRO_RX_MAX];
 	char __iomem *wsa_io_base;
 	struct platform_device *pdev_child_devices
@@ -302,18 +319,28 @@ struct lpass_cdc_wsa_macro_priv {
 	uint32_t thermal_cur_state;
 	uint32_t thermal_max_state;
 	struct work_struct lpass_cdc_wsa_macro_cooling_work;
+	bool pbr_enable;
+	u32 wsa_sys_gain[2 * (LPASS_CDC_WSA_MACRO_RX1 + 1)];
+	u32 wsa_bat_cfg[LPASS_CDC_WSA_MACRO_RX1 + 1];
+	u32 wsa_rload[LPASS_CDC_WSA_MACRO_RX1 + 1];
+	u32 wsa_fs_ctl_reg;
+	u8 idle_detect_en;
+	int noise_gate_mode;
 	bool pre_dev_up;
+	int pbr_clk_users;
+	char __iomem *wsa_fs_reg_base;
 };
 
 static struct snd_soc_dai_driver lpass_cdc_wsa_macro_dai[];
 static const DECLARE_TLV_DB_SCALE(digital_gain, 0, 1, 0);
 
 static const char *const rx_text[] = {
-	"ZERO", "RX0", "RX1", "RX_MIX0", "RX_MIX1", "RX4", "RX5", "DEC0", "DEC1"
+	"ZERO", "RX0", "RX1", "RX_MIX0", "RX_MIX1", "RX4",
+	"RX5", "RX6", "RX7", "RX8", "DEC0", "DEC1"
 };
 
 static const char *const rx_mix_text[] = {
-	"ZERO", "RX0", "RX1", "RX_MIX0", "RX_MIX1", "RX4", "RX5",
+	"ZERO", "RX0", "RX1", "RX_MIX0", "RX_MIX1", "RX4", "RX5", "RX6", "RX7", "RX8"
 };
 
 static const char *const rx_mix_ec_text[] = {
@@ -332,14 +359,9 @@ static const char * const lpass_cdc_wsa_macro_vbat_bcl_gsm_mode_text[] = {
 	"OFF", "ON"
 };
 
-static const char *const lpass_cdc_wsa_macro_ear_spkrrecv_text[] = {
-	"OFF", "ON"
-};
-
 static const char * const lpass_cdc_wsa_macro_comp_mode_text[] = {
 	"G_21_DB", "G_19P5_DB", "G_18_DB", "G_16P5_DB", "G_15_DB",
-	"G_13P5_DB", "G_12_DB", "G_10P5_DB", "G_9_DB",
-	"WSA881X_G_18DB", "WSA881x_G_13P5DB"
+	"G_13P5_DB", "G_12_DB", "G_10P5_DB", "G_9_DB"
 };
 
 static const struct snd_kcontrol_new wsa_int0_vbat_mix_switch[] = {
@@ -350,8 +372,7 @@ static const struct snd_kcontrol_new wsa_int1_vbat_mix_switch[] = {
 	SOC_DAPM_SINGLE("WSA RX1 VBAT Enable", SND_SOC_NOPM, 0, 1, 0)
 };
 
-static SOC_ENUM_SINGLE_EXT_DECL(lpass_cdc_wsa_macro_ear_spkrrecv_enum,
-				lpass_cdc_wsa_macro_ear_spkrrecv_text);
+
 static SOC_ENUM_SINGLE_EXT_DECL(lpass_cdc_wsa_macro_vbat_bcl_gsm_mode_enum,
 			lpass_cdc_wsa_macro_vbat_bcl_gsm_mode_text);
 static SOC_ENUM_SINGLE_EXT_DECL(lpass_cdc_wsa_macro_comp_mode_enum,
@@ -360,19 +381,19 @@ static SOC_ENUM_SINGLE_EXT_DECL(lpass_cdc_wsa_macro_comp_mode_enum,
 /* RX INT0 */
 static const struct soc_enum rx0_prim_inp0_chain_enum =
 	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG0,
-		0, 9, rx_text);
+		0, 12, rx_text);
 
 static const struct soc_enum rx0_prim_inp1_chain_enum =
 	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG0,
-		3, 9, rx_text);
+		3, 12, rx_text);
 
 static const struct soc_enum rx0_prim_inp2_chain_enum =
 	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG1,
-		3, 9, rx_text);
+		3, 12, rx_text);
 
 static const struct soc_enum rx0_mix_chain_enum =
 	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG1,
-		0, 7, rx_mix_text);
+		0, 10, rx_mix_text);
 
 static const struct soc_enum rx0_sidetone_mix_enum =
 	SOC_ENUM_SINGLE(SND_SOC_NOPM, 0, 2, rx_sidetone_mix_text);
@@ -395,19 +416,19 @@ static const struct snd_kcontrol_new rx0_sidetone_mix_mux =
 /* RX INT1 */
 static const struct soc_enum rx1_prim_inp0_chain_enum =
 	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG0,
-		0, 9, rx_text);
+		0, 12, rx_text);
 
 static const struct soc_enum rx1_prim_inp1_chain_enum =
 	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG0,
-		3, 9, rx_text);
+		3, 12, rx_text);
 
 static const struct soc_enum rx1_prim_inp2_chain_enum =
 	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG1,
-		3, 9, rx_text);
+		3, 12, rx_text);
 
 static const struct soc_enum rx1_mix_chain_enum =
 	SOC_ENUM_SINGLE(LPASS_CDC_WSA_RX_INP_MUX_RX_INT1_CFG1,
-		0, 7, rx_mix_text);
+		0, 10, rx_mix_text);
 
 static const struct snd_kcontrol_new rx1_prim_inp0_mux =
 	SOC_DAPM_ENUM("WSA_RX1 INP0 Mux", rx1_prim_inp0_chain_enum);
@@ -475,9 +496,9 @@ static struct snd_soc_dai_driver lpass_cdc_wsa_macro_dai[] = {
 		.id = LPASS_CDC_WSA_MACRO_AIF_VI,
 		.capture = {
 			.stream_name = "WSA_AIF_VI Capture",
-			.rates = LPASS_CDC_WSA_MACRO_VI_RATES,
+			.rates = LPASS_CDC_WSA_MACRO_VI_FEEDBACK_RATES,
 			.formats = LPASS_CDC_WSA_MACRO_RX_FORMATS,
-			.rate_max = 48000,
+			.rate_max = 96000,
 			.rate_min = 8000,
 			.channels_min = 1,
 			.channels_max = 4,
@@ -498,6 +519,34 @@ static struct snd_soc_dai_driver lpass_cdc_wsa_macro_dai[] = {
 		},
 		.ops = &lpass_cdc_wsa_macro_dai_ops,
 	},
+	{
+		.name = "wsa_macro_cpsfeedback",
+		.id = LPASS_CDC_WSA_MACRO_AIF_CPS,
+		.capture = {
+			.stream_name = "WSA_AIF_CPS Capture",
+			.rates = LPASS_CDC_WSA_MACRO_CPS_RATES,
+			.formats = LPASS_CDC_WSA_MACRO_CPS_FORMATS,
+			.rate_max = 48000,
+			.rate_min = 48000,
+			.channels_min = 1,
+			.channels_max = 2,
+		},
+		.ops = &lpass_cdc_wsa_macro_dai_ops,
+	},
+	{
+		.name = "wsa_macro_rx4",
+		.id = LPASS_CDC_WSA_MACRO_AIF4_PB,
+		.playback = {
+				.stream_name = "WSA AIF4 Playback",
+				.rates = LPASS_CDC_WSA_MACRO_RX_RATES,
+				.formats = LPASS_CDC_WSA_MACRO_RX_FORMATS,
+				.rate_max = 192000,
+				.rate_min = 8000,
+				.channels_min = 1,
+				.channels_max = 2,
+		},
+		.ops = &lpass_cdc_wsa_macro_dai_ops,
+	},
 };
 
 static bool lpass_cdc_wsa_macro_get_data(struct snd_soc_component *component,
@@ -508,13 +557,13 @@ static bool lpass_cdc_wsa_macro_get_data(struct snd_soc_component *component,
 	*wsa_dev = lpass_cdc_get_device_ptr(component->dev,
 							WSA_MACRO);
 	if (!(*wsa_dev)) {
-		dev_err(component->dev,
+		dev_err_ratelimited(component->dev,
 			"%s: null device for macro!\n", func_name);
 		return false;
 	}
 	*wsa_priv = dev_get_drvdata((*wsa_dev));
 	if (!(*wsa_priv) || !(*wsa_priv)->component) {
-		dev_err(component->dev,
+		dev_err_ratelimited(component->dev,
 			"%s: priv is null for macro!\n", func_name);
 		return false;
 	}
@@ -566,8 +615,8 @@ static int lpass_cdc_wsa_macro_set_prim_interpolator_rate(struct snd_soc_dai *da
 			 LPASS_CDC_WSA_MACRO_RX_MAX) {
 		int_1_mix1_inp = port;
 		if ((int_1_mix1_inp < LPASS_CDC_WSA_MACRO_RX0) ||
-			(int_1_mix1_inp > LPASS_CDC_WSA_MACRO_RX_MIX1)) {
-			dev_err(wsa_dev,
+			(int_1_mix1_inp > LPASS_CDC_WSA_MACRO_RX_MAX)) {
+			dev_err_ratelimited(wsa_dev,
 				"%s: Invalid RX port, Dai ID is %d\n",
 				__func__, dai->id);
 			return -EINVAL;
@@ -639,7 +688,7 @@ static int lpass_cdc_wsa_macro_set_mix_interpolator_rate(struct snd_soc_dai *dai
 		int_2_inp = port;
 		if ((int_2_inp < LPASS_CDC_WSA_MACRO_RX0) ||
 			(int_2_inp > LPASS_CDC_WSA_MACRO_RX_MIX1)) {
-			dev_err(wsa_dev,
+			dev_err_ratelimited(wsa_dev,
 				"%s: Invalid RX port, Dai ID is %d\n",
 				__func__, dai->id);
 			return -EINVAL;
@@ -736,16 +785,46 @@ static int lpass_cdc_wsa_macro_hw_params(struct snd_pcm_substream *substream,
 	case SNDRV_PCM_STREAM_PLAYBACK:
 		ret = lpass_cdc_wsa_macro_set_interpolator_rate(dai, params_rate(params));
 		if (ret) {
-			dev_err(component->dev,
+			dev_err_ratelimited(component->dev,
 				"%s: cannot set sample rate: %u\n",
 				__func__, params_rate(params));
 			return ret;
+		}
+		switch (params_width(params)) {
+		case 16:
+			wsa_priv->bit_width[dai->id] = 16;
+			break;
+		case 24:
+			wsa_priv->bit_width[dai->id] = 24;
+			break;
+		case 32:
+			wsa_priv->bit_width[dai->id] = 32;
+			break;
+		default:
+			dev_err_ratelimited(component->dev, "%s: Invalid format 0x%x\n",
+				__func__, params_width(params));
+			return -EINVAL;
 		}
 		break;
 	case SNDRV_PCM_STREAM_CAPTURE:
 		if (dai->id == LPASS_CDC_WSA_MACRO_AIF_VI)
 			wsa_priv->pcm_rate_vi = params_rate(params);
-		break;
+		switch (params_width(params)) {
+		case 16:
+			wsa_priv->bit_width[dai->id] = 16;
+			break;
+		case 24:
+			wsa_priv->bit_width[dai->id] = 24;
+			break;
+		case 32:
+			wsa_priv->bit_width[dai->id] = 32;
+			break;
+		default:
+			dev_err_ratelimited(component->dev, "%s: Invalid format 0x%x\n",
+				__func__, params_width(params));
+			return -EINVAL;
+			}
+			break;
 	default:
 		break;
 	}
@@ -770,8 +849,25 @@ static int lpass_cdc_wsa_macro_get_channel_map(struct snd_soc_dai *dai,
 
 	switch (dai->id) {
 	case LPASS_CDC_WSA_MACRO_AIF_VI:
+		for_each_set_bit(temp, &wsa_priv->active_ch_mask[dai->id],
+					LPASS_CDC_WSA_MACRO_TX_MAX) {
+			mask |= (1 << temp);
+			if (++cnt == LPASS_CDC_WSA_MACRO_MAX_DMA_CH_PER_PORT)
+				break;
+		}
+		if (mask & 0x0C)
+			mask = mask >> 0x2;
+
+		*tx_slot = mask;
+		*tx_num = cnt;
+		break;
+	case LPASS_CDC_WSA_MACRO_AIF_CPS:
 		*tx_slot = wsa_priv->active_ch_mask[dai->id];
 		*tx_num = wsa_priv->active_ch_cnt[dai->id];
+		break;
+	case LPASS_CDC_WSA_MACRO_AIF4_PB:
+		*rx_slot = 0x1;
+		*rx_num = 0x01;
 		break;
 	case LPASS_CDC_WSA_MACRO_AIF1_PB:
 	case LPASS_CDC_WSA_MACRO_AIF_MIX1_PB:
@@ -801,9 +897,12 @@ static int lpass_cdc_wsa_macro_get_channel_map(struct snd_soc_dai *dai,
 		*tx_num = cnt;
 		break;
 	default:
-		dev_err(wsa_dev, "%s: Invalid AIF\n", __func__);
+		dev_err_ratelimited(wsa_dev, "%s: Invalid AIF\n", __func__);
 		break;
 	}
+	dev_dbg(wsa_priv->dev,
+			"%s: dai->id:%d, rx_mask:%d, rx_ch_cnt:%d, tx_mask:%d, tx_ch_cnt:%d\n",
+			__func__, dai->id, *rx_slot, *rx_num, *tx_slot, *tx_num);
 	return 0;
 }
 
@@ -832,55 +931,42 @@ static int lpass_cdc_wsa_macro_mute_stream(struct snd_soc_dai *dai, int mute, in
 	struct snd_soc_component *component = dai->component;
 	struct device *wsa_dev = NULL;
 	struct lpass_cdc_wsa_macro_priv *wsa_priv = NULL;
-	uint16_t j = 0, reg = 0, mix_reg = 0, dsm_reg = 0;
-	u16 int_mux_cfg0 = 0, int_mux_cfg1 = 0;
-	u8 int_mux_cfg0_val = 0, int_mux_cfg1_val = 0;
 	bool adie_lb = false;
+	uint32_t temp;
 
 	if (mute)
 		return 0;
 
 	if (!lpass_cdc_wsa_macro_get_data(component, &wsa_dev, &wsa_priv, __func__))
 		return -EINVAL;
-
 	switch (dai->id) {
 	case LPASS_CDC_WSA_MACRO_AIF1_PB:
 	case LPASS_CDC_WSA_MACRO_AIF_MIX1_PB:
-	for (j = 0; j < NUM_INTERPOLATORS; j++) {
-		reg = LPASS_CDC_WSA_RX0_RX_PATH_CTL +
-				(j * LPASS_CDC_WSA_MACRO_RX_PATH_OFFSET);
-		mix_reg = LPASS_CDC_WSA_RX0_RX_PATH_MIX_CTL +
-				(j * LPASS_CDC_WSA_MACRO_RX_PATH_OFFSET);
-		dsm_reg = LPASS_CDC_WSA_RX0_RX_PATH_CTL +
-				(j * LPASS_CDC_WSA_MACRO_RX_PATH_OFFSET) +
-				LPASS_CDC_WSA_MACRO_RX_PATH_DSMDEM_OFFSET;
-		int_mux_cfg0 = LPASS_CDC_WSA_RX_INP_MUX_RX_INT0_CFG0 + j * 8;
-		int_mux_cfg1 = int_mux_cfg0 + 4;
-		int_mux_cfg0_val = snd_soc_component_read(component,
-							int_mux_cfg0);
-		int_mux_cfg1_val = snd_soc_component_read(component,
-							int_mux_cfg1);
-		if (snd_soc_component_read(component, dsm_reg) & 0x01) {
-			if (int_mux_cfg0_val || (int_mux_cfg1_val & 0x38))
-				snd_soc_component_update_bits(component, reg,
-							0x20, 0x20);
-			if (int_mux_cfg1_val & 0x07) {
-				snd_soc_component_update_bits(component, reg,
-							0x20, 0x20);
-				snd_soc_component_update_bits(component,
-						mix_reg, 0x20, 0x20);
-			}
-		}
-	}
-	lpass_cdc_wsa_pa_on(wsa_dev, adie_lb);
-	lpass_cdc_wsa_unmute_interpolator(dai);
-	lpass_cdc_wsa_macro_enable_vi_decimator(component);
+		lpass_cdc_wsa_pa_on(wsa_dev, adie_lb);
+		lpass_cdc_wsa_unmute_interpolator(dai);
+		queue_delayed_work(system_freezable_wq,
+			&wsa_priv->wsa_vi_dec_enable_work.dwork,
+			msecs_to_jiffies(LPASS_CDC_WSA_MACRO_VI_DEC_ENABLE_DELAY_MS));
 		break;
 	default:
 		break;
 	}
+	if ((test_bit(LPASS_CDC_WSA_MACRO_RX4,
+			&wsa_priv->active_ch_mask[dai->id]) ||
+			test_bit(LPASS_CDC_WSA_MACRO_RX5,
+			&wsa_priv->active_ch_mask[dai->id])) &&
+			wsa_priv->wsa_fs_reg_base) {
+		temp = ioread32(wsa_priv->wsa_fs_reg_base);
+		if (temp != 0) {
+			temp = 0;
+			iowrite32(temp, wsa_priv->wsa_fs_reg_base);
+		}
+		dev_dbg(wsa_dev, "%s: LPASS_WSA_FS_CTL : %d", __func__, temp);
+	}
+
 	return 0;
 }
+
 static int lpass_cdc_wsa_macro_mclk_enable(
 				struct lpass_cdc_wsa_macro_priv *wsa_priv,
 				 bool mclk_enable, bool dapm)
@@ -889,7 +975,7 @@ static int lpass_cdc_wsa_macro_mclk_enable(
 	int ret = 0;
 
 	if (regmap == NULL) {
-		dev_err(wsa_priv->dev, "%s: regmap is NULL\n", __func__);
+		dev_err_ratelimited(wsa_priv->dev, "%s: regmap is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -921,6 +1007,13 @@ static int lpass_cdc_wsa_macro_mclk_enable(
 			regmap_update_bits(regmap,
 				LPASS_CDC_WSA_CLK_RST_CTRL_MCLK_CONTROL,
 				0x01, 0x01);
+			/* Toggle fs_cntr_clr bit*/
+			regmap_update_bits(regmap,
+				LPASS_CDC_WSA_CLK_RST_CTRL_FS_CNT_CONTROL,
+				0x02, 0x02);
+			regmap_update_bits(regmap,
+				LPASS_CDC_WSA_CLK_RST_CTRL_FS_CNT_CONTROL,
+				0x02, 0x0);
 			regmap_update_bits(regmap,
 				LPASS_CDC_WSA_CLK_RST_CTRL_FS_CNT_CONTROL,
 				0x01, 0x01);
@@ -928,7 +1021,7 @@ static int lpass_cdc_wsa_macro_mclk_enable(
 		wsa_priv->wsa_mclk_users++;
 	} else {
 		if (wsa_priv->wsa_mclk_users <= 0) {
-			dev_err(wsa_priv->dev, "%s: clock already disabled\n",
+			dev_err_ratelimited(wsa_priv->dev, "%s: clock already disabled\n",
 			__func__);
 			wsa_priv->wsa_mclk_users = 0;
 			goto exit;
@@ -983,7 +1076,7 @@ static int lpass_cdc_wsa_macro_mclk_event(struct snd_soc_dapm_widget *w,
 		}
 		break;
 	default:
-		dev_err(wsa_priv->dev,
+		dev_err_ratelimited(wsa_priv->dev,
 			"%s: invalid DAPM event %d\n", __func__, event);
 		ret = -EINVAL;
 	}
@@ -1037,34 +1130,42 @@ static int lpass_cdc_wsa_macro_event_handler(struct snd_soc_component *component
 	return 0;
 }
 
-static int lpass_cdc_wsa_macro_enable_vi_decimator(struct snd_soc_component *component)
+static void lpass_cdc_wsa_macro_enable_vi_decimator(struct work_struct *work)
 {
+	struct delayed_work *unmute_delayed_work = NULL;
+	struct wsa_vi_dec_enable_work *wsa_vi_dec_enable_work = NULL;
+	struct snd_soc_component *component = NULL;
 	struct device *wsa_dev = NULL;
 	struct lpass_cdc_wsa_macro_priv *wsa_priv = NULL;
 	u8 val = 0x0;
 
-	if (!lpass_cdc_wsa_macro_get_data(component, &wsa_dev, &wsa_priv, __func__))
-		return -EINVAL;
+	unmute_delayed_work = to_delayed_work(work);
+	wsa_vi_dec_enable_work = container_of(unmute_delayed_work,
+			struct wsa_vi_dec_enable_work, dwork);
+	wsa_priv = wsa_vi_dec_enable_work->wsa_priv;
+	component = wsa_priv->component;
 
-	if (test_bit(LPASS_CDC_WSA_MACRO_TX0,
-			&wsa_priv->active_ch_mask[LPASS_CDC_WSA_MACRO_AIF_VI])||
-		test_bit(LPASS_CDC_WSA_MACRO_TX1,
-			&wsa_priv->active_ch_mask[LPASS_CDC_WSA_MACRO_AIF_VI])) {
-		usleep_range(5000, 5500);
-	}
+	lpass_cdc_wsa_macro_get_data(component, &wsa_dev, &wsa_priv, __func__);
 
+	usleep_range(5000, 5500);
 	dev_dbg(wsa_dev, "%s: wsa_priv->pcm_rate_vi %d\n", __func__, wsa_priv->pcm_rate_vi);
 	switch (wsa_priv->pcm_rate_vi) {
-		case 48000:
-			val = 0x04;
-			break;
-		case 24000:
-			val = 0x02;
-			break;
-		case 8000:
-		default:
-			val = 0x00;
-			break;
+	case 96000:
+		val = 0x05;
+		break;
+	case 48000:
+		val = 0x04;
+		break;
+	case 32000:
+		val = 0x03;
+		break;
+	case 16000:
+		val = 0x01;
+		break;
+	case 8000:
+	default:
+		val = 0x00;
+		break;
 	}
 
 	if (test_bit(LPASS_CDC_WSA_MACRO_TX0,
@@ -1077,6 +1178,7 @@ static int lpass_cdc_wsa_macro_enable_vi_decimator(struct snd_soc_component *com
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX1_SPKR_PROT_PATH_CTL,
 		0x20, 0x20);
+		usleep_range(1000, 1500);
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX0_SPKR_PROT_PATH_CTL,
 		0x0F, val);
@@ -1089,6 +1191,7 @@ static int lpass_cdc_wsa_macro_enable_vi_decimator(struct snd_soc_component *com
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX1_SPKR_PROT_PATH_CTL,
 			0x10, 0x10);
+		usleep_range(1000, 1500);
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX0_SPKR_PROT_PATH_CTL,
 			0x20, 0x00);
@@ -1106,6 +1209,7 @@ static int lpass_cdc_wsa_macro_enable_vi_decimator(struct snd_soc_component *com
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX3_SPKR_PROT_PATH_CTL,
 			0x20, 0x20);
+		usleep_range(1000, 1500);
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX2_SPKR_PROT_PATH_CTL,
 			0x0F, val);
@@ -1118,6 +1222,7 @@ static int lpass_cdc_wsa_macro_enable_vi_decimator(struct snd_soc_component *com
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX3_SPKR_PROT_PATH_CTL,
 			0x10, 0x10);
+		usleep_range(1000, 1500);
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_TX2_SPKR_PROT_PATH_CTL,
 			0x20, 0x00);
@@ -1125,7 +1230,6 @@ static int lpass_cdc_wsa_macro_enable_vi_decimator(struct snd_soc_component *com
 			LPASS_CDC_WSA_TX3_SPKR_PROT_PATH_CTL,
 			0x20, 0x00);
 	}
-	return 0;
 }
 
 static int lpass_cdc_wsa_macro_disable_vi_feedback(struct snd_soc_dapm_widget *w,
@@ -1158,6 +1262,12 @@ static int lpass_cdc_wsa_macro_disable_vi_feedback(struct snd_soc_dapm_widget *w
 			snd_soc_component_update_bits(component,
 				LPASS_CDC_WSA_TX1_SPKR_PROT_PATH_CTL,
 				0x10, 0x00);
+			snd_soc_component_update_bits(component,
+				LPASS_CDC_WSA_TX0_SPKR_PROT_PATH_CTL,
+				0x20, 0x00);
+			snd_soc_component_update_bits(component,
+				LPASS_CDC_WSA_TX1_SPKR_PROT_PATH_CTL,
+				0x20, 0x00);
 		}
 		if (test_bit(LPASS_CDC_WSA_MACRO_TX1,
 			&wsa_priv->active_ch_mask[LPASS_CDC_WSA_MACRO_AIF_VI])) {
@@ -1175,6 +1285,12 @@ static int lpass_cdc_wsa_macro_disable_vi_feedback(struct snd_soc_dapm_widget *w
 			snd_soc_component_update_bits(component,
 				LPASS_CDC_WSA_TX3_SPKR_PROT_PATH_CTL,
 				0x10, 0x00);
+			snd_soc_component_update_bits(component,
+				LPASS_CDC_WSA_TX2_SPKR_PROT_PATH_CTL,
+				0x20, 0x00);
+			snd_soc_component_update_bits(component,
+				LPASS_CDC_WSA_TX3_SPKR_PROT_PATH_CTL,
+				0x20, 0x00);
 		}
 		break;
 	}
@@ -1269,21 +1385,38 @@ static int lpass_cdc_wsa_macro_enable_mix_path(struct snd_soc_dapm_widget *w,
 	u16 gain_reg;
 	int offset_val = 0;
 	int val = 0;
+	uint16_t mix_reg = 0;
+	uint16_t reg = 0;
 
 	dev_dbg(component->dev, "%s %d %s\n", __func__, event, w->name);
 
 	if (!(strcmp(w->name, "WSA_RX0 MIX INP"))) {
 		gain_reg = LPASS_CDC_WSA_RX0_RX_VOL_MIX_CTL;
+		reg = LPASS_CDC_WSA_RX0_RX_PATH_CTL +
+			(LPASS_CDC_WSA_MACRO_RX_PATH_OFFSET *  w->shift);
+		mix_reg = LPASS_CDC_WSA_RX0_RX_PATH_MIX_CTL +
+			LPASS_CDC_WSA_MACRO_RX_PATH_OFFSET * w->shift;
 	} else if (!(strcmp(w->name, "WSA_RX1 MIX INP"))) {
 		gain_reg = LPASS_CDC_WSA_RX1_RX_VOL_MIX_CTL;
+		reg = LPASS_CDC_WSA_RX1_RX_PATH_CTL +
+			(LPASS_CDC_WSA_MACRO_RX_PATH_OFFSET *  w->shift);
+		mix_reg = LPASS_CDC_WSA_RX1_RX_PATH_MIX_CTL +
+			LPASS_CDC_WSA_MACRO_RX_PATH_OFFSET * w->shift;
 	} else {
-		dev_err(component->dev, "%s: No gain register avail for %s\n",
+		dev_err_ratelimited(component->dev, "%s: No gain register avail for %s\n",
 			__func__, w->name);
 		return 0;
 	}
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
+		snd_soc_component_update_bits(component, mix_reg, 0x40, 0x40);
+		usleep_range(500, 510);
+		snd_soc_component_update_bits(component, mix_reg, 0x40, 0x00);
+		snd_soc_component_update_bits(component,
+					reg, 0x20, 0x20);
+		snd_soc_component_update_bits(component,
+					mix_reg, 0x20, 0x20);
 		lpass_cdc_wsa_macro_enable_swr(w, kcontrol, event);
 		val = snd_soc_component_read(component, gain_reg);
 		val += offset_val;
@@ -1305,7 +1438,10 @@ static int lpass_cdc_wsa_macro_config_compander(struct snd_soc_component *compon
 	u16 comp_ctl0_reg, comp_ctl8_reg, rx_path_cfg0_reg;
 	struct device *wsa_dev = NULL;
 	struct lpass_cdc_wsa_macro_priv *wsa_priv = NULL;
+	struct lpass_cdc_comp_setting *comp_settings = NULL;
 	u16 mode = 0;
+	u16 index = 0;
+	int sys_gain, bat_cfg, sys_gain_int, upper_gain, lower_gain;
 
 	if (!lpass_cdc_wsa_macro_get_data(component, &wsa_dev, &wsa_priv, __func__))
 		return -EINVAL;
@@ -1323,7 +1459,7 @@ static int lpass_cdc_wsa_macro_config_compander(struct snd_soc_component *compon
 		return 0;
 
 	mode = wsa_priv->comp_mode[comp];
-	if (mode >= WSA_MODE_MAX || mode < 0)
+	if (mode >= G_MAX_DB || mode < 0)
 		mode = 0;
 	comp_ctl0_reg = LPASS_CDC_WSA_COMPANDER0_CTL0 +
 					(comp * LPASS_CDC_WSA_MACRO_RX_COMP_OFFSET);
@@ -1331,11 +1467,56 @@ static int lpass_cdc_wsa_macro_config_compander(struct snd_soc_component *compon
 					(comp * LPASS_CDC_WSA_MACRO_RX_COMP_OFFSET);
 	rx_path_cfg0_reg = LPASS_CDC_WSA_RX0_RX_PATH_CFG0 +
 					(comp * LPASS_CDC_WSA_MACRO_RX_PATH_OFFSET);
+	comp_settings = &comp_setting_table[mode];
+
+	/* If System has battery configuration */
+	if (wsa_priv->wsa_bat_cfg[comp]) {
+		index = (comp * 2) + wsa_priv->wsa_spkrrecv;
+		if (index >= (2 * (LPASS_CDC_WSA_MACRO_RX1 + 1))) {
+			dev_err(component->dev, "%s: Invalid index: %d\n",
+					__func__, index);
+			return -EINVAL;
+		}
+		sys_gain = wsa_priv->wsa_sys_gain[index];
+		bat_cfg = wsa_priv->wsa_bat_cfg[comp];
+		/* Convert enum to value and
+		 * multiply all values by 10 to avoid float
+		 */
+		sys_gain_int = -15 * sys_gain + 210;
+		switch (bat_cfg) {
+		case CONFIG_1S:
+		case EXT_1S:
+			if (sys_gain > G_13P5_DB) {
+				upper_gain = sys_gain_int + 60;
+				lower_gain = 0;
+			} else {
+				upper_gain = 210;
+				lower_gain = 0;
+			}
+			break;
+		case CONFIG_3S:
+		case EXT_3S:
+			upper_gain = sys_gain_int;
+			lower_gain = 75;
+			break;
+		case EXT_ABOVE_3S:
+			upper_gain = sys_gain_int;
+			lower_gain = 120;
+			break;
+		default:
+			upper_gain = sys_gain_int;
+			lower_gain = 0;
+			break;
+		}
+		/* Truncate after calculation */
+		comp_settings->lower_gain_int = (lower_gain * 2) / 10;
+		comp_settings->upper_gain_int = (upper_gain * 2) / 10;
+	}
 
 	if (SND_SOC_DAPM_EVENT_ON(event)) {
 		lpass_cdc_update_compander_setting(component,
 					comp_ctl8_reg,
-					&comp_setting_table[mode]);
+					comp_settings);
 		/* Enable Compander Clock */
 		snd_soc_component_update_bits(component, comp_ctl0_reg,
 						0x01, 0x01);
@@ -1443,6 +1624,69 @@ static int lpass_cdc_wsa_macro_config_softclip(struct snd_soc_component *compone
 	return 0;
 }
 
+static int lpass_cdc_was_macro_config_pbr(struct snd_soc_component *component,
+					  int path, int event)
+{
+	struct device *wsa_dev = NULL;
+	struct lpass_cdc_wsa_macro_priv *wsa_priv = NULL;
+	u16 reg1 = 0, reg2 = 0, reg3 = 0;
+	int softclip_path = 0;
+
+	if (!lpass_cdc_wsa_macro_get_data(component, &wsa_dev, &wsa_priv, __func__))
+		return -EINVAL;
+
+	if (path == LPASS_CDC_WSA_MACRO_COMP1) {
+		reg1 = LPASS_CDC_WSA_COMPANDER0_CTL0;
+		reg2 = LPASS_CDC_WSA_RX0_RX_PATH_CFG3;
+		reg3 = LPASS_CDC_WSA_RX0_RX_PATH_CFG1;
+		softclip_path = LPASS_CDC_WSA_MACRO_SOFTCLIP0;
+	} else if (path == LPASS_CDC_WSA_MACRO_COMP2) {
+		reg1 = LPASS_CDC_WSA_COMPANDER1_CTL0;
+		reg2 = LPASS_CDC_WSA_RX1_RX_PATH_CFG3;
+		reg3 = LPASS_CDC_WSA_RX1_RX_PATH_CFG1;
+		softclip_path = LPASS_CDC_WSA_MACRO_SOFTCLIP1;
+	}
+	if (!wsa_priv->pbr_enable || wsa_priv->wsa_bat_cfg[path] >= EXT_1S ||
+	    wsa_priv->wsa_sys_gain[path * 2] > G_12_DB ||
+	    wsa_priv->wsa_spkrrecv || !reg1 || !reg2 || !reg3)
+		return 0;
+
+	if (SND_SOC_DAPM_EVENT_ON(event)) {
+		snd_soc_component_update_bits(component,
+			reg1, 0x08, 0x08);
+		snd_soc_component_update_bits(component,
+			reg2, 0x40, 0x40);
+		snd_soc_component_update_bits(component,
+			reg3, 0x80, 0x80);
+		lpass_cdc_wsa_macro_enable_softclip_clk(component, wsa_priv,
+					softclip_path, true);
+		if (wsa_priv->pbr_clk_users == 0)
+			snd_soc_component_update_bits(component,
+				LPASS_CDC_WSA_PBR_PATH_CTL,
+				0x01, 0x01);
+		++wsa_priv->pbr_clk_users;
+	}
+
+	if (SND_SOC_DAPM_EVENT_OFF(event)) {
+		if (wsa_priv->pbr_clk_users == 1)
+			snd_soc_component_update_bits(component,
+				LPASS_CDC_WSA_PBR_PATH_CTL,
+				0x01, 0x00);
+		lpass_cdc_wsa_macro_enable_softclip_clk(component, wsa_priv,
+					softclip_path, false);
+		snd_soc_component_update_bits(component,
+			reg1, 0x08, 0x00);
+		snd_soc_component_update_bits(component,
+			reg2, 0x40, 0x00);
+		snd_soc_component_update_bits(component,
+			reg3, 0x80, 0x00);
+		--wsa_priv->pbr_clk_users;
+		if (wsa_priv->pbr_clk_users < 0)
+			wsa_priv->pbr_clk_users = 0;
+	}
+	return 0;
+}
+
 static bool lpass_cdc_wsa_macro_adie_lb(struct snd_soc_component *component,
 			      int interp_idx)
 {
@@ -1484,6 +1728,8 @@ static int lpass_cdc_wsa_macro_enable_main_path(struct snd_soc_dapm_widget *w,
 	struct lpass_cdc_wsa_macro_priv *wsa_priv = NULL;
 	bool adie_lb = false;
 
+	dev_dbg(component->dev, "%s %d %s\n", __func__, event, w->name);
+
 	if (!lpass_cdc_wsa_macro_get_data(component, &wsa_dev, &wsa_priv, __func__))
 		return -EINVAL;
 
@@ -1492,11 +1738,16 @@ static int lpass_cdc_wsa_macro_enable_main_path(struct snd_soc_dapm_widget *w,
 			LPASS_CDC_WSA_MACRO_RX_PATH_OFFSET * w->shift;
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
+		snd_soc_component_update_bits(component, reg, 0x40, 0x40);
+		usleep_range(500, 510);
+		snd_soc_component_update_bits(component, reg, 0x40, 0x00);
+		snd_soc_component_update_bits(component,
+					reg, 0x20, 0x20);
 		if (lpass_cdc_wsa_macro_adie_lb(component, w->shift)) {
 			adie_lb = true;
-			snd_soc_component_update_bits(component,
-						reg, 0x20, 0x20);
 			lpass_cdc_wsa_pa_on(wsa_dev, adie_lb);
+			snd_soc_component_update_bits(component,
+						reg, 0x10, 0x00);
 		}
 		break;
 	default:
@@ -1581,6 +1832,57 @@ static int lpass_cdc_wsa_macro_enable_prim_interpolator(
 	return 0;
 }
 
+static void lpass_cdc_macro_idle_detect_control(struct snd_soc_component *component,
+					 struct lpass_cdc_wsa_macro_priv *wsa_priv,
+					 int interp, int event)
+{
+	int reg = 0, mask = 0, val = 0, source_reg = 0;
+	u16 mode = 0;
+
+	dev_dbg(component->dev, "%s: Idle_detect_en value: %d\n", __func__,
+		wsa_priv->idle_detect_en);
+
+	if (!wsa_priv->idle_detect_en)
+		return;
+
+	if (interp == LPASS_CDC_WSA_MACRO_COMP1) {
+		source_reg = LPASS_CDC_WSA_RX0_RX_PATH_CFG3;
+		reg = LPASS_CDC_WSA_IDLE_DETECT_PATH_CTL;
+		mask = 0x01;
+		val = 0x01;
+	}
+	if (interp == LPASS_CDC_WSA_MACRO_COMP2) {
+		source_reg = LPASS_CDC_WSA_RX1_RX_PATH_CFG3;
+		reg = LPASS_CDC_WSA_IDLE_DETECT_PATH_CTL;
+		mask = 0x02;
+		val = 0x02;
+	}
+
+	mode = wsa_priv->comp_mode[interp];
+
+	if ((wsa_priv->noise_gate_mode == NG2 && mode >= G_13P5_DB) ||
+			wsa_priv->noise_gate_mode == IDLE_DETECT || !wsa_priv->pbr_enable ||
+			wsa_priv->wsa_spkrrecv) {
+		snd_soc_component_update_bits(component, source_reg, 0x80, 0x00);
+		dev_dbg(component->dev, "%s: Idle detect source: Legacy\n", __func__);
+	} else {
+		snd_soc_component_update_bits(component, source_reg, 0x80, 0x80);
+		dev_dbg(component->dev, "%s: Idle detect source: PRE-LA\n", __func__);
+	}
+
+	if (reg && SND_SOC_DAPM_EVENT_ON(event)) {
+		snd_soc_component_update_bits(component, reg, mask, val);
+		dev_dbg(component->dev, "%s: Idle detect clks ON\n", __func__);
+	}
+
+	if (reg && SND_SOC_DAPM_EVENT_OFF(event)) {
+		snd_soc_component_update_bits(component, reg, mask, 0x00);
+		snd_soc_component_write(component,
+				LPASS_CDC_WSA_IDLE_DETECT_CFG3, 0x0);
+		dev_dbg(component->dev, "%s: Idle detect clks OFF\n", __func__);
+	}
+}
+
 static int lpass_cdc_wsa_macro_enable_interpolator(struct snd_soc_dapm_widget *w,
 					 struct snd_kcontrol *kcontrol,
 					 int event)
@@ -1605,7 +1907,7 @@ static int lpass_cdc_wsa_macro_enable_interpolator(struct snd_soc_dapm_widget *w
 	} else if (!(strcmp(w->name, "WSA_RX INT1 INTERP"))) {
 		reg = LPASS_CDC_WSA_RX1_RX_PATH_CTL;
 	} else {
-		dev_err(component->dev, "%s: Interpolator reg not found\n",
+		dev_err_ratelimited(component->dev, "%s: Interpolator reg not found\n",
 			__func__);
 		return -EINVAL;
 	}
@@ -1645,17 +1947,23 @@ static int lpass_cdc_wsa_macro_enable_interpolator(struct snd_soc_dapm_widget *w
 		}
 
 		lpass_cdc_wsa_macro_config_compander(component, w->shift, event);
+		lpass_cdc_macro_idle_detect_control(component, wsa_priv,
+				w->shift, event);
 		lpass_cdc_wsa_macro_config_softclip(component, w->shift, event);
-		if(wsa_priv->wsa_spkrrecv)
+		lpass_cdc_was_macro_config_pbr(component, w->shift, event);
+		if (wsa_priv->wsa_spkrrecv)
 			snd_soc_component_update_bits(component,
 					LPASS_CDC_WSA_RX0_RX_PATH_CFG1,
 					0x08, 0x00);
 		break;
 	case SND_SOC_DAPM_POST_PMD:
 		snd_soc_component_update_bits(component,
-				LPASS_CDC_WSA_RX0_RX_PATH_CFG1,	0x08, 0x08);
+				LPASS_CDC_WSA_RX0_RX_PATH_CFG1, 0x08, 0x08);
 		lpass_cdc_wsa_macro_config_compander(component, w->shift, event);
+		lpass_cdc_macro_idle_detect_control(component, wsa_priv,
+				w->shift, event);
 		lpass_cdc_wsa_macro_config_softclip(component, w->shift, event);
+		lpass_cdc_was_macro_config_pbr(component, w->shift, event);
 		lpass_cdc_wsa_macro_enable_prim_interpolator(component, reg, event);
 		break;
 	}
@@ -1680,7 +1988,7 @@ static int lpass_cdc_wsa_macro_spk_boost_event(struct snd_soc_dapm_widget *w,
 		boost_path_ctl = LPASS_CDC_WSA_BOOST1_BOOST_PATH_CTL;
 		boost_path_cfg1 = LPASS_CDC_WSA_RX1_RX_PATH_CFG1;
 	} else {
-		dev_err(component->dev, "%s: unknown widget: %s\n",
+		dev_err_ratelimited(component->dev, "%s: unknown widget: %s\n",
 			__func__, w->name);
 		return -EINVAL;
 	}
@@ -1781,24 +2089,24 @@ static int lpass_cdc_wsa_macro_enable_vbat(struct snd_soc_dapm_widget *w,
 		snd_soc_component_update_bits(component,
 			LPASS_CDC_WSA_VBAT_BCL_VBAT_BCL_GAIN_UPD9,
 			0xFF, 0x00);
-                /* Enable CB decode block clock */
-                snd_soc_component_update_bits(component,
-                        LPASS_CDC_WSA_CB_DECODE_CB_DECODE_CTL1, 0x01, 0x01);
-                /* Enable BCL path */
-                snd_soc_component_update_bits(component,
-                        LPASS_CDC_WSA_CB_DECODE_CB_DECODE_CTL2, 0x01, 0x01);
-                /* Request for BCL data */
-                snd_soc_component_update_bits(component,
-                        LPASS_CDC_WSA_CB_DECODE_CB_DECODE_CTL3, 0x01, 0x01);
+		/* Enable CB decode block clock */
+		snd_soc_component_update_bits(component,
+			LPASS_CDC_WSA_CB_DECODE_CB_DECODE_CTL1, 0x01, 0x01);
+		/* Enable BCL path */
+		snd_soc_component_update_bits(component,
+			LPASS_CDC_WSA_CB_DECODE_CB_DECODE_CTL2, 0x01, 0x01);
+		/* Request for BCL data */
+		snd_soc_component_update_bits(component,
+			LPASS_CDC_WSA_CB_DECODE_CB_DECODE_CTL3, 0x01, 0x01);
 		break;
 
 	case SND_SOC_DAPM_POST_PMD:
-                snd_soc_component_update_bits(component,
-                        LPASS_CDC_WSA_CB_DECODE_CB_DECODE_CTL3, 0x01, 0x00);
-                snd_soc_component_update_bits(component,
-                        LPASS_CDC_WSA_CB_DECODE_CB_DECODE_CTL2, 0x01, 0x00);
-                snd_soc_component_update_bits(component,
-                        LPASS_CDC_WSA_CB_DECODE_CB_DECODE_CTL1, 0x01, 0x00);
+		snd_soc_component_update_bits(component,
+			LPASS_CDC_WSA_CB_DECODE_CB_DECODE_CTL3, 0x01, 0x00);
+		snd_soc_component_update_bits(component,
+			LPASS_CDC_WSA_CB_DECODE_CB_DECODE_CTL2, 0x01, 0x00);
+		snd_soc_component_update_bits(component,
+			LPASS_CDC_WSA_CB_DECODE_CB_DECODE_CTL1, 0x01, 0x00);
 		snd_soc_component_update_bits(component, vbat_path_cfg,
 			0x80, 0x00);
 		snd_soc_component_update_bits(component,
@@ -1841,7 +2149,7 @@ static int lpass_cdc_wsa_macro_enable_vbat(struct snd_soc_dapm_widget *w,
 			LPASS_CDC_WSA_VBAT_BCL_VBAT_PATH_CTL, 0x10, 0x00);
 		break;
 	default:
-		dev_err(wsa_dev, "%s: Invalid event %d\n", __func__, event);
+		dev_err_ratelimited(wsa_dev, "%s: Invalid event %d\n", __func__, event);
 		break;
 	}
 	return 0;
@@ -1870,7 +2178,7 @@ static int lpass_cdc_wsa_macro_enable_echo(struct snd_soc_dapm_widget *w,
 		ec_tx = ((val & 0x38) >> 0x3) - 1;
 
 	if (ec_tx < 0 || ec_tx >= (LPASS_CDC_WSA_MACRO_RX1 + 1)) {
-		dev_err(wsa_dev, "%s: EC mix control not set correctly\n",
+		dev_err_ratelimited(wsa_dev, "%s: EC mix control not set correctly\n",
 			__func__);
 		return -EINVAL;
 	}
@@ -1986,7 +2294,7 @@ static int lpass_cdc_wsa_macro_set_rx_mute_status(struct snd_kcontrol *kcontrol,
 				0x10, value << 4);
 		break;
 	default:
-		pr_err("%s: invalid argument rx_shift = %d\n", __func__,
+		pr_err_ratelimited("%s: invalid argument rx_shift = %d\n", __func__,
 			wsa_rx_shift);
 		ret = -EINVAL;
 	}
@@ -2016,7 +2324,7 @@ static int lpass_cdc_wsa_macro_set_digital_volume(struct snd_kcontrol *kcontrol,
 		return -EINVAL;
 
 	if (!wsa_priv) {
-		pr_err("%s: priv is null for macro!\n",
+		pr_err_ratelimited("%s: priv is null for macro!\n",
 			__func__);
 		return -EINVAL;
 	}
@@ -2036,7 +2344,7 @@ static int lpass_cdc_wsa_macro_set_digital_volume(struct snd_kcontrol *kcontrol,
 		gain = (u8)(wsa_priv->rx1_origin_gain -
 				wsa_priv->thermal_cur_state);
 	} else {
-		dev_err(wsa_priv->dev,
+		dev_err_ratelimited(wsa_priv->dev,
 			"%s: Incorrect RX Path selected\n", __func__);
 		return -EINVAL;
 	}
@@ -2113,22 +2421,54 @@ static int lpass_cdc_wsa_macro_ear_spkrrecv_get(struct snd_kcontrol *kcontrol,
 }
 
 static int lpass_cdc_wsa_macro_ear_spkrrecv_put(struct snd_kcontrol *kcontrol,
-                                        struct snd_ctl_elem_value *ucontrol)
+				struct snd_ctl_elem_value *ucontrol)
 {
-        struct snd_soc_component *component =
-                                snd_soc_kcontrol_component(kcontrol);
-        struct device *wsa_dev = NULL;
-        struct lpass_cdc_wsa_macro_priv *wsa_priv = NULL;
+	struct snd_soc_component *component =
+				snd_soc_kcontrol_component(kcontrol);
+	struct device *wsa_dev = NULL;
+	struct lpass_cdc_wsa_macro_priv *wsa_priv = NULL;
 
-        if (!lpass_cdc_wsa_macro_get_data(component, &wsa_dev, &wsa_priv, __func__))
-                return -EINVAL;
+	if (!lpass_cdc_wsa_macro_get_data(component, &wsa_dev, &wsa_priv, __func__))
+		return -EINVAL;
 
-        wsa_priv->wsa_spkrrecv = ucontrol->value.integer.value[0];
+	wsa_priv->wsa_spkrrecv = ucontrol->value.integer.value[0];
 
-        dev_dbg(component->dev, "%s:spkrrecv status = %d\n",
-                 __func__, wsa_priv->wsa_spkrrecv);
+	dev_dbg(component->dev, "%s:spkrrecv status = %d\n",
+		__func__, wsa_priv->wsa_spkrrecv);
 
-        return 0;
+	return 0;
+}
+
+static int lpass_cdc_wsa_macro_idle_detect_get(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component =
+			snd_soc_kcontrol_component(kcontrol);
+	struct lpass_cdc_wsa_macro_priv *wsa_priv = NULL;
+	struct device *wsa_dev = NULL;
+
+	if (!lpass_cdc_wsa_macro_get_data(component, &wsa_dev, &wsa_priv, __func__))
+		return -EINVAL;
+
+	ucontrol->value.integer.value[0] = wsa_priv->idle_detect_en;
+
+	return 0;
+}
+
+static int lpass_cdc_wsa_macro_idle_detect_put(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component =
+			snd_soc_kcontrol_component(kcontrol);
+	struct lpass_cdc_wsa_macro_priv *wsa_priv = NULL;
+	struct device *wsa_dev = NULL;
+
+	if (!lpass_cdc_wsa_macro_get_data(component, &wsa_dev, &wsa_priv, __func__))
+		return -EINVAL;
+
+	wsa_priv->idle_detect_en = ucontrol->value.integer.value[0];
+
+	return 0;
 }
 
 static int lpass_cdc_wsa_macro_comp_mode_get(struct snd_kcontrol *kcontrol,
@@ -2172,7 +2512,7 @@ static int lpass_cdc_wsa_macro_comp_mode_put(struct snd_kcontrol *kcontrol,
 	if (strnstr(kcontrol->id.name, "RX1", sizeof("WSA_RX1")))
 		idx = LPASS_CDC_WSA_MACRO_COMP2;
 
-	if (ucontrol->value.integer.value[0] < WSA_MODE_MAX && ucontrol->value.integer.value[0] >= 0)
+	if (ucontrol->value.integer.value[0] < G_MAX_DB && ucontrol->value.integer.value[0] >= 0)
 		wsa_priv->comp_mode[idx] = ucontrol->value.integer.value[0];
 	else
 		return 0;
@@ -2222,11 +2562,11 @@ static int lpass_cdc_wsa_macro_rx_mux_put(struct snd_kcontrol *kcontrol,
 	aif_rst = wsa_priv->rx_port_value[widget->shift];
 	if (!rx_port_value) {
 		if (aif_rst == 0) {
-			dev_err(wsa_dev, "%s: AIF reset already\n", __func__);
+			dev_err_ratelimited(wsa_dev, "%s: AIF reset already\n", __func__);
 			return 0;
 		}
 		if (aif_rst >= LPASS_CDC_WSA_MACRO_MAX_DAIS) {
-			dev_err(wsa_dev, "%s: Invalid AIF reset\n", __func__);
+			dev_err_ratelimited(wsa_dev, "%s: Invalid AIF reset\n", __func__);
 			return 0;
 		}
 	}
@@ -2253,7 +2593,7 @@ static int lpass_cdc_wsa_macro_rx_mux_put(struct snd_kcontrol *kcontrol,
 		wsa_priv->active_ch_cnt[rx_port_value]++;
 		break;
 	default:
-		dev_err(wsa_dev,
+		dev_err_ratelimited(wsa_dev,
 			"%s: Invalid AIF_ID for WSA RX MUX %d\n",
 			__func__, rx_port_value);
 		return -EINVAL;
@@ -2345,10 +2685,41 @@ static int lpass_cdc_wsa_macro_soft_clip_enable_put(struct snd_kcontrol *kcontro
 	return 0;
 }
 
+static int lpass_cdc_wsa_macro_pbr_enable_get(struct snd_kcontrol *kcontrol,
+			       struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component =
+			snd_soc_kcontrol_component(kcontrol);
+	struct device *wsa_dev = NULL;
+	struct lpass_cdc_wsa_macro_priv *wsa_priv = NULL;
+
+
+	if (!lpass_cdc_wsa_macro_get_data(component, &wsa_dev, &wsa_priv, __func__))
+		return -EINVAL;
+
+	ucontrol->value.integer.value[0] = wsa_priv->pbr_enable;
+	return 0;
+}
+
+static int lpass_cdc_wsa_macro_pbr_enable_put(struct snd_kcontrol *kcontrol,
+					  struct snd_ctl_elem_value *ucontrol)
+{
+
+	struct snd_soc_component *component =
+			snd_soc_kcontrol_component(kcontrol);
+	struct device *wsa_dev = NULL;
+	struct lpass_cdc_wsa_macro_priv *wsa_priv = NULL;
+
+	if (!lpass_cdc_wsa_macro_get_data(component, &wsa_dev, &wsa_priv, __func__))
+		return -EINVAL;
+
+	wsa_priv->pbr_enable = ucontrol->value.integer.value[0];
+	return 0;
+
+}
+
+
 static const struct snd_kcontrol_new lpass_cdc_wsa_macro_snd_controls[] = {
-	SOC_ENUM_EXT("WSA SPKRRECV", lpass_cdc_wsa_macro_ear_spkrrecv_enum,
-			lpass_cdc_wsa_macro_ear_spkrrecv_get,
-			lpass_cdc_wsa_macro_ear_spkrrecv_put),
 	SOC_ENUM_EXT("GSM mode Enable", lpass_cdc_wsa_macro_vbat_bcl_gsm_mode_enum,
 		     lpass_cdc_wsa_macro_vbat_bcl_gsm_mode_func_get,
 		     lpass_cdc_wsa_macro_vbat_bcl_gsm_mode_func_put),
@@ -2358,6 +2729,12 @@ static const struct snd_kcontrol_new lpass_cdc_wsa_macro_snd_controls[] = {
 	SOC_ENUM_EXT("WSA_RX1 comp_mode", lpass_cdc_wsa_macro_comp_mode_enum,
 		     lpass_cdc_wsa_macro_comp_mode_get,
 		     lpass_cdc_wsa_macro_comp_mode_put),
+	SOC_SINGLE_EXT("WSA SPKRRECV", SND_SOC_NOPM, 0, 1, 0,
+			lpass_cdc_wsa_macro_ear_spkrrecv_get,
+			lpass_cdc_wsa_macro_ear_spkrrecv_put),
+	SOC_SINGLE_EXT("Idle Detect", SND_SOC_NOPM, 0, 1,
+			0, lpass_cdc_wsa_macro_idle_detect_get,
+			lpass_cdc_wsa_macro_idle_detect_put),
 	SOC_SINGLE_EXT("WSA_Softclip0 Enable", SND_SOC_NOPM,
 			LPASS_CDC_WSA_MACRO_SOFTCLIP0, 1, 0,
 			lpass_cdc_wsa_macro_soft_clip_enable_get,
@@ -2392,6 +2769,9 @@ static const struct snd_kcontrol_new lpass_cdc_wsa_macro_snd_controls[] = {
 			1, 0, lpass_cdc_wsa_macro_get_ec_hq, lpass_cdc_wsa_macro_set_ec_hq),
 	SOC_SINGLE_EXT("WSA_RX1 EC_HQ Switch", SND_SOC_NOPM, LPASS_CDC_WSA_MACRO_RX1,
 			1, 0, lpass_cdc_wsa_macro_get_ec_hq, lpass_cdc_wsa_macro_set_ec_hq),
+	SOC_SINGLE_EXT("WSA PBR Enable", SND_SOC_NOPM, 0, 1,
+			0, lpass_cdc_wsa_macro_pbr_enable_get,
+			lpass_cdc_wsa_macro_pbr_enable_put),
 };
 
 static const struct soc_enum rx_mux_enum =
@@ -2604,8 +2984,16 @@ static const struct snd_soc_dapm_widget lpass_cdc_wsa_macro_dapm_widgets[] = {
 	SND_SOC_DAPM_AIF_OUT("WSA AIF_ECHO", "WSA_AIF_ECHO Capture", 0,
 		SND_SOC_NOPM, 0, 0),
 
+	SND_SOC_DAPM_AIF_OUT("WSA AIF_CPS", "WSA_AIF_CPS Capture", 0,
+		SND_SOC_NOPM, 0, 0),
+
+	SND_SOC_DAPM_AIF_IN("WSA AIF4 PB", "WSA AIF4 Playback", 0,
+		SND_SOC_NOPM, 0, 0),
+
 	SND_SOC_DAPM_MIXER("WSA_AIF_VI Mixer", SND_SOC_NOPM, LPASS_CDC_WSA_MACRO_AIF_VI,
 		0, aif_vi_mixer, ARRAY_SIZE(aif_vi_mixer)),
+	SND_SOC_DAPM_MIXER("WSA_AIF_CPS Mixer", SND_SOC_NOPM, LPASS_CDC_WSA_MACRO_AIF_CPS,
+		0, aif_cps_mixer, ARRAY_SIZE(aif_cps_mixer)),
 	SND_SOC_DAPM_MUX_E("WSA RX_MIX EC0_MUX", SND_SOC_NOPM,
 			LPASS_CDC_WSA_MACRO_EC0_MUX, 0,
 			&rx_mix_ec0_mux, lpass_cdc_wsa_macro_enable_echo,
@@ -2708,8 +3096,11 @@ static const struct snd_soc_dapm_widget lpass_cdc_wsa_macro_dapm_widgets[] = {
 
 	SND_SOC_DAPM_INPUT("VIINPUT_WSA"),
 
+	SND_SOC_DAPM_INPUT("CPSINPUT_WSA"),
+
 	SND_SOC_DAPM_OUTPUT("WSA_SPK1 OUT"),
 	SND_SOC_DAPM_OUTPUT("WSA_SPK2 OUT"),
+	SND_SOC_DAPM_OUTPUT("WSA_HAPT OUT"),
 
 	SND_SOC_DAPM_SUPPLY_S("WSA_MCLK", 0, SND_SOC_NOPM, 0, 0,
 	lpass_cdc_wsa_macro_mclk_event, SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
@@ -2721,6 +3112,16 @@ static const struct snd_soc_dapm_route wsa_audio_map[] = {
 	{"WSA_AIF_VI Mixer", "WSA_SPKR_VI_2", "VIINPUT_WSA"},
 	{"WSA AIF_VI", NULL, "WSA_AIF_VI Mixer"},
 	{"WSA AIF_VI", NULL, "WSA_MCLK"},
+
+	/* CPS Feedback */
+	{"WSA_AIF_CPS Mixer", "WSA_SPKR_CPS_1", "CPSINPUT_WSA"},
+	{"WSA_AIF_CPS Mixer", "WSA_SPKR_CPS_2", "CPSINPUT_WSA"},
+	{"WSA AIF_CPS", NULL, "WSA_AIF_CPS Mixer"},
+	{"WSA AIF_CPS", NULL, "WSA_MCLK"},
+
+	/* Haptics PCM*/
+	{"WSA AIF4 PB", NULL, "WSA_MCLK"},
+	{"WSA_HAPT OUT", NULL, "WSA AIF4 PB"},
 
 	{"WSA RX_MIX EC0_MUX", "RX_MIX_TX0", "WSA_RX INT0 SEC MIX"},
 	{"WSA RX_MIX EC1_MUX", "RX_MIX_TX0", "WSA_RX INT0 SEC MIX"},
@@ -2853,14 +3254,150 @@ static const struct snd_soc_dapm_route wsa_audio_map[] = {
 	{"WSA_SPK2 OUT", NULL, "WSA_MCLK"},
 };
 
+static void lpass_cdc_wsa_macro_init_pbr(struct snd_soc_component *component)
+{
+	int sys_gain, bat_cfg, rload;
+	int vth1, vth2, vth3, vth4, vth5, vth6, vth7, vth8, vth9;
+	int vth10, vth11, vth12, vth13, vth14, vth15;
+	struct device *wsa_dev = NULL;
+	struct lpass_cdc_wsa_macro_priv *wsa_priv = NULL;
+
+	if (!lpass_cdc_wsa_macro_get_data(component, &wsa_dev, &wsa_priv, __func__))
+		return;
+
+	/* RX0 */
+	sys_gain = wsa_priv->wsa_sys_gain[0];
+	bat_cfg = wsa_priv->wsa_bat_cfg[0];
+	rload = wsa_priv->wsa_rload[0];
+	/* ILIM */
+	switch (rload) {
+	case WSA_4_OHMS:
+		snd_soc_component_update_bits(component,
+			LPASS_CDC_WSA_ILIM_CFG0, 0xE0, 0x40);
+		break;
+	case WSA_6_OHMS:
+		snd_soc_component_update_bits(component,
+			LPASS_CDC_WSA_ILIM_CFG0, 0xE0, 0x80);
+		break;
+	case WSA_8_OHMS:
+		snd_soc_component_update_bits(component,
+			LPASS_CDC_WSA_ILIM_CFG0, 0xE0, 0xC0);
+		break;
+	case WSA_32_OHMS:
+		snd_soc_component_update_bits(component,
+			LPASS_CDC_WSA_ILIM_CFG0, 0xE0, 0xE0);
+		break;
+	default:
+		break;
+	}
+	snd_soc_component_update_bits(component,
+		LPASS_CDC_WSA_ILIM_CFG1, 0x0F, sys_gain);
+	snd_soc_component_update_bits(component,
+		LPASS_CDC_WSA_ILIM_CFG9, 0xC0, (bat_cfg - 1) << 0x6);
+	/* Thesh */
+	vth1 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth1_data[sys_gain][bat_cfg][rload]);
+	vth2 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth2_data[sys_gain][bat_cfg][rload]);
+	vth3 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth3_data[sys_gain][bat_cfg][rload]);
+	vth4 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth4_data[sys_gain][bat_cfg][rload]);
+	vth5 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth5_data[sys_gain][bat_cfg][rload]);
+	vth6 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth6_data[sys_gain][bat_cfg][rload]);
+	vth7 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth7_data[sys_gain][bat_cfg][rload]);
+	vth8 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth8_data[sys_gain][bat_cfg][rload]);
+	vth9 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth9_data[sys_gain][bat_cfg][rload]);
+	vth10 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth10_data[sys_gain][bat_cfg][rload]);
+	vth11 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth11_data[sys_gain][bat_cfg][rload]);
+	vth12 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth12_data[sys_gain][bat_cfg][rload]);
+	vth13 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth13_data[sys_gain][bat_cfg][rload]);
+	vth14 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth14_data[sys_gain][bat_cfg][rload]);
+	vth15 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth15_data[sys_gain][bat_cfg][rload]);
+
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG1, vth1);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG2, vth2);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG3, vth3);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG4, vth4);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG5, vth5);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG6, vth6);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG7, vth7);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG8, vth8);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG9, vth9);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG10, vth10);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG11, vth11);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG12, vth12);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG13, vth13);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG14, vth14);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG15, vth15);
+
+	/* RX1 */
+	sys_gain = wsa_priv->wsa_sys_gain[2];
+	bat_cfg = wsa_priv->wsa_bat_cfg[1];
+	rload = wsa_priv->wsa_rload[1];
+	/* ILIM */
+	switch (rload) {
+	case WSA_4_OHMS:
+		snd_soc_component_update_bits(component,
+			LPASS_CDC_WSA_ILIM_CFG0_1, 0xE0, 0x40);
+		break;
+	case WSA_6_OHMS:
+		snd_soc_component_update_bits(component,
+			LPASS_CDC_WSA_ILIM_CFG0_1, 0xE0, 0x80);
+		break;
+	case WSA_8_OHMS:
+		snd_soc_component_update_bits(component,
+			LPASS_CDC_WSA_ILIM_CFG0_1, 0xE0, 0xC0);
+		break;
+	case WSA_32_OHMS:
+		snd_soc_component_update_bits(component,
+			LPASS_CDC_WSA_ILIM_CFG0_1, 0xE0, 0xE0);
+		break;
+	default:
+		break;
+	}
+	snd_soc_component_update_bits(component,
+		LPASS_CDC_WSA_ILIM_CFG1_1, 0x0F, sys_gain);
+	snd_soc_component_update_bits(component,
+		LPASS_CDC_WSA_ILIM_CFG9, 0x30, (bat_cfg - 1) << 0x4);
+	/* Thesh */
+	vth1 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth1_data[sys_gain][bat_cfg][rload]);
+	vth2 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth2_data[sys_gain][bat_cfg][rload]);
+	vth3 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth3_data[sys_gain][bat_cfg][rload]);
+	vth4 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth4_data[sys_gain][bat_cfg][rload]);
+	vth5 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth5_data[sys_gain][bat_cfg][rload]);
+	vth6 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth6_data[sys_gain][bat_cfg][rload]);
+	vth7 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth7_data[sys_gain][bat_cfg][rload]);
+	vth8 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth8_data[sys_gain][bat_cfg][rload]);
+	vth9 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth9_data[sys_gain][bat_cfg][rload]);
+	vth10 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth10_data[sys_gain][bat_cfg][rload]);
+	vth11 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth11_data[sys_gain][bat_cfg][rload]);
+	vth12 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth12_data[sys_gain][bat_cfg][rload]);
+	vth13 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth13_data[sys_gain][bat_cfg][rload]);
+	vth14 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth14_data[sys_gain][bat_cfg][rload]);
+	vth15 = LPASS_CDC_WSA_MACRO_VTH_TO_REG(pbr_vth15_data[sys_gain][bat_cfg][rload]);
+
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG1_1, vth1);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG2_1, vth2);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG3_1, vth3);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG4_1, vth4);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG5_1, vth5);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG6_1, vth6);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG7_1, vth7);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG8_1, vth8);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG9_1, vth9);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG10_1, vth10);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG11_1, vth11);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG12_1, vth12);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG13_1, vth13);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG14_1, vth14);
+	snd_soc_component_write(component, LPASS_CDC_WSA_PBR_CFG15_1, vth15);
+}
+
 static const struct lpass_cdc_wsa_macro_reg_mask_val
 				lpass_cdc_wsa_macro_reg_init[] = {
 	{LPASS_CDC_WSA_BOOST0_BOOST_CFG1, 0x3F, 0x12},
 	{LPASS_CDC_WSA_BOOST0_BOOST_CFG2, 0x1C, 0x08},
-	{LPASS_CDC_WSA_COMPANDER0_CTL7, 0x1E, 0x18},
+	{LPASS_CDC_WSA_COMPANDER0_CTL7, 0x3E, 0x2e},
 	{LPASS_CDC_WSA_BOOST1_BOOST_CFG1, 0x3F, 0x12},
 	{LPASS_CDC_WSA_BOOST1_BOOST_CFG2, 0x1C, 0x08},
-	{LPASS_CDC_WSA_COMPANDER1_CTL7, 0x1E, 0x18},
+	{LPASS_CDC_WSA_COMPANDER1_CTL7, 0x3E, 0x2e},
 	{LPASS_CDC_WSA_BOOST0_BOOST_CTL, 0x70, 0x58},
 	{LPASS_CDC_WSA_BOOST1_BOOST_CTL, 0x70, 0x58},
 	{LPASS_CDC_WSA_RX0_RX_PATH_CFG1, 0x08, 0x08},
@@ -2871,12 +3408,28 @@ static const struct lpass_cdc_wsa_macro_reg_mask_val
 	{LPASS_CDC_WSA_TX1_SPKR_PROT_PATH_CFG0, 0x01, 0x01},
 	{LPASS_CDC_WSA_TX2_SPKR_PROT_PATH_CFG0, 0x01, 0x01},
 	{LPASS_CDC_WSA_TX3_SPKR_PROT_PATH_CFG0, 0x01, 0x01},
-	{LPASS_CDC_WSA_COMPANDER0_CTL7, 0x01, 0x01},
-	{LPASS_CDC_WSA_COMPANDER1_CTL7, 0x01, 0x01},
 	{LPASS_CDC_WSA_RX0_RX_PATH_CFG0, 0x01, 0x01},
 	{LPASS_CDC_WSA_RX1_RX_PATH_CFG0, 0x01, 0x01},
 	{LPASS_CDC_WSA_RX0_RX_PATH_MIX_CFG, 0x01, 0x01},
 	{LPASS_CDC_WSA_RX1_RX_PATH_MIX_CFG, 0x01, 0x01},
+	{LPASS_CDC_WSA_LA_CFG, 0x3F, 0xF},
+	{LPASS_CDC_WSA_PBR_CFG16, 0xFF, 0x42},
+	{LPASS_CDC_WSA_PBR_CFG19, 0xFF, 0xFC},
+	{LPASS_CDC_WSA_PBR_CFG20, 0xF0, 0x60},
+	{LPASS_CDC_WSA_ILIM_CFG1, 0x70, 0x40},
+	{LPASS_CDC_WSA_ILIM_CFG0, 0x03, 0x01},
+	{LPASS_CDC_WSA_ILIM_CFG3, 0x1F, 0x15},
+	{LPASS_CDC_WSA_LA_CFG_1, 0x3F, 0x0F},
+	{LPASS_CDC_WSA_PBR_CFG16_1, 0xFF, 0x42},
+	{LPASS_CDC_WSA_PBR_CFG21, 0xFF, 0xFC},
+	{LPASS_CDC_WSA_PBR_CFG22, 0xF0, 0x60},
+	{LPASS_CDC_WSA_ILIM_CFG1_1, 0x70, 0x40},
+	{LPASS_CDC_WSA_ILIM_CFG0_1, 0x03, 0x01},
+	{LPASS_CDC_WSA_ILIM_CFG4, 0x1F, 0x15},
+	{LPASS_CDC_WSA_ILIM_CFG2_1, 0xFF, 0x2A},
+	{LPASS_CDC_WSA_ILIM_CFG2, 0x3F, 0x1B},
+	{LPASS_CDC_WSA_ILIM_CFG9, 0x0F, 0x05},
+	{LPASS_CDC_WSA_IDLE_DETECT_CFG1, 0xFF, 0x1D},
 };
 
 static void lpass_cdc_wsa_macro_init_reg(struct snd_soc_component *component)
@@ -2888,6 +3441,7 @@ static void lpass_cdc_wsa_macro_init_reg(struct snd_soc_component *component)
 				lpass_cdc_wsa_macro_reg_init[i].reg,
 				lpass_cdc_wsa_macro_reg_init[i].mask,
 				lpass_cdc_wsa_macro_reg_init[i].val);
+	lpass_cdc_wsa_macro_init_pbr(component);
 }
 
 static int lpass_cdc_wsa_macro_core_vote(void *handle, bool enable)
@@ -2896,7 +3450,7 @@ static int lpass_cdc_wsa_macro_core_vote(void *handle, bool enable)
 	struct lpass_cdc_wsa_macro_priv *wsa_priv = (struct lpass_cdc_wsa_macro_priv *) handle;
 
 	if (wsa_priv == NULL) {
-		pr_err("%s: wsa priv data is NULL\n", __func__);
+		pr_err_ratelimited("%s: wsa priv data is NULL\n", __func__);
 		return -EINVAL;
 	}
 	if (!wsa_priv->pre_dev_up && enable) {
@@ -2925,7 +3479,7 @@ static int wsa_swrm_clock(void *handle, bool enable)
 	int ret = 0;
 
 	if (regmap == NULL) {
-		dev_err(wsa_priv->dev, "%s: regmap is NULL\n", __func__);
+		dev_err_ratelimited(wsa_priv->dev, "%s: regmap is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -2978,7 +3532,7 @@ static int wsa_swrm_clock(void *handle, bool enable)
 		pm_runtime_put_autosuspend(wsa_priv->dev);
 	} else {
 		if (wsa_priv->swr_clk_users <= 0) {
-			dev_err(wsa_priv->dev, "%s: clock already disabled\n",
+			dev_err_ratelimited(wsa_priv->dev, "%s: clock already disabled\n",
 			__func__);
 			wsa_priv->swr_clk_users = 0;
 			goto exit;
@@ -3013,7 +3567,7 @@ static int lpass_cdc_wsa_macro_get_max_state(
 {
 	struct lpass_cdc_wsa_macro_priv *wsa_priv = cdev->devdata;
 	if (!wsa_priv) {
-		pr_err("%s: cdev->devdata is NULL\n", __func__);
+		pr_err_ratelimited("%s: cdev->devdata is NULL\n", __func__);
 		return -EINVAL;
 	}
 	*state = wsa_priv->thermal_max_state;
@@ -3028,7 +3582,7 @@ static int lpass_cdc_wsa_macro_get_cur_state(
 	struct lpass_cdc_wsa_macro_priv *wsa_priv = cdev->devdata;
 
 	if (!wsa_priv) {
-		pr_err("%s: cdev->devdata is NULL\n", __func__);
+		pr_err_ratelimited("%s: cdev->devdata is NULL\n", __func__);
 		return -EINVAL;
 	}
 	*state = wsa_priv->thermal_cur_state;
@@ -3044,14 +3598,14 @@ static int lpass_cdc_wsa_macro_set_cur_state(
 	struct lpass_cdc_wsa_macro_priv *wsa_priv = cdev->devdata;
 
 	if (!wsa_priv || !wsa_priv->dev) {
-		pr_err("%s: cdev->devdata is NULL\n", __func__);
+		pr_err_ratelimited("%s: cdev->devdata is NULL\n", __func__);
 		return -EINVAL;
 	}
 
 	if (state <= wsa_priv->thermal_max_state) {
 		wsa_priv->thermal_cur_state = state;
 	} else {
-		dev_err(wsa_priv->dev,
+		dev_err_ratelimited(wsa_priv->dev,
 			"%s: incorrect requested state:%lu\n",
 			__func__, state);
 		return -EINVAL;
@@ -3120,17 +3674,24 @@ static int lpass_cdc_wsa_macro_init(struct snd_soc_component *component)
 		return ret;
 	}
 	snd_soc_dapm_ignore_suspend(dapm, "WSA_AIF1 Playback");
+	snd_soc_dapm_ignore_suspend(dapm, "WSA AIF4 Playback");
 	snd_soc_dapm_ignore_suspend(dapm, "WSA_AIF_MIX1 Playback");
 	snd_soc_dapm_ignore_suspend(dapm, "WSA_AIF_VI Capture");
 	snd_soc_dapm_ignore_suspend(dapm, "WSA_AIF_ECHO Capture");
+	snd_soc_dapm_ignore_suspend(dapm, "WSA_AIF_CPS Capture");
 	snd_soc_dapm_ignore_suspend(dapm, "WSA_SPK1 OUT");
 	snd_soc_dapm_ignore_suspend(dapm, "WSA_SPK2 OUT");
+	snd_soc_dapm_ignore_suspend(dapm, "WSA_HAPT OUT");
 	snd_soc_dapm_ignore_suspend(dapm, "VIINPUT_WSA");
+	snd_soc_dapm_ignore_suspend(dapm, "CPSINPUT_WSA");
 	snd_soc_dapm_ignore_suspend(dapm, "WSA SRC0_INP");
 	snd_soc_dapm_ignore_suspend(dapm, "WSA_TX DEC0_INP");
 	snd_soc_dapm_ignore_suspend(dapm, "WSA_TX DEC1_INP");
 	snd_soc_dapm_sync(dapm);
 
+	wsa_priv->wsa_vi_dec_enable_work.wsa_priv = wsa_priv;
+	INIT_DELAYED_WORK(&wsa_priv->wsa_vi_dec_enable_work.dwork,
+		lpass_cdc_wsa_macro_enable_vi_decimator);
 	wsa_priv->component = component;
 	wsa_priv->spkr_gain_offset = LPASS_CDC_WSA_MACRO_GAIN_OFFSET_0_DB;
 	lpass_cdc_wsa_macro_init_reg(component);
@@ -3181,11 +3742,11 @@ static void lpass_cdc_wsa_macro_add_child_devices(struct work_struct *work)
 	for_each_available_child_of_node(wsa_priv->dev->of_node, node) {
 		if (strnstr(node->name, "wsa_swr_master",
 				strlen("wsa_swr_master")) != NULL)
-			strlcpy(plat_dev_name, "wsa_swr_ctrl",
+			strscpy(plat_dev_name, "wsa_swr_ctrl",
 				(LPASS_CDC_WSA_MACRO_SWR_STRING_LEN - 1));
 		else if (strnstr(node->name, "msm_cdc_pinctrl",
 				 strlen("msm_cdc_pinctrl")) != NULL)
-			strlcpy(plat_dev_name, node->name,
+			strscpy(plat_dev_name, node->name,
 				(LPASS_CDC_WSA_MACRO_SWR_STRING_LEN - 1));
 		else
 			continue;
@@ -3294,6 +3855,31 @@ static void lpass_cdc_wsa_macro_cooling_adjust_gain(struct work_struct *work)
 	return;
 }
 
+static int lpass_cdc_wsa_macro_read_array(struct platform_device *pdev,
+					  const char *name, int num_values,
+					  u32 *output)
+{
+	u32 len, ret, size;
+
+	if (!of_find_property(pdev->dev.of_node, name, &size)) {
+		dev_info(&pdev->dev, "%s: missing %s\n", __func__, name);
+		return 0;
+	}
+
+	len = size / sizeof(u32);
+	if (len != num_values) {
+		dev_info(&pdev->dev, "%s: invalid number of %s\n", __func__, name);
+		return -EINVAL;
+	}
+
+	ret = of_property_read_u32_array(pdev->dev.of_node, name, output, len);
+	if (ret)
+		dev_info(&pdev->dev, "%s: Failed to read %s\n", __func__, name);
+
+	return 0;
+
+}
+
 static void lpass_cdc_wsa_macro_init_ops(struct macro_ops *ops,
 			       char __iomem *wsa_io_base)
 {
@@ -3315,6 +3901,7 @@ static int lpass_cdc_wsa_macro_probe(struct platform_device *pdev)
 	char __iomem *wsa_io_base;
 	int ret = 0;
 	u32 is_used_wsa_swr_gpio = 1;
+	u32 noise_gate_mode;
 	const char *is_used_wsa_swr_gpio_dt = "qcom,is-used-swr-gpio";
 
 	if (!lpass_cdc_is_va_macro_registered(&pdev->dev)) {
@@ -3337,6 +3924,17 @@ static int lpass_cdc_wsa_macro_probe(struct platform_device *pdev)
 			__func__, "reg");
 		return ret;
 	}
+	ret = of_property_read_u32(pdev->dev.of_node, "wsa_data_fs_ctl_reg",
+					&wsa_priv->wsa_fs_ctl_reg);
+	if (ret) {
+		dev_dbg(&pdev->dev, "%s: error finding %s entry in dt\n",
+			__func__, "wsa_data_fs_ctl_reg");
+	}
+
+	if (!wsa_priv->wsa_fs_reg_base && wsa_priv->wsa_fs_ctl_reg)
+		wsa_priv->wsa_fs_reg_base = devm_ioremap(&pdev->dev,
+			wsa_priv->wsa_fs_ctl_reg, LPASS_CDC_WSA_MACRO_MAX_OFFSET);
+
 	if (of_find_property(pdev->dev.of_node, is_used_wsa_swr_gpio_dt,
 			     NULL)) {
 		ret = of_property_read_u32(pdev->dev.of_node,
@@ -3370,6 +3968,15 @@ static int lpass_cdc_wsa_macro_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "%s: ioremap failed\n", __func__);
 		return -EINVAL;
 	}
+
+	lpass_cdc_wsa_macro_read_array(pdev, "qcom,wsa-rloads",
+		LPASS_CDC_WSA_MACRO_RX1 + 1, wsa_priv->wsa_rload);
+	lpass_cdc_wsa_macro_read_array(pdev, "qcom,wsa-system-gains",
+		2 * (LPASS_CDC_WSA_MACRO_RX1 + 1), wsa_priv->wsa_sys_gain);
+	lpass_cdc_wsa_macro_read_array(pdev, "qcom,wsa-bat-cfgs",
+		LPASS_CDC_WSA_MACRO_RX1 + 1, wsa_priv->wsa_bat_cfg);
+
+
 	wsa_priv->wsa_io_base = wsa_io_base;
 	wsa_priv->reset_swr = true;
 	INIT_WORK(&wsa_priv->lpass_cdc_wsa_macro_add_child_devices_work,
@@ -3432,6 +4039,19 @@ static int lpass_cdc_wsa_macro_probe(struct platform_device *pdev)
 		}
 	}
 
+	ret = of_property_read_u32(pdev->dev.of_node,
+				"qcom,noise-gate-mode", &noise_gate_mode);
+	if (ret) {
+		dev_info(&pdev->dev, "%s: could not find %s entry in dt\n",
+			__func__, "qcom,noise-gate-mode");
+		wsa_priv->noise_gate_mode = IDLE_DETECT;
+	} else {
+		if (noise_gate_mode >= IDLE_DETECT && noise_gate_mode <= NG3)
+			wsa_priv->noise_gate_mode = noise_gate_mode;
+		else
+			wsa_priv->noise_gate_mode = IDLE_DETECT;
+	}
+
 	pm_runtime_set_autosuspend_delay(&pdev->dev, AUTO_SUSPEND_DELAY);
 	pm_runtime_use_autosuspend(&pdev->dev);
 	pm_runtime_set_suspended(&pdev->dev);
@@ -3455,6 +4075,8 @@ static int lpass_cdc_wsa_macro_remove(struct platform_device *pdev)
 	if (!wsa_priv)
 		return -EINVAL;
 
+	cancel_delayed_work_sync(
+			&wsa_priv->wsa_vi_dec_enable_work.dwork);
 	if (wsa_priv->tcdev)
 		thermal_cooling_device_unregister(wsa_priv->tcdev);
 

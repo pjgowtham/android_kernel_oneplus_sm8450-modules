@@ -24,6 +24,11 @@ ifeq ($(CONFIG_SND_SOC_AUTO), y)
 		export
 		INCS    +=  -include $(AUDIO_ROOT)/config/sa6155autoconf.h
 	endif
+	ifdef CONFIG_SND_SOC_GVM
+		include $(AUDIO_ROOT)/config/gvmauto.conf
+        export
+        INCS    +=  -include $(AUDIO_ROOT)/config/gvmautoconf.h
+	endif
 else
 ifeq ($(KERNEL_BUILD), 0)
 	ifeq ($(CONFIG_ARCH_SM8150), y)
@@ -61,19 +66,31 @@ ifeq ($(KERNEL_BUILD), 0)
 		include $(AUDIO_ROOT)/config/waipioauto.conf
 		INCS    +=  -include $(AUDIO_ROOT)/config/waipioautoconf.h
 	endif
-	ifeq ($(CONFIG_ARCH_PARROT), y)
-		include $(AUDIO_ROOT)/config/waipioauto.conf
-		INCS    +=  -include $(AUDIO_ROOT)/config/waipioautoconf.h
+	ifeq ($(CONFIG_ARCH_KALAMA), y)
+		include $(AUDIO_ROOT)/config/kalamaauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/kalamaautoconf.h
+	endif
+	ifeq ($(CONFIG_ARCH_PINEAPPLE), y)
+		include $(AUDIO_ROOT)/config/pineappleauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/pineappleautoconf.h
 	endif
 	ifeq ($(CONFIG_ARCH_LITO), y)
 		include $(AUDIO_ROOT)/config/litoauto.conf
 		export
 		INCS    +=  -include $(AUDIO_ROOT)/config/litoautoconf.h
 	endif
-	ifeq ($(CONFIG_ARCH_BENGAL), y)
+	ifeq ($(CONFIG_ARCH_KHAJE), y)
 		include $(AUDIO_ROOT)/config/bengalauto.conf
 		export
 		INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+	endif
+	ifeq ($(CONFIG_ARCH_HOLI), y)
+		include $(AUDIO_ROOT)/config/holiauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/holiautoconf.h
+	endif
+	ifeq ($(CONFIG_ARCH_BLAIR), y)
+		include $(AUDIO_ROOT)/config/holiauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/holiautoconf.h
 	endif
 	ifeq ($(CONFIG_ARCH_SDMSHRIKE), y)
 		include $(AUDIO_ROOT)/config/sm8150auto.conf
@@ -174,6 +191,7 @@ ifdef CONFIG_SND_SOC_SWR_DMIC
 endif
 
 ifdef CONFIG_SND_SOC_WSA881X_ANALOG
+	INCS += -include $(KERNEL_SRC)/drivers/base/regmap/internal.h
 	WSA881X_ANALOG_OBJS += wsa881x-analog.o
 	WSA881X_ANALOG_OBJS += wsa881x-tables-analog.o
 	WSA881X_ANALOG_OBJS += wsa881x-regmap-analog.o
@@ -207,15 +225,22 @@ endif
 
 ifdef CONFIG_SND_SOC_MSM_HDMI_CODEC_RX
 	HDMICODEC_OBJS += msm_hdmi_codec_rx.o
-	CFLAGS_msm_hdmi_codec_rx.o += -I$(AUDIO_ROOT)/../mm-drivers/msm_ext_display/include
 endif
 
 ifdef CONFIG_SND_SOC_WCD_IRQ
 	CORE_OBJS += wcd-irq.o
 endif
 
+ifdef CONFIG_SND_SOC_SDCA_REGISTERS
+	SDCA_REGISTERS_OBJS += sdca-registers-api.o
+endif
+
 ifdef CONFIG_SND_SWR_HAPTICS
 	SWR_HAP_OBJS += swr-haptics.o
+endif
+
+ifdef CONFIG_LPASS_BT_SWR
+	LPASS_BT_SWR_OBJS += lpass-bt-swr.o
 endif
 
 LINUX_INC +=	-Iinclude/linux
@@ -256,10 +281,14 @@ ifeq ($(KERNEL_BUILD), 1)
 	obj-y	+= wcd934x/
 	obj-y	+= wcd937x/
 	obj-y	+= wcd938x/
+	obj-y	+= wcd939x/
+	obj-y	+= wcd9378/
 	obj-y	+= bolero/
 	obj-y	+= lpass-cdc/
+	obj-y	+= wsa884x/
 	obj-y	+= wsa883x/
 	obj-y	+= rouleur/
+	obj-y	+= ./
 endif
 # Module information used by KBuild framework
 obj-$(CONFIG_WCD9XXX_CODEC_CORE) += wcd_core_dlkm.o
@@ -293,8 +322,17 @@ wcd_spi_dlkm-y := $(SPI_OBJS)
 obj-$(CONFIG_SND_SOC_WCD_MBHC) += mbhc_dlkm.o
 mbhc_dlkm-y := $(MBHC_OBJS)
 
+obj-$(CONFIG_SND_SOC_SDCA_REGISTERS) += sdca_registers_dlkm.o
+sdca_registers_dlkm-y := $(SDCA_REGISTERS_OBJS)
+
 obj-$(CONFIG_SND_SOC_MSM_HDMI_CODEC_RX) += hdmi_dlkm.o
 hdmi_dlkm-y := $(HDMICODEC_OBJS)
 
 obj-$(CONFIG_SND_SWR_HAPTICS) += swr_haptics_dlkm.o
 swr_haptics_dlkm-y := $(SWR_HAP_OBJS)
+
+obj-$(CONFIG_LPASS_BT_SWR) += lpass_bt_swr_dlkm.o
+lpass_bt_swr_dlkm-y := $(LPASS_BT_SWR_OBJS)
+
+# inject some build related information
+DEFINES += -DBUILD_TIMESTAMP=\"$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')\"

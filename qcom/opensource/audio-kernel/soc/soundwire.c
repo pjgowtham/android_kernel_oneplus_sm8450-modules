@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
- * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/kernel.h>
@@ -106,7 +106,7 @@ struct swr_device *swr_new_device(struct swr_master *master,
 	struct swr_device *swr;
 
 	if (!master || !swr_master_get(master)) {
-		pr_err("%s: master is NULL\n", __func__);
+		pr_err_ratelimited("%s: master is NULL\n", __func__);
 		return NULL;
 	}
 
@@ -117,7 +117,7 @@ struct swr_device *swr_new_device(struct swr_master *master,
 	}
 	swr->master = master;
 	swr->addr = info->addr;
-	strlcpy(swr->name, info->name, sizeof(swr->name));
+	strscpy(swr->name, info->name, sizeof(swr->name));
 	swr->dev.type = &swr_dev_type;
 	swr->dev.parent = &master->dev;
 	swr->dev.bus = &soundwire_type;
@@ -130,7 +130,7 @@ struct swr_device *swr_new_device(struct swr_master *master,
 	dev_set_name(&swr->dev, "%s.%llx", swr->name, swr->addr);
 	result = device_register(&swr->dev);
 	if (result) {
-		dev_err(&master->dev, "device [%s] register failed err %d\n",
+		dev_err_ratelimited(&master->dev, "device [%s] register failed err %d\n",
 			swr->name, result);
 		goto err_out;
 	}
@@ -142,7 +142,7 @@ err_out:
 	dev_dbg(&master->dev, "Failed to register swr device %s at 0x%llx %d\n",
 		swr->name, swr->addr, result);
 	swr_master_put(master);
-	list_del_init(&swr->dev_list);	
+	list_del_init(&swr->dev_list);
 	kfree(swr);
 	return NULL;
 }
@@ -170,13 +170,14 @@ int of_register_swr_devices(struct swr_master *master)
 
 		dev_dbg(&master->dev, "of_swr:register %s\n", node->full_name);
 
-		if (of_alias_from_compatible(node, info.name, sizeof(info.name)) < 0) {
-			dev_err(&master->dev, "of_swr:modalias failure %s\n",
+		if (of_alias_from_compatible(node, info.name,
+				sizeof(info.name)) < 0) {
+			dev_err_ratelimited(&master->dev, "of_swr:modalias failure %s\n",
 				node->full_name);
 			continue;
 		}
 		if (of_property_read_u64(node, "reg", &addr)) {
-			dev_err(&master->dev, "of_swr:invalid reg %s\n",
+			dev_err_ratelimited(&master->dev, "of_swr:invalid reg %s\n",
 				node->full_name);
 			continue;
 		}
@@ -184,7 +185,7 @@ int of_register_swr_devices(struct swr_master *master)
 		info.of_node = of_node_get(node);
 		swr = swr_new_device(master, &info);
 		if (!swr) {
-			dev_err(&master->dev, "of_swr: Register failed %s\n",
+			dev_err_ratelimited(&master->dev, "of_swr: Register failed %s\n",
 				node->full_name);
 			of_node_put(node);
 			continue;
@@ -208,7 +209,7 @@ void swr_port_response(struct swr_master *mstr, u8 tid)
 	txn = mstr->port_txn[tid];
 
 	if (txn == NULL) {
-		dev_err(&mstr->dev, "%s: transaction is already NULL\n",
+		dev_err_ratelimited(&mstr->dev, "%s: transaction is already NULL\n",
 			__func__);
 		return;
 	}
@@ -311,11 +312,11 @@ int swr_connect_port(struct swr_device *dev, u8 *port_id, u8 num_port,
 	struct swr_master *master = dev->master;
 
 	if (!master) {
-		pr_err("%s: Master is NULL\n", __func__);
+		pr_err_ratelimited("%s: Master is NULL\n", __func__);
 		return -EINVAL;
 	}
 	if (num_port > SWR_MAX_DEV_PORT_NUM) {
-		dev_err(&master->dev, "%s: num_port %d exceeds max port %d\n",
+		dev_err_ratelimited(&master->dev, "%s: num_port %d exceeds max port %d\n",
 			__func__, num_port, SWR_MAX_DEV_PORT_NUM);
 		return -EINVAL;
 	}
@@ -340,7 +341,7 @@ int swr_connect_port(struct swr_device *dev, u8 *port_id, u8 num_port,
 		if (master->last_tid == 255) {
 			mutex_unlock(&master->mlock);
 			kfree(txn);
-			dev_err(&master->dev, "%s Max tid reached\n",
+			dev_err_ratelimited(&master->dev, "%s Max tid reached\n",
 				__func__);
 			return -ENOMEM;
 		}
@@ -350,7 +351,7 @@ int swr_connect_port(struct swr_device *dev, u8 *port_id, u8 num_port,
 		if (!temp_txn) {
 			mutex_unlock(&master->mlock);
 			kfree(txn);
-			dev_err(&master->dev, "%s Not able to allocate\n"
+			dev_err_ratelimited(&master->dev, "%s Not able to allocate\n"
 				"master port transaction memory\n",
 				__func__);
 			return -ENOMEM;
@@ -396,12 +397,12 @@ int swr_disconnect_port(struct swr_device *dev, u8 *port_id, u8 num_port,
 	struct swr_master *master = dev->master;
 
 	if (!master) {
-		pr_err("%s: Master is NULL\n", __func__);
+		pr_err_ratelimited("%s: Master is NULL\n", __func__);
 		return -EINVAL;
 	}
 
 	if (num_port > SWR_MAX_DEV_PORT_NUM) {
-		dev_err(&master->dev, "%s: num_port %d exceeds max port %d\n",
+		dev_err_ratelimited(&master->dev, "%s: num_port %d exceeds max port %d\n",
 			__func__, num_port, SWR_MAX_DEV_PORT_NUM);
 		return -EINVAL;
 	}
@@ -419,7 +420,7 @@ int swr_disconnect_port(struct swr_device *dev, u8 *port_id, u8 num_port,
 		if (master->last_tid == 255) {
 			mutex_unlock(&master->mlock);
 			kfree(txn);
-			dev_err(&master->dev, "%s Max tid reached\n",
+			dev_err_ratelimited(&master->dev, "%s Max tid reached\n",
 				__func__);
 			return -ENOMEM;
 		}
@@ -429,7 +430,7 @@ int swr_disconnect_port(struct swr_device *dev, u8 *port_id, u8 num_port,
 		if (!temp_txn) {
 			mutex_unlock(&master->mlock);
 			kfree(txn);
-			dev_err(&master->dev, "%s Not able to allocate\n"
+			dev_err_ratelimited(&master->dev, "%s Not able to allocate\n"
 				"master port transaction memory\n",
 				__func__);
 			return -ENOMEM;
@@ -968,11 +969,6 @@ int swr_register_master(struct swr_master *master)
 		return id;
 
 	master->bus_num = id;
-	/* Can't register until driver model init */
-	/*if (WARN_ON(!soundwire_type.p)) {
-		status = -EAGAIN;
-		goto done;
-	}*/
 
 	dev_set_name(&master->dev, "swr%u", master->bus_num);
 	master->dev.bus = &soundwire_type;

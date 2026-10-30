@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -28,11 +28,14 @@
 #include <sound/tlv.h>
 #include <asoc/msm-cdc-pinctrl.h>
 #include <asoc/msm-cdc-supply.h>
+#include "wsa883x-registers.h"
 #include "wsa883x.h"
 #include "internal.h"
 #include "asoc/bolero-slave-internal.h"
 #include <linux/qti-regmap-debugfs.h>
+#include <linux/proc_fs.h>
 
+#define REGDUMP_PRINT_LEN 8
 #define T1_TEMP -10
 #define T2_TEMP 150
 #define LOW_TEMP_THRESHOLD 5
@@ -164,6 +167,11 @@ enum {
 	WSA883X_IRQ_INT_UVLO,
 	WSA883X_IRQ_INT_PA_ON_ERR,
 	WSA883X_NUM_IRQS,
+};
+
+enum {
+	COMP_PORT_EN_STATUS_BIT = 0,
+	VISENSE_EN_STATUS_BIT,
 };
 
 static const struct regmap_irq wsa883x_irqs[WSA883X_NUM_IRQS] = {
@@ -1080,6 +1088,7 @@ static int wsa883x_enable_swr_dac_port(struct snd_soc_dapm_widget *w,
 					&ch_mask[num_port], &ch_rate[num_port],
 					&port_type[num_port]);
 			++num_port;
+			set_bit(COMP_PORT_EN_STATUS_BIT, &wsa883x->port_status_mask);
 		}
 		if (wsa883x->visense_enable) {
 			wsa883x_set_port(component, SWR_VISENSE_PORT,
@@ -1087,6 +1096,7 @@ static int wsa883x_enable_swr_dac_port(struct snd_soc_dapm_widget *w,
 					&ch_mask[num_port], &ch_rate[num_port],
 					&port_type[num_port]);
 			++num_port;
+			set_bit(VISENSE_EN_STATUS_BIT, &wsa883x->port_status_mask);
 		}
 		swr_connect_port(wsa883x->swr_slave, &port_id[0], num_port,
 				&ch_mask[0], &ch_rate[0], &num_ch[0],
@@ -1102,19 +1112,23 @@ static int wsa883x_enable_swr_dac_port(struct snd_soc_dapm_widget *w,
 				&port_type[num_port]);
 		++num_port;
 
-		if (wsa883x->comp_enable) {
+		if (wsa883x->comp_enable &&
+			test_bit(COMP_PORT_EN_STATUS_BIT, &wsa883x->port_status_mask)) {
 			wsa883x_set_port(component, SWR_COMP_PORT,
 					&port_id[num_port], &num_ch[num_port],
 					&ch_mask[num_port], &ch_rate[num_port],
 					&port_type[num_port]);
 			++num_port;
+			clear_bit(COMP_PORT_EN_STATUS_BIT, &wsa883x->port_status_mask);
 		}
-		if (wsa883x->visense_enable) {
+		if (wsa883x->visense_enable &&
+			test_bit(VISENSE_EN_STATUS_BIT, &wsa883x->port_status_mask)) {
 			wsa883x_set_port(component, SWR_VISENSE_PORT,
 					&port_id[num_port], &num_ch[num_port],
 					&ch_mask[num_port], &ch_rate[num_port],
 					&port_type[num_port]);
 			++num_port;
+			clear_bit(VISENSE_EN_STATUS_BIT, &wsa883x->port_status_mask);
 		}
 		swr_disconnect_port(wsa883x->swr_slave, &port_id[0], num_port,
 				&ch_mask[0], &port_type[0]);
@@ -1179,7 +1193,8 @@ static int wsa883x_spkr_event(struct snd_soc_dapm_widget *w,
 		/* Force remove group */
 		swr_remove_from_group(wsa883x->swr_slave,
 				      wsa883x->swr_slave->dev_num);
-		if (wsa883x->comp_enable)
+		if (wsa883x->comp_enable &&
+			test_bit(COMP_PORT_EN_STATUS_BIT, &wsa883x->port_status_mask))
 			snd_soc_component_update_bits(component,
 						WSA883X_DRE_CTL_0,
 						0x07,
@@ -1202,9 +1217,11 @@ static int wsa883x_spkr_event(struct snd_soc_dapm_widget *w,
 				WSA883X_PA_FSM_CTL, 0x01, 0x01);
 		break;
 	case SND_SOC_DAPM_PRE_PMD:
-		if (!test_bit(SPKR_ADIE_LB, &wsa883x->status_mask))
+		if (!test_bit(SPKR_ADIE_LB, &wsa883x->status_mask) && wsa883x->pdm_wd_enabled) {
 			wcd_disable_irq(&wsa883x->irq_info,
 					WSA883X_IRQ_INT_PDM_WD);
+			wsa883x->pdm_wd_enabled = false;
+		}
 		snd_soc_component_update_bits(component,
 				WSA883X_VBAT_ADC_FLT_CTL,
 				0x01, 0x00);
@@ -1447,20 +1464,20 @@ static int wsa883x_codec_probe(struct snd_soc_component *component)
 	wsa883x->global_pa_cnt = 0;
 
 	memset(w_name, 0, sizeof(w_name));
-	strlcpy(w_name, wsa883x->dai_driver->playback.stream_name,
+	strscpy(w_name, wsa883x->dai_driver->playback.stream_name,
 				sizeof(w_name));
 	snd_soc_dapm_ignore_suspend(dapm, w_name);
 
 	memset(w_name, 0, sizeof(w_name));
-	strlcpy(w_name, "IN", sizeof(w_name));
+	strscpy(w_name, "IN", sizeof(w_name));
 	snd_soc_dapm_ignore_suspend(dapm, w_name);
 
 	memset(w_name, 0, sizeof(w_name));
-	strlcpy(w_name, "SWR DAC_Port", sizeof(w_name));
+	strscpy(w_name, "SWR DAC_Port", sizeof(w_name));
 	snd_soc_dapm_ignore_suspend(dapm, w_name);
 
 	memset(w_name, 0, sizeof(w_name));
-	strlcpy(w_name, "SPKR", sizeof(w_name));
+	strscpy(w_name, "SPKR", sizeof(w_name));
 	snd_soc_dapm_ignore_suspend(dapm, w_name);
 
 	snd_soc_dapm_sync(dapm);
@@ -1584,15 +1601,10 @@ static int wsa883x_event_notify(struct notifier_block *nb,
 		return -EINVAL;
 
 	switch (event) {
-	case BOLERO_SLV_EVT_PA_OFF_PRE_SSR:
-		if (test_bit(SPKR_STATUS, &wsa883x->status_mask))
-			snd_soc_component_update_bits(wsa883x->component,
-						WSA883X_PA_FSM_CTL,
-						0x01, 0x00);
-		wsa883x_swr_down(wsa883x);
-		break;
-
 	case BOLERO_SLV_EVT_SSR_UP:
+		wsa883x_swr_down(wsa883x);
+		usleep_range(500, 510);
+
 		wsa883x_swr_up(wsa883x);
 		/* Add delay to allow enumerate */
 		usleep_range(20000, 20010);
@@ -1607,11 +1619,15 @@ static int wsa883x_event_notify(struct notifier_block *nb,
 			snd_soc_component_update_bits(wsa883x->component,
 						WSA883X_PA_FSM_CTL,
 						0x01, 0x01);
-			wcd_enable_irq(&wsa883x->irq_info,
-					WSA883X_IRQ_INT_PDM_WD);
+			if (!wsa883x->pdm_wd_enabled) {
+				wcd_enable_irq(&wsa883x->irq_info,
+						WSA883X_IRQ_INT_PDM_WD);
+				wsa883x->pdm_wd_enabled = true;
+			}
 			/* Added delay as per HW sequence */
 			usleep_range(3000, 3100);
-			if (wsa883x->comp_enable) {
+			if (wsa883x->comp_enable &&
+				test_bit(COMP_PORT_EN_STATUS_BIT, &wsa883x->port_status_mask)) {
 				snd_soc_component_update_bits(wsa883x->component,
 						WSA883X_DRE_CTL_1,
 						0x01, 0x00);
@@ -1679,6 +1695,83 @@ static struct snd_soc_dai_driver wsa_dai[] = {
 	},
 };
 
+static int regdump_read(struct regmap *map, int baseReg, int endReg,
+		char __user *user_buf, size_t count, loff_t *ppos)
+{
+	int i = 0, ret = 0;
+	size_t pos = 0;
+	char *buf;
+	unsigned int reg_val = 0, reg_len = 0;
+	unsigned int reg_val_len = 0, regdump_wr_len = 0;
+
+	i  = ((int) *ppos + baseReg);
+
+
+	buf = kzalloc(count, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	reg_len = scnprintf(buf, count, "%x", endReg);
+	reg_val_len = 2 * DIV_ROUND_UP(REGDUMP_PRINT_LEN, 8);
+	regdump_wr_len = reg_len + reg_val_len + 3;
+
+	/* Disable Reading/Writing from Cache */
+	regcache_cache_bypass(map, true);
+	for (; i >= 0 && i <= endReg; i++) {
+
+		scnprintf(buf+pos, count-pos, "%.*x: ", reg_len, i);
+		pos += reg_len + 2;
+		ret = regmap_read(map, i, &reg_val);
+		if (ret == 0)
+			scnprintf(buf+pos, count-pos, "%.*x", reg_val_len, reg_val);
+		else
+			memset(buf+pos, 'X', reg_val_len);
+
+		pos +=  reg_val_len;
+		buf[pos++] = '\n';
+		*ppos += 1;
+
+		/*
+		 * Check not to overwrite the buffer, by ensuring we have
+		 * space for writing next register data
+		 *
+		 * this is scalable if we use proc or any other fs interface
+		 * as count would take the buf_size passed from userspace
+		 */
+		if ((pos + regdump_wr_len) >= count)
+			break;
+	}
+	/* Enable Reading/Writing from Cache */
+	regcache_cache_bypass(map, false);
+
+	ret = pos;
+	if (copy_to_user(user_buf, buf, pos))
+		ret = -EFAULT;
+
+	kfree(buf);
+	return ret;
+}
+
+
+static ssize_t wsa883x_proc_read(struct file *filep, char __user *buf, size_t size, loff_t *ppos)
+{
+	ssize_t ret = 0;
+	struct wsa883x_priv *wsa883x = NULL;
+
+	if (!size || !filep || !ppos || !buf || *ppos < 0)
+		return -EINVAL;
+
+	wsa883x = pde_data(file_inode(filep));
+	if (!wsa883x)
+		return -EINVAL;
+
+	ret = regdump_read(wsa883x->regmap, WSA883X_BASE, WSA883X_MAX_REGISTER, buf, size, ppos);
+	return ret;
+}
+static const struct proc_ops wsa883x_proc_ops = {
+	.proc_read = wsa883x_proc_read,
+};
+
 static int wsa883x_swr_probe(struct swr_device *pdev)
 {
 	int ret = 0, i = 0;
@@ -1689,6 +1782,8 @@ static int wsa883x_swr_probe(struct swr_device *pdev)
 	struct snd_soc_component *component;
 	char buffer[MAX_NAME_LEN];
 	int dev_index = 0;
+	char *proc_entry_name;
+	struct proc_dir_entry *wsa883x_proc_regdump_file = NULL;
 	struct regmap_irq_chip *wsa883x_sub_regmap_irq_chip = NULL;
 
 	wsa883x = devm_kzalloc(&pdev->dev, sizeof(struct wsa883x_priv),
@@ -1747,6 +1842,25 @@ static int wsa883x_swr_probe(struct swr_device *pdev)
 
 	devm_regmap_qti_debugfs_register(&pdev->dev, wsa883x->regmap);
 
+	/*
+	 * gracefully handle proc creation
+	 * if proc fails, probe should not be affected
+	 **/
+	proc_entry_name = devm_kasprintf(&pdev->dev, GFP_KERNEL, "wsa883x_reginfo_%d", devnum);
+	wsa883x->wsa883x_proc_entry = proc_mkdir(proc_entry_name, NULL);
+	if (wsa883x->wsa883x_proc_entry) {
+		wsa883x_proc_regdump_file = proc_create_data("wsa883x_regdump", 0444,
+				wsa883x->wsa883x_proc_entry, &wsa883x_proc_ops, wsa883x);
+		if (!wsa883x_proc_regdump_file) {
+			dev_err(&pdev->dev, "%s: Error creating proc read file interface\n",
+					__func__);
+			proc_remove(wsa883x->wsa883x_proc_entry);
+			wsa883x->wsa883x_proc_entry = NULL;
+		}
+	} else {
+		dev_err(&pdev->dev, "%s: Error creating proc dir interface\n", __func__);
+	}
+
 	/* Set all interrupts as edge triggered */
 	for (i = 0; i < wsa883x_sub_regmap_irq_chip->num_regs; i++)
 		regmap_write(wsa883x->regmap, (WSA883X_INTR_LEVEL0 + i), 0);
@@ -1763,8 +1877,7 @@ static int wsa883x_swr_probe(struct swr_device *pdev)
 			__func__, ret);
 		goto dev_err;
 	}
-
-	wsa883x->swr_slave->slave_irq = wsa883x->virq;
+    wsa883x->swr_slave->slave_irq = wsa883x->virq;
 
 	wcd_request_irq(&wsa883x->irq_info, WSA883X_IRQ_INT_SAF2WAR,
 			"WSA SAF2WAR", wsa883x_saf2war_handle_irq, wsa883x);
@@ -1795,6 +1908,7 @@ static int wsa883x_swr_probe(struct swr_device *pdev)
 			"WSA PDM WD", wsa883x_pdm_wd_handle_irq, wsa883x);
 
 	wcd_disable_irq(&wsa883x->irq_info, WSA883X_IRQ_INT_PDM_WD);
+	wsa883x->pdm_wd_enabled = false;
 
 	wcd_request_irq(&wsa883x->irq_info, WSA883X_IRQ_INT_CLK_WD,
 			"WSA CLK WD", wsa883x_clk_wd_handle_irq, wsa883x);
@@ -1976,6 +2090,9 @@ static int wsa883x_swr_remove(struct swr_device *pdev)
 		return -EINVAL;
 	}
 
+	if (wsa883x->wsa883x_proc_entry)
+		proc_remove(wsa883x->wsa883x_proc_entry);
+
 	wcd_free_irq(&wsa883x->irq_info, WSA883X_IRQ_INT_SAF2WAR, NULL);
 	wcd_free_irq(&wsa883x->irq_info, WSA883X_IRQ_INT_WAR2SAF, NULL);
 	wcd_free_irq(&wsa883x->irq_info, WSA883X_IRQ_INT_DISABLE, NULL);
@@ -2022,7 +2139,10 @@ static int wsa883x_swr_suspend(struct device *dev)
 		return -EINVAL;
 	}
 	dev_dbg(dev, "%s: system suspend\n", __func__);
-	if (wsa883x->dapm_bias_off) {
+	if (wsa883x->dapm_bias_off ||
+		(wsa883x->component &&
+		 (snd_soc_component_get_bias_level(wsa883x->component) ==
+		 SND_SOC_BIAS_OFF))) {
 		msm_cdc_set_supplies_lpm_mode(dev, wsa883x->supplies,
 					wsa883x->regulator,
 					wsa883x->num_supplies,

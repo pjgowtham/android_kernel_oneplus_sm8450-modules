@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -423,7 +423,6 @@ static int lpass_cdc_rx_macro_hw_params(struct snd_pcm_substream *substream,
 static int lpass_cdc_rx_macro_get_channel_map(struct snd_soc_dai *dai,
 				unsigned int *tx_num, unsigned int *tx_slot,
 				unsigned int *rx_num, unsigned int *rx_slot);
-static int lpass_cdc_rx_macro_mute_stream(struct snd_soc_dai *dai, int mute, int stream);
 static int lpass_cdc_rx_macro_int_dem_inp_mux_put(struct snd_kcontrol *kcontrol,
 				     struct snd_ctl_elem_value *ucontrol);
 static int lpass_cdc_rx_macro_mux_get(struct snd_kcontrol *kcontrol,
@@ -486,6 +485,7 @@ enum {
 struct lpass_cdc_rx_macro_priv {
 	struct device *dev;
 	int comp_enabled[LPASS_CDC_RX_MACRO_COMP_MAX];
+	u8 is_pcm_enabled;
 	/* Main path clock users count */
 	int main_clk_users[INTERP_MAX];
 	int rx_port_value[LPASS_CDC_RX_MACRO_PORTS_MAX];
@@ -536,6 +536,7 @@ struct lpass_cdc_rx_macro_priv {
 	struct clk *hifi_fir_clk;
 	int8_t rx0_gain_val;
 	int8_t rx1_gain_val;
+	int pcm_select_users;
 };
 
 static struct snd_soc_dai_driver lpass_cdc_rx_macro_dai[];
@@ -732,7 +733,6 @@ static const struct snd_kcontrol_new rx_mix_tx0_mux =
 static struct snd_soc_dai_ops lpass_cdc_rx_macro_dai_ops = {
 	.hw_params = lpass_cdc_rx_macro_hw_params,
 	.get_channel_map = lpass_cdc_rx_macro_get_channel_map,
-	.mute_stream = lpass_cdc_rx_macro_mute_stream,
 };
 
 static struct snd_soc_dai_driver lpass_cdc_rx_macro_dai[] = {
@@ -918,20 +918,20 @@ static bool lpass_cdc_rx_macro_get_data(struct snd_soc_component *component,
 	*rx_dev = lpass_cdc_get_device_ptr(component->dev, RX_MACRO);
 
 	if (!(*rx_dev)) {
-		dev_err(component->dev,
+		dev_err_ratelimited(component->dev,
 			"%s: null device for macro!\n", func_name);
 		return false;
 	}
 
 	*rx_priv = dev_get_drvdata((*rx_dev));
 	if (!(*rx_priv)) {
-		dev_err(component->dev,
+		dev_err_ratelimited(component->dev,
 			"%s: priv is null for macro!\n", func_name);
 		return false;
 	}
 
 	if (!(*rx_priv)->component) {
-		dev_err(component->dev,
+		dev_err_ratelimited(component->dev,
 			"%s: rx_priv component is not initialized!\n", func_name);
 		return false;
 	}
@@ -1016,7 +1016,7 @@ static int lpass_cdc_rx_macro_set_prim_interpolator_rate(struct snd_soc_dai *dai
 		int_1_mix1_inp = port;
 		if ((int_1_mix1_inp < LPASS_CDC_RX_MACRO_RX0) ||
 			(int_1_mix1_inp > LPASS_CDC_RX_MACRO_PORTS_MAX)) {
-			pr_err("%s: Invalid RX port, Dai ID is %d\n",
+			pr_err_ratelimited("%s: Invalid RX port, Dai ID is %d\n",
 				__func__, dai->id);
 			return -EINVAL;
 		}
@@ -1079,7 +1079,7 @@ static int lpass_cdc_rx_macro_set_mix_interpolator_rate(struct snd_soc_dai *dai,
 		int_2_inp = port;
 		if ((int_2_inp < LPASS_CDC_RX_MACRO_RX0) ||
 			(int_2_inp > LPASS_CDC_RX_MACRO_PORTS_MAX)) {
-			pr_err("%s: Invalid RX port, Dai ID is %d\n",
+			pr_err_ratelimited("%s: Invalid RX port, Dai ID is %d\n",
 				__func__, dai->id);
 			return -EINVAL;
 		}
@@ -1181,7 +1181,7 @@ static int lpass_cdc_rx_macro_hw_params(struct snd_pcm_substream *substream,
 	case SNDRV_PCM_STREAM_PLAYBACK:
 		ret = lpass_cdc_rx_macro_set_interpolator_rate(dai, params_rate(params));
 		if (ret) {
-			pr_err("%s: cannot set sample rate: %u\n",
+			pr_err_ratelimited("%s: cannot set sample rate: %u\n",
 				__func__, params_rate(params));
 			return ret;
 		}
@@ -1274,61 +1274,7 @@ static int lpass_cdc_rx_macro_get_channel_map(struct snd_soc_dai *dai,
 		*tx_num = cnt;
 		break;
 	default:
-		dev_err(rx_dev, "%s: Invalid AIF\n", __func__);
-		break;
-	}
-	return 0;
-}
-
-static int lpass_cdc_rx_macro_mute_stream(struct snd_soc_dai *dai, int mute, int stream)
-{
-	struct snd_soc_component *component = dai->component;
-	struct device *rx_dev = NULL;
-	struct lpass_cdc_rx_macro_priv *rx_priv = NULL;
-	uint16_t j = 0, reg = 0, mix_reg = 0, dsm_reg = 0;
-	u16 int_mux_cfg0 = 0, int_mux_cfg1 = 0;
-	u8 int_mux_cfg0_val = 0, int_mux_cfg1_val = 0;
-
-	if (mute)
-		return 0;
-
-	if (!lpass_cdc_rx_macro_get_data(component, &rx_dev, &rx_priv, __func__))
-		return -EINVAL;
-
-	switch (dai->id) {
-	case RX_MACRO_AIF1_PB:
-	case RX_MACRO_AIF2_PB:
-	case RX_MACRO_AIF3_PB:
-	case RX_MACRO_AIF4_PB:
-	for (j = 0; j < INTERP_MAX; j++) {
-		reg = LPASS_CDC_RX_RX0_RX_PATH_CTL +
-				(j * LPASS_CDC_RX_MACRO_RX_PATH_OFFSET);
-		mix_reg = LPASS_CDC_RX_RX0_RX_PATH_MIX_CTL +
-				(j * LPASS_CDC_RX_MACRO_RX_PATH_OFFSET);
-		dsm_reg = LPASS_CDC_RX_RX0_RX_PATH_DSM_CTL +
-				(j * LPASS_CDC_RX_MACRO_RX_PATH_OFFSET);
-		if (j == INTERP_AUX)
-			dsm_reg = LPASS_CDC_RX_RX2_RX_PATH_DSM_CTL;
-		int_mux_cfg0 = LPASS_CDC_RX_INP_MUX_RX_INT0_CFG0 + j * 8;
-		int_mux_cfg1 = int_mux_cfg0 + 4;
-		int_mux_cfg0_val = snd_soc_component_read(component,
-							int_mux_cfg0);
-		int_mux_cfg1_val = snd_soc_component_read(component,
-							int_mux_cfg1);
-		if (snd_soc_component_read(component, dsm_reg) & 0x01) {
-			if (int_mux_cfg0_val || (int_mux_cfg1_val & 0xF0))
-				snd_soc_component_update_bits(component,
-							reg, 0x20, 0x20);
-			if (int_mux_cfg1_val & 0x0F) {
-				snd_soc_component_update_bits(component,
-							reg, 0x20, 0x20);
-				snd_soc_component_update_bits(component,
-							mix_reg, 0x20, 0x20);
-			}
-		}
-	}
-		break;
-	default:
+		dev_err_ratelimited(rx_dev, "%s: Invalid AIF\n", __func__);
 		break;
 	}
 	return 0;
@@ -1342,7 +1288,7 @@ static int lpass_cdc_rx_macro_mclk_enable(
 	int ret = 0;
 
 	if (regmap == NULL) {
-		dev_err(rx_priv->dev, "%s: regmap is NULL\n", __func__);
+		dev_err_ratelimited(rx_priv->dev, "%s: regmap is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -1356,7 +1302,7 @@ static int lpass_cdc_rx_macro_mclk_enable(
 				rx_priv->clk_id = RX_CORE_CLK;
 			ret = lpass_cdc_rx_macro_core_vote(rx_priv, true);
 			if (ret < 0) {
-				dev_err(rx_priv->dev,
+				dev_err_ratelimited(rx_priv->dev,
 					"%s: rx request core vote failed\n",
 					__func__);
 				goto exit;
@@ -1367,7 +1313,7 @@ static int lpass_cdc_rx_macro_mclk_enable(
 							   true);
 			lpass_cdc_rx_macro_core_vote(rx_priv, false);
 			if (ret < 0) {
-				dev_err(rx_priv->dev,
+				dev_err_ratelimited(rx_priv->dev,
 					"%s: rx request clock enable failed\n",
 					__func__);
 				goto exit;
@@ -1394,7 +1340,7 @@ static int lpass_cdc_rx_macro_mclk_enable(
 		rx_priv->rx_mclk_users++;
 	} else {
 		if (rx_priv->rx_mclk_users <= 0) {
-			dev_err(rx_priv->dev, "%s: clock already disabled\n",
+			dev_err_ratelimited(rx_priv->dev, "%s: clock already disabled\n",
 				__func__);
 			rx_priv->rx_mclk_users = 0;
 			goto exit;
@@ -1417,7 +1363,7 @@ static int lpass_cdc_rx_macro_mclk_enable(
 			   false);
 			ret = lpass_cdc_rx_macro_core_vote(rx_priv, true);
 			if (ret < 0) {
-				dev_err(rx_priv->dev,
+				dev_err_ratelimited(rx_priv->dev,
 					"%s: rx request core vote failed\n",
 					__func__);
 			}
@@ -1468,7 +1414,7 @@ static int lpass_cdc_rx_macro_mclk_event(struct snd_soc_dapm_widget *w,
 			ret = lpass_cdc_rx_macro_mclk_enable(rx_priv, 0, true);
 		break;
 	default:
-		dev_err(rx_priv->dev,
+		dev_err_ratelimited(rx_priv->dev,
 			"%s: invalid DAPM event %d\n", __func__, event);
 		ret = -EINVAL;
 	}
@@ -1537,7 +1483,7 @@ static int lpass_cdc_rx_macro_event_handler(struct snd_soc_component *component,
 		rx_priv->pre_dev_up = true;
 		ret = lpass_cdc_rx_macro_core_vote(rx_priv, true);
 		if (ret < 0) {
-			dev_err(rx_priv->dev,
+			dev_err_ratelimited(rx_priv->dev,
 				"%s: rx request core vote failed\n",
 				__func__);
 			break;
@@ -1757,7 +1703,7 @@ static int lpass_cdc_rx_macro_enable_mix_path(struct snd_soc_dapm_widget *w,
 		return -EINVAL;
 
 	if (w->shift >= INTERP_MAX) {
-		dev_err(component->dev, "%s: Invalid Interpolator value %d for name %s\n",
+		dev_err_ratelimited(component->dev, "%s: Invalid Interpolator value %d for name %s\n",
 			__func__, w->shift, w->name);
 		return -EINVAL;
 	}
@@ -1774,6 +1720,8 @@ static int lpass_cdc_rx_macro_enable_mix_path(struct snd_soc_dapm_widget *w,
 		lpass_cdc_rx_macro_set_idle_detect_thr(component, rx_priv, w->shift,
 					INTERP_MIX_PATH);
 		lpass_cdc_rx_macro_enable_interp_clk(component, event, w->shift);
+		/* Clk Enable */
+		snd_soc_component_update_bits(component, mix_reg, 0x20, 0x20);
 		break;
 	case SND_SOC_DAPM_POST_PMU:
 		snd_soc_component_write(component, gain_reg,
@@ -1845,7 +1793,7 @@ static int lpass_cdc_rx_macro_enable_main_path(struct snd_soc_dapm_widget *w,
 	dev_dbg(component->dev, "%s %d %s\n", __func__, event, w->name);
 
 	if (w->shift >= INTERP_MAX) {
-		dev_err(component->dev, "%s: Invalid Interpolator value %d for name %s\n",
+		dev_err_ratelimited(component->dev, "%s: Invalid Interpolator value %d for name %s\n",
 			__func__, w->shift, w->name);
 		return -EINVAL;
 	}
@@ -1877,10 +1825,14 @@ static int lpass_cdc_rx_macro_enable_main_path(struct snd_soc_dapm_widget *w,
 }
 
 static void lpass_cdc_rx_macro_droop_setting(struct snd_soc_component *component,
-					    int interp_n, int event)
+					struct lpass_cdc_rx_macro_priv *rx_priv,
+					int interp_n, int event)
 {
 	u8 pcm_rate = 0, val = 0;
 	u16 rx0_path_ctl_reg = 0, rx_path_cfg3_reg = 0;
+
+	if (rx_priv->is_pcm_enabled)
+		return;
 
 	rx_path_cfg3_reg = LPASS_CDC_RX_RX0_RX_PATH_CFG3 +
 					(interp_n * LPASS_CDC_RX_MACRO_RX_PATH_OFFSET);
@@ -1920,6 +1872,8 @@ static int lpass_cdc_rx_macro_config_compander(struct snd_soc_component *compone
 
 	comp = interp_n;
 	if (!rx_priv->comp_enabled[comp])
+		return 0;
+	if (rx_priv->is_pcm_enabled)
 		return 0;
 
 	if (rx_priv->is_ear_mode_on && interp_n == INTERP_HPHL)
@@ -2064,6 +2018,9 @@ static int lpass_cdc_rx_macro_config_classh(struct snd_soc_component *component,
 				struct lpass_cdc_rx_macro_priv *rx_priv,
 				int interp_n, int event)
 {
+	if (interp_n == INTERP_AUX)
+		return 0; /* AUX does not have Class-H */
+
 	if (SND_SOC_DAPM_EVENT_OFF(event)) {
 		lpass_cdc_rx_macro_enable_clsh_block(rx_priv, false);
 		return 0;
@@ -2133,10 +2090,14 @@ static int lpass_cdc_rx_macro_config_classh(struct snd_soc_component *component,
 }
 
 static void lpass_cdc_rx_macro_hd2_control(struct snd_soc_component *component,
-				 u16 interp_idx, int event)
+					struct lpass_cdc_rx_macro_priv *rx_priv,
+					u16 interp_idx, int event)
 {
 	u16 hd2_scale_reg = 0;
 	u16 hd2_enable_reg = 0;
+
+	if (rx_priv->is_pcm_enabled)
+		return;
 
 	switch (interp_idx) {
 	case INTERP_HPHL:
@@ -2195,6 +2156,36 @@ static int lpass_cdc_rx_macro_hph_idle_detect_put(struct snd_kcontrol *kcontrol,
 	rx_priv->idle_det_cfg.hph_idle_detect_en =
 		ucontrol->value.integer.value[0];
 
+	return 0;
+}
+
+static int lpass_cdc_rx_macro_get_pcm_path(struct snd_kcontrol *kcontrol,
+			       struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component =
+				snd_soc_kcontrol_component(kcontrol);
+	struct device *rx_dev = NULL;
+	struct lpass_cdc_rx_macro_priv *rx_priv = NULL;
+
+	if (!lpass_cdc_rx_macro_get_data(component, &rx_dev, &rx_priv, __func__))
+		return -EINVAL;
+
+	ucontrol->value.integer.value[0] = rx_priv->is_pcm_enabled;
+	return 0;
+}
+
+static int lpass_cdc_rx_macro_put_pcm_path(struct snd_kcontrol *kcontrol,
+			       struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component =
+				snd_soc_kcontrol_component(kcontrol);
+	struct device *rx_dev = NULL;
+	struct lpass_cdc_rx_macro_priv *rx_priv = NULL;
+
+	if (!lpass_cdc_rx_macro_get_data(component, &rx_dev, &rx_priv, __func__))
+		return -EINVAL;
+
+	rx_priv->is_pcm_enabled = ucontrol->value.integer.value[0];
 	return 0;
 }
 
@@ -2274,11 +2265,11 @@ static int lpass_cdc_rx_macro_mux_put(struct snd_kcontrol *kcontrol,
 	aif_rst = rx_priv->rx_port_value[widget->shift];
 	if (!rx_port_value) {
 		if (aif_rst == 0) {
-			dev_err(rx_dev, "%s:AIF reset already\n", __func__);
+			dev_err_ratelimited(rx_dev, "%s:AIF reset already\n", __func__);
 			return 0;
 		}
 		if (aif_rst > RX_MACRO_AIF4_PB) {
-			dev_err(rx_dev, "%s: Invalid AIF reset\n", __func__);
+			dev_err_ratelimited(rx_dev, "%s: Invalid AIF reset\n", __func__);
 			return 0;
 		}
 	}
@@ -2304,7 +2295,7 @@ static int lpass_cdc_rx_macro_mux_put(struct snd_kcontrol *kcontrol,
 		rx_priv->active_ch_cnt[rx_port_value]++;
 		break;
 	default:
-		dev_err(component->dev,
+		dev_err_ratelimited(component->dev,
 			"%s:Invalid AIF_ID for LPASS_CDC_RX_MACRO MUX %d\n",
 			__func__, rx_port_value);
 		goto err;
@@ -2653,7 +2644,7 @@ static int lpass_cdc_rx_macro_enable_vbat(struct snd_soc_dapm_widget *w,
 			LPASS_CDC_RX_BCL_VBAT_PATH_CTL, 0x10, 0x00);
 		break;
 	default:
-		dev_err(rx_dev, "%s: Invalid event %d\n", __func__, event);
+		dev_err_ratelimited(rx_dev, "%s: Invalid event %d\n", __func__, event);
 		break;
 	}
 	return 0;
@@ -2666,6 +2657,9 @@ static void lpass_cdc_rx_macro_idle_detect_control(struct snd_soc_component *com
 	int reg = 0, mask = 0, val = 0;
 
 	if (!rx_priv->idle_det_cfg.hph_idle_detect_en)
+		return;
+
+	if (!rx_priv->is_pcm_enabled)
 		return;
 
 	if (interp == INTERP_HPHL) {
@@ -2696,6 +2690,9 @@ static void lpass_cdc_rx_macro_hphdelay_lutbypass(struct snd_soc_component *comp
 {
 	u16 hph_lut_bypass_reg = 0;
 	u16 hph_comp_ctrl7 = 0;
+
+	if (rx_priv->is_pcm_enabled)
+		return;
 
 	switch (interp_idx) {
 	case INTERP_HPHL:
@@ -2750,7 +2747,7 @@ static int lpass_cdc_rx_macro_enable_interp_clk(struct snd_soc_component *compon
 	struct lpass_cdc_rx_macro_priv *rx_priv = NULL;
 
 	if (!component) {
-		pr_err("%s: component is NULL\n", __func__);
+		pr_err_ratelimited("%s: component is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -2773,17 +2770,20 @@ static int lpass_cdc_rx_macro_enable_interp_clk(struct snd_soc_component *compon
 					0x10, 0x10);
 			snd_soc_component_update_bits(component, dsm_reg,
 					0x01, 0x01);
+			/* Clk Enable */
+			snd_soc_component_update_bits(component, main_reg,
+					0x20, 0x20);
 			snd_soc_component_update_bits(component, rx_cfg2_reg,
 					0x03, 0x03);
 			lpass_cdc_rx_macro_idle_detect_control(component, rx_priv,
 					interp_idx, event);
 			if (rx_priv->hph_hd2_mode)
 				lpass_cdc_rx_macro_hd2_control(
-					component, interp_idx, event);
+					component, rx_priv, interp_idx, event);
 			lpass_cdc_rx_macro_hphdelay_lutbypass(component, rx_priv,
 						    interp_idx, event);
 			lpass_cdc_rx_macro_droop_setting(component,
-						interp_idx, event);
+						rx_priv, interp_idx, event);
 			lpass_cdc_rx_macro_config_compander(component, rx_priv,
 						interp_idx, event);
 			if (interp_idx == INTERP_AUX) {
@@ -2794,6 +2794,15 @@ static int lpass_cdc_rx_macro_enable_interp_clk(struct snd_soc_component *compon
 			}
 			lpass_cdc_rx_macro_config_classh(component, rx_priv,
 						interp_idx, event);
+			/*select PCM path and swr clk is 9.6MHz*/
+			if (rx_priv->is_pcm_enabled && !rx_priv->is_native_on &&
+					interp_idx != INTERP_AUX) {
+				if (rx_priv->pcm_select_users == 0)
+					snd_soc_component_update_bits(component,
+						LPASS_CDC_RX_TOP_SWR_CTRL, 0x02, 0x02);
+				++rx_priv->pcm_select_users;
+			}
+			lpass_cdc_notify_wcd_rx_clk(rx_dev, rx_priv->is_native_on);
 		}
 		rx_priv->main_clk_users[interp_idx]++;
 	}
@@ -2805,6 +2814,17 @@ static int lpass_cdc_rx_macro_enable_interp_clk(struct snd_soc_component *compon
 			/* Main path PGA mute enable */
 			snd_soc_component_update_bits(component, main_reg,
 					0x10, 0x10);
+			/*Unselect PCM path*/
+			if (rx_priv->is_pcm_enabled && !rx_priv->is_native_on &&
+					interp_idx != INTERP_AUX) {
+				if (rx_priv->pcm_select_users == 1)
+					snd_soc_component_update_bits(component,
+						LPASS_CDC_RX_TOP_SWR_CTRL, 0x02, 0x00);
+				--rx_priv->pcm_select_users;
+				if (rx_priv->pcm_select_users < 0)
+					rx_priv->pcm_select_users = 0;
+			}
+
 			/* Clk Disable */
 			snd_soc_component_update_bits(component, dsm_reg,
 						0x01, 0x00);
@@ -2833,8 +2853,8 @@ static int lpass_cdc_rx_macro_enable_interp_clk(struct snd_soc_component *compon
 			lpass_cdc_rx_macro_hphdelay_lutbypass(component, rx_priv,
 						interp_idx, event);
 			if (rx_priv->hph_hd2_mode)
-				lpass_cdc_rx_macro_hd2_control(component, interp_idx,
-						event);
+				lpass_cdc_rx_macro_hd2_control(component,
+					rx_priv, interp_idx, event);
 			lpass_cdc_rx_macro_idle_detect_control(component, rx_priv,
 					interp_idx, event);
 		}
@@ -2885,7 +2905,7 @@ static void lpass_cdc_rx_macro_restore_iir_coeff(struct lpass_cdc_rx_macro_priv 
 	struct regmap *regmap = dev_get_regmap(rx_priv->dev->parent, NULL);
 
 	if (regmap == NULL) {
-		dev_err(rx_priv->dev, "%s: regmap is NULL\n", __func__);
+		dev_err_ratelimited(rx_priv->dev, "%s: regmap is NULL\n", __func__);
 		return;
 	}
 
@@ -3201,7 +3221,7 @@ static int lpass_cdc_rx_macro_fir_filter_enable_get(struct snd_kcontrol *kcontro
 	struct lpass_cdc_rx_macro_priv *rx_priv = NULL;
 
 	if (!component) {
-		pr_err("%s: component is NULL\n", __func__);
+		pr_err_ratelimited("%s: component is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -3222,7 +3242,7 @@ static int lpass_cdc_rx_macro_fir_filter_enable_put(struct snd_kcontrol *kcontro
 	int ret = 0;
 
 	if (!component) {
-		pr_err("%s: component is NULL\n", __func__);
+		pr_err_ratelimited("%s: component is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -3322,7 +3342,7 @@ static int lpass_cdc_rx_macro_fir_audio_mixer_get(struct snd_kcontrol *kcontrol,
 	struct lpass_cdc_rx_macro_priv *rx_priv = NULL;
 
 	if (!component) {
-		pr_err("%s: component is NULL\n", __func__);
+		pr_err_ratelimited("%s: component is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -3330,12 +3350,14 @@ static int lpass_cdc_rx_macro_fir_audio_mixer_get(struct snd_kcontrol *kcontrol,
 		return -EINVAL;
 
 	if (path_idx >= FIR_PATH_MAX) {
-		dev_err(rx_priv->dev, "%s: path_idx:%d is invalid\n", __func__, path_idx);
+		dev_err_ratelimited(rx_priv->dev, "%s: path_idx:%d is invalid\n",
+			__func__, path_idx);
 		return -EINVAL;
 	}
 
 	if (grp_idx >= GRP_MAX) {
-		dev_err(rx_priv->dev, "%s: grp_idx:%d is invalid\n", __func__, grp_idx);
+		dev_err_ratelimited(rx_priv->dev, "%s: grp_idx:%d is invalid\n",
+			__func__, grp_idx);
 		return -EINVAL;
 	}
 
@@ -3378,7 +3400,7 @@ static int set_fir_filter_coeff(struct snd_soc_component *component,
 		fir_ctl_addr = LPASS_CDC_RX_RX1_RX_FIR_CTL;
 		break;
 	default:
-		dev_err(rx_priv->dev,
+		dev_err_ratelimited(rx_priv->dev,
 			"%s: inavlid FIR ID: %d\n", __func__, path_idx);
 		ret = -EINVAL;
 		goto exit;
@@ -3426,7 +3448,7 @@ static int set_fir_filter_coeff(struct snd_soc_component *component,
 
 		num_coeff_grp = rx_priv->num_fir_coeff[path_idx][grp_idx];
 		if (num_coeff_grp > max_coeff_num) {
-			dev_err(rx_priv->dev,
+			dev_err_ratelimited(rx_priv->dev,
 				"%s: inavlid number of RX_FIR coefficients:%d"
 				" in path:%d, group:%d\n",
 				__func__, num_coeff_grp, path_idx, grp_idx);
@@ -3545,7 +3567,7 @@ static int lpass_cdc_rx_macro_fir_audio_mixer_put(struct snd_kcontrol *kcontrol,
 	struct lpass_cdc_rx_macro_priv *rx_priv = NULL;
 
 	if (!component) {
-		pr_err("%s: component is NULL\n", __func__);
+		pr_err_ratelimited("%s: component is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -3553,12 +3575,14 @@ static int lpass_cdc_rx_macro_fir_audio_mixer_put(struct snd_kcontrol *kcontrol,
 		return -EINVAL;
 
 	if (path_idx >= FIR_PATH_MAX) {
-		dev_err(rx_priv->dev,"%s: path_idx:%d is invalid\n", __func__, path_idx);
+		dev_err_ratelimited(rx_priv->dev, "%s: path_idx:%d is invalid\n",
+			__func__, path_idx);
 		return -EINVAL;
 	}
 
 	if (grp_idx >= GRP_MAX) {
-		dev_err(rx_priv->dev,"%s: grp_idx:%d is invalid\n", __func__, grp_idx);
+		dev_err_ratelimited(rx_priv->dev, "%s: grp_idx:%d is invalid\n",
+			__func__, grp_idx);
 		return -EINVAL;
 	}
 
@@ -3582,7 +3606,7 @@ static int lpass_cdc_rx_macro_fir_audio_mixer_put(struct snd_kcontrol *kcontrol,
 		__func__, path_idx, grp_idx, num_coeff_grp);
 
 	if (num_coeff_grp > LPASS_CDC_RX_MACRO_FIR_COEFF_MAX) {
-		dev_err(rx_priv->dev,
+		dev_err_ratelimited(rx_priv->dev,
 			"%s: inavlid number of RX_FIR coefficients:%d in path:%d, group:%d\n",
 				 __func__, num_coeff_grp, path_idx, grp_idx);
 		rx_priv->num_fir_coeff[path_idx][grp_idx] = 0;
@@ -3624,7 +3648,7 @@ static int lpass_cdc_rx_macro_fir_coeff_num_get(struct snd_kcontrol *kcontrol,
 	struct lpass_cdc_rx_macro_priv *rx_priv = NULL;
 
 	if (!component) {
-		pr_err("%s: component is NULL\n", __func__);
+		pr_err_ratelimited("%s: component is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -3632,7 +3656,8 @@ static int lpass_cdc_rx_macro_fir_coeff_num_get(struct snd_kcontrol *kcontrol,
 		return -EINVAL;
 
 	if (path_idx >= FIR_PATH_MAX) {
-		dev_err(rx_priv->dev,"%s: path_idx:%d is invalid\n", __func__, path_idx);
+		dev_err_ratelimited(rx_priv->dev, "%s: path_idx:%d is invalid\n",
+			__func__, path_idx);
 		return -EINVAL;
 	}
 
@@ -3655,7 +3680,7 @@ static int lpass_cdc_rx_macro_fir_coeff_num_put(struct snd_kcontrol *kcontrol,
 	unsigned int grp_idx, stored_total_num;
 
 	if (!component) {
-		pr_err("%s: component is NULL\n", __func__);
+		pr_err_ratelimited("%s: component is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -3663,7 +3688,7 @@ static int lpass_cdc_rx_macro_fir_coeff_num_put(struct snd_kcontrol *kcontrol,
 		return -EINVAL;
 
 	if (fir_total_coeff_num > LPASS_CDC_RX_MACRO_FIR_COEFF_MAX * GRP_MAX) {
-		dev_err(rx_priv->dev,
+		dev_err_ratelimited(rx_priv->dev,
 			"%s: inavlid total number of RX_FIR coefficients:%d"
 			" in path:%d\n",
 			__func__, fir_total_coeff_num, path_idx);
@@ -3711,6 +3736,9 @@ static const struct snd_kcontrol_new lpass_cdc_rx_macro_snd_controls[] = {
 		lpass_cdc_rx_macro_get_compander, lpass_cdc_rx_macro_set_compander),
 	SOC_SINGLE_EXT("RX_COMP2 Switch", SND_SOC_NOPM, LPASS_CDC_RX_MACRO_COMP2, 1, 0,
 		lpass_cdc_rx_macro_get_compander, lpass_cdc_rx_macro_set_compander),
+
+	SOC_SINGLE_EXT("RX_HPH PCM", SND_SOC_NOPM, 0, 1, 0,
+			lpass_cdc_rx_macro_get_pcm_path, lpass_cdc_rx_macro_put_pcm_path),
 
 	SOC_SINGLE_EXT("RX0 FIR Coeff Num", SND_SOC_NOPM, RX0_PATH,
 			(LPASS_CDC_RX_MACRO_FIR_COEFF_MAX * GRP_MAX), 0,
@@ -3847,7 +3875,7 @@ static int lpass_cdc_rx_macro_enable_echo(struct snd_soc_dapm_widget *w,
 		ec_tx = (val & 0x0f) - 1;
 
 	if (ec_tx < 0 || (ec_tx >= LPASS_CDC_RX_MACRO_EC_MUX_MAX)) {
-		dev_err(rx_dev, "%s: EC mix control not set correctly\n",
+		dev_err_ratelimited(rx_dev, "%s: EC mix control not set correctly\n",
 			__func__);
 		return -EINVAL;
 	}
@@ -4341,7 +4369,7 @@ static int lpass_cdc_rx_macro_core_vote(void *handle, bool enable)
 	struct lpass_cdc_rx_macro_priv *rx_priv = (struct lpass_cdc_rx_macro_priv *) handle;
 
 	if (rx_priv == NULL) {
-		pr_err("%s: rx priv data is NULL\n", __func__);
+		pr_err_ratelimited("%s: rx priv data is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -4370,7 +4398,7 @@ static int rx_swrm_clock(void *handle, bool enable)
 	int ret = 0;
 
 	if (regmap == NULL) {
-		dev_err(rx_priv->dev, "%s: regmap is NULL\n", __func__);
+		dev_err_ratelimited(rx_priv->dev, "%s: regmap is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -4384,7 +4412,7 @@ static int rx_swrm_clock(void *handle, bool enable)
 			ret = msm_cdc_pinctrl_select_active_state(
 						rx_priv->rx_swr_gpio_p);
 			if (ret < 0) {
-				dev_err(rx_priv->dev,
+				dev_err_ratelimited(rx_priv->dev,
 					"%s: rx swr pinctrl enable failed\n",
 					__func__);
 				pm_runtime_mark_last_busy(rx_priv->dev);
@@ -4395,7 +4423,7 @@ static int rx_swrm_clock(void *handle, bool enable)
 			if (ret < 0) {
 				msm_cdc_pinctrl_select_sleep_state(
 						rx_priv->rx_swr_gpio_p);
-				dev_err(rx_priv->dev,
+				dev_err_ratelimited(rx_priv->dev,
 					"%s: rx request clock enable failed\n",
 					__func__);
 				pm_runtime_mark_last_busy(rx_priv->dev);
@@ -4420,7 +4448,7 @@ static int rx_swrm_clock(void *handle, bool enable)
 		rx_priv->swr_clk_users++;
 	} else {
 		if (rx_priv->swr_clk_users <= 0) {
-			dev_err(rx_priv->dev,
+			dev_err_ratelimited(rx_priv->dev,
 				"%s: rx swrm clock users already reset\n",
 				__func__);
 			rx_priv->swr_clk_users = 0;
@@ -4435,7 +4463,7 @@ static int rx_swrm_clock(void *handle, bool enable)
 			ret = msm_cdc_pinctrl_select_sleep_state(
 						rx_priv->rx_swr_gpio_p);
 			if (ret < 0) {
-				dev_err(rx_priv->dev,
+				dev_err_ratelimited(rx_priv->dev,
 					"%s: rx swr pinctrl disable failed\n",
 					__func__);
 				goto exit;
@@ -4463,7 +4491,7 @@ int lpass_cdc_rx_set_fir_capability(struct snd_soc_component *component, bool ca
 	struct lpass_cdc_rx_macro_priv *rx_priv = NULL;
 
 	if (!component) {
-		pr_err("%s: component is NULL\n", __func__);
+		pr_err_ratelimited("%s: component is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -4615,10 +4643,10 @@ static void lpass_cdc_rx_macro_add_child_devices(struct work_struct *work)
 			rx_swr_master_node = true;
 
 		if(rx_swr_master_node)
-			strlcpy(plat_dev_name, "rx_swr_ctrl",
+			strscpy(plat_dev_name, "rx_swr_ctrl",
 				(RX_SWR_STRING_LEN - 1));
 		else
-			strlcpy(plat_dev_name, node->name,
+			strscpy(plat_dev_name, node->name,
 				(RX_SWR_STRING_LEN - 1));
 
 		pdev = platform_device_alloc(plat_dev_name, -1);

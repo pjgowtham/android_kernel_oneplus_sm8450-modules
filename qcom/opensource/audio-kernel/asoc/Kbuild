@@ -24,6 +24,12 @@ ifeq ($(CONFIG_SND_SOC_AUTO), y)
 		export
 		INCS    +=  -include $(AUDIO_ROOT)/config/sa6155autoconf.h
 	endif
+	ifdef CONFIG_SND_SOC_GVM
+	    include $(AUDIO_ROOT)/config/gvmauto.conf
+		export
+		INCS    +=  -include $(AUDIO_ROOT)/config/gvmautoconf.h
+	endif
+
 else
 ifeq ($(KERNEL_BUILD), 0)
 	ifeq ($(CONFIG_ARCH_SM8150), y)
@@ -61,19 +67,31 @@ ifeq ($(KERNEL_BUILD), 0)
 		include $(AUDIO_ROOT)/config/waipioauto.conf
 		INCS    +=  -include $(AUDIO_ROOT)/config/waipioautoconf.h
 	endif
-	ifeq ($(CONFIG_ARCH_PARROT), y)
-		include $(AUDIO_ROOT)/config/waipioauto.conf
-		INCS    +=  -include $(AUDIO_ROOT)/config/waipioautoconf.h
+	ifeq ($(CONFIG_ARCH_KALAMA), y)
+		include $(AUDIO_ROOT)/config/kalamaauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/kalamaautoconf.h
+	endif
+	ifeq ($(CONFIG_ARCH_PINEAPPLE), y)
+		include $(AUDIO_ROOT)/config/pineappleauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/pineappleautoconf.h
 	endif
 	ifeq ($(CONFIG_ARCH_LITO), y)
 		include $(AUDIO_ROOT)/config/litoauto.conf
 		export
 		INCS    +=  -include $(AUDIO_ROOT)/config/litoautoconf.h
 	endif
-	ifeq ($(CONFIG_ARCH_BENGAL), y)
+	ifeq ($(CONFIG_ARCH_KHAJE), y)
 		include $(AUDIO_ROOT)/config/bengalauto.conf
 		export
 		INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+	endif
+	ifeq ($(CONFIG_ARCH_HOLI), y)
+		include $(AUDIO_ROOT)/config/holiauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/holiautoconf.h
+	endif
+	ifeq ($(CONFIG_ARCH_BLAIR), y)
+		include $(AUDIO_ROOT)/config/holiauto.conf
+		INCS    +=  -include $(AUDIO_ROOT)/config/holiautoconf.h
 	endif
 	ifeq ($(CONFIG_ARCH_SDMSHRIKE), y)
 		ifdef CONFIG_SND_SOC_SA8155
@@ -169,6 +187,16 @@ ifdef CONFIG_SND_SOC_WAIPIO
 	MACHINE_OBJS += waipio.o
 endif
 
+# for KALAMA sound card driver
+ifdef CONFIG_SND_SOC_KALAMA
+	MACHINE_OBJS += kalama.o
+endif
+
+# for PINEAPPLE sound card driver
+ifdef CONFIG_SND_SOC_PINEAPPLE
+	MACHINE_OBJS += pineapple.o
+endif
+
 # for HOLI sound card driver
 ifdef CONFIG_SND_SOC_HOLI
 	MACHINE_OBJS += holi.o
@@ -194,6 +222,10 @@ endif
 
 ifdef CONFIG_SND_SOC_SDX
 	MACHINE_OBJS += sdx-target.o
+endif
+
+ifdef CONFIG_SND_SOC_GVM_AUTO_SPF
+    SPF_MACHINE_OBJS += gvm_auto_spf_dummy.o
 endif
 
 LINUX_INC +=	-Iinclude/linux
@@ -256,6 +288,12 @@ machine_dlkm-y := $(MACHINE_OBJS)
 obj-$(CONFIG_SND_SOC_WAIPIO) += machine_dlkm.o
 machine_dlkm-y := $(MACHINE_OBJS)
 
+obj-$(CONFIG_SND_SOC_KALAMA) += machine_dlkm.o
+machine_dlkm-y := $(MACHINE_OBJS)
+
+obj-$(CONFIG_SND_SOC_PINEAPPLE) += machine_dlkm.o
+machine_dlkm-y := $(MACHINE_OBJS)
+
 obj-$(CONFIG_SND_SOC_HOLI) += machine_dlkm.o
 machine_dlkm-y := $(MACHINE_OBJS)
 
@@ -270,3 +308,10 @@ machine_dlkm-y := $(MACHINE_OBJS)
 
 obj-$(CONFIG_SND_SOC_SDX) += machine_dlkm.o
 machine_dlkm-y := $(MACHINE_OBJS)
+
+obj-$(CONFIG_SND_SOC_GVM_AUTO_SPF) += spf_machine_dlkm.o
+spf_machine_dlkm-y := $(SPF_MACHINE_OBJS)
+
+
+# inject some build related information
+DEFINES += -DBUILD_TIMESTAMP=\"$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')\"

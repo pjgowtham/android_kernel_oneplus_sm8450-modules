@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #ifndef __WCD_MBHC_V2_H__
 #define __WCD_MBHC_V2_H__
@@ -11,6 +12,15 @@
 #include <linux/extcon-provider.h>
 #include "wcdcal-hwdep.h"
 #include <sound/jack.h>
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include <linux/pm_wakeup.h>
+#define HEADSET_ERR_FB_VERSION    "1.0.0"
+/* add for test audio-kernel err feedback and headphone detect err feedback*/
+#define TEST_KERNEL_FEEDBACK_10047          0x01
+#define TEST_HEADPHONE_FEEDBACK_10009       0x02
+#define BYPASS_HEADPHONE_FEEDBACK_10009     0x04
+#endif
 
 #define TOMBAK_MBHC_NC	0
 #define TOMBAK_MBHC_NO	1
@@ -137,9 +147,19 @@ do {                                                    \
 				  SND_JACK_BTN_2 | SND_JACK_BTN_3 | \
 				  SND_JACK_BTN_4 | SND_JACK_BTN_5)
 #define OCP_ATTEMPT 20
+#ifndef OPLUS_ARCH_EXTENDS
+/* Modify for headphone detect */
 #define HS_DETECT_PLUG_TIME_MS (3 * 1000)
+#else /* OPLUS_ARCH_EXTENDS */
+#define HS_DETECT_PLUG_TIME_MS (5 * 1000)
+#endif /* OPLUS_ARCH_EXTENDS */
 #define SPECIAL_HS_DETECT_TIME_MS (2 * 1000)
+#ifndef OPLUS_ARCH_EXTENDS
+/* Modify for reduce button report when headset insert */
 #define MBHC_BUTTON_PRESS_THRESHOLD_MIN 250
+#else /* OPLUS_ARCH_EXTENDS */
+#define MBHC_BUTTON_PRESS_THRESHOLD_MIN 1000
+#endif /* OPLUS_ARCH_EXTENDS */
 #define GND_MIC_SWAP_THRESHOLD 4
 #define GND_MIC_USBC_SWAP_THRESHOLD 2
 #define WCD_FAKE_REMOVAL_MIN_PERIOD_MS 100
@@ -153,6 +173,10 @@ do {                                                    \
 #define WCD_MBHC_BTN_PRESS_COMPL_TIMEOUT_MS  50
 #define ANC_DETECT_RETRY_CNT 7
 #define WCD_MBHC_SPL_HS_CNT  1
+
+#ifdef OPLUS_ARCH_EXTENDS
+#define HIGH_HPH_DETECT_RETRY_CNT 5
+#endif /* OPLUS_ARCH_EXTENDS */
 
 enum wcd_mbhc_detect_logic {
 	WCD_DETECTION_LEGACY,
@@ -439,6 +463,7 @@ struct wcd_mbhc_config {
 	bool enable_anc_mic_detect;
 	u32 enable_usbc_analog;
 	bool moisture_duty_cycle_en;
+	bool usbss_hsj_connect_enable;
 };
 
 struct wcd_mbhc_intr {
@@ -453,7 +478,7 @@ struct wcd_mbhc_intr {
 
 struct wcd_mbhc_register {
 	const char *id;
-	u16 reg;
+	int reg;
 	u8 mask;
 	u8 offset;
 	u8 invert;
@@ -514,6 +539,11 @@ struct wcd_mbhc_cb {
 	bool (*extn_use_mb)(struct snd_soc_component *component);
 	int (*mbhc_micb_ctrl_thr_mic)(struct snd_soc_component *component,
 			int micb_num, bool req_en);
+#ifdef OPLUS_ARCH_EXTENDS
+/* Add for dio switch plug in pop noise */
+	int (*mbhc_micbias_adjust_voltage)(struct snd_soc_component *component,
+			int micb_num, u32 mb_mv);
+#endif /* OPLUS_ARCH_EXTENDS */
 	void (*mbhc_gnd_det_ctrl)(struct snd_soc_component *component,
 			bool enable);
 	void (*hph_pull_down_ctrl)(struct snd_soc_component *component,
@@ -528,6 +558,12 @@ struct wcd_mbhc_cb {
 	bool (*mbhc_get_moisture_status)(struct wcd_mbhc *mbhc);
 	void (*mbhc_moisture_polling_ctrl)(struct wcd_mbhc *mbhc, bool enable);
 	void (*mbhc_moisture_detect_en)(struct wcd_mbhc *mbhc, bool enable);
+	void (*surge_reset_routine)(struct wcd_mbhc *mbhc);
+	void (*zdet_leakage_resistance)(struct wcd_mbhc *mbhc, bool enable);
+#ifdef OPLUS_ARCH_EXTENDS
+/* workaround for mic mute or headset not detect issue after ESD. case07374404 */
+	void (*check_corrupted)(struct wcd_mbhc *mbhc);
+#endif /* OPLUS_ARCH_EXTENDS */
 };
 
 struct wcd_mbhc_fn {
@@ -553,6 +589,10 @@ struct wcd_mbhc {
 	wait_queue_head_t wait_btn_press;
 	bool is_btn_press;
 	u8 current_plug;
+#ifdef OPLUS_ARCH_EXTENDS
+/* Add for fix headset not correct after ssr */
+	u8 plug_before_ssr;
+#endif /* OPLUS_ARCH_EXTENDS */
 	bool in_swch_irq_handler;
 	bool hphl_swh; /*track HPHL switch NC / NO */
 	bool gnd_swh; /*track GND switch NC / NO */
@@ -619,10 +659,64 @@ struct wcd_mbhc {
 
 	struct wcd_mbhc_fn *mbhc_fn;
 	bool force_linein;
-	struct device_node *fsa_np;
-	struct notifier_block fsa_nb;
+	struct device_node *wcd_usbss_aatc_dev_np;
+	struct device_node *fsa_aatc_dev_np;
+	struct device_node *aatc_dev_np;
+	struct notifier_block aatc_dev_nb;
 
 	struct extcon_dev *extdev;
+
+#ifdef OPLUS_ARCH_EXTENDS
+/*Fix the l_det status when plug out after insertion*/
+	bool usbc_l_det_en;
+	unsigned long usbc_mode;
+#endif /* OPLUS_ARCH_EXTENDS */
+
+#ifdef OPLUS_ARCH_EXTENDS
+/* Add for mbhc cross connection */
+	bool need_cross_conn;
+#endif /* OPLUS_ARCH_EXTENDS */
+
+#ifdef OPLUS_ARCH_EXTENDS
+/* Add for headset detect */
+	struct delayed_work hp_detect_work;
+#endif /* OPLUS_ARCH_EXTENDS */
+
+#ifdef OPLUS_ARCH_EXTENDS
+/* Add for headphone remove issue */
+	bool irq_trigger_enable;
+	struct delayed_work mech_irq_trigger_dwork;
+#endif /* OPLUS_ARCH_EXTENDS */
+
+#ifdef OPLUS_ARCH_EXTENDS
+/* workaround to fix headset recording pop noise */
+	bool headset_micbias_alwayon;
+#endif /* OPLUS_ARCH_EXTENDS */
+
+#ifdef OPLUS_ARCH_EXTENDS
+/* Add for headphone volume match to impedance */
+	bool enable_hp_impedance_detect;
+#endif /* OPLUS_ARCH_EXTENDS */
+
+#ifdef OPLUS_ARCH_EXTENDS
+/* headset detect mode, 0:cc detect, 1:gpio detect */
+	unsigned int headset_detect_mode;
+
+/* check whether L DET is disabled */
+	bool disable_hp_l_det;
+#endif /* OPLUS_ARCH_EXTENDS */
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	unsigned int fb_ctl;
+	struct delayed_work hp_irq_chk_work;
+	struct wakeup_source *hp_wake_lock;
+#endif /* OPLUS_FEATURE_MM_FEEDBACK */
+
+#ifdef OPLUS_ARCH_EXTENDS
+/* Add for adsp ssr */
+	int ssr_enable;
+	struct delayed_work adsp_ssr_work;
+#endif /* OPLUS_ARCH_EXTENDS */
 };
 
 void wcd_mbhc_find_plug_and_report(struct wcd_mbhc *mbhc,

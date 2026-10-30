@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -27,7 +28,11 @@
 #include <asoc/msm-cdc-pinctrl.h>
 #include <asoc/msm-cdc-supply.h>
 #include <bindings/audio-codec-port-types.h>
+#ifdef CONFIG_SND_SOC_WCD939X
+#include "wcd939x/wcd939x.h"
+#else
 #include "wcd938x/wcd938x.h"
+#endif
 #include "swr-dmic.h"
 
 #define NUM_ATTEMPTS 5
@@ -37,6 +42,7 @@
 
 static int swr_master_channel_map[] = {
 	ZERO,
+	SWRM_TX_PCM_OUT,
 	SWRM_TX1_CH1,
 	SWRM_TX1_CH2,
 	SWRM_TX1_CH3,
@@ -49,7 +55,7 @@ static int swr_master_channel_map[] = {
 	SWRM_TX3_CH2,
 	SWRM_TX3_CH3,
 	SWRM_TX3_CH4,
-	SWRM_PCM_IN,
+	SWRM_TX_PCM_IN,
 };
 
 /*
@@ -137,13 +143,13 @@ static int swr_dmic_tx_master_port_get(struct snd_kcontrol *kcontrol,
 	unsigned int slave_port_idx = SWR_DMIC_MAX_PORTS;
 
 	if (NULL == component) {
-		pr_err("%s: swr dmic component is NULL\n", __func__);
+		pr_err_ratelimited("%s: swr dmic component is NULL\n", __func__);
 		return -EINVAL;
 	}
 
 	swr_dmic = snd_soc_component_get_drvdata(component);
 	if (NULL == swr_dmic) {
-		pr_err("%s: swr_dmic_priv is NULL\n", __func__);
+		pr_err_ratelimited("%s: swr_dmic_priv is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -155,7 +161,7 @@ static int swr_dmic_tx_master_port_get(struct snd_kcontrol *kcontrol,
 	}
 
 	if (slave_port_idx >= SWR_DMIC_MAX_PORTS) {
-		pr_err("%s: invalid slave port id\n", __func__);
+		pr_err_ratelimited("%s: invalid slave port id\n", __func__);
 		return -EINVAL;
 	}
 
@@ -180,13 +186,13 @@ static int swr_dmic_tx_master_port_put(struct snd_kcontrol *kcontrol,
 	unsigned int idx = 0;
 
 	if (NULL == component) {
-		pr_err("%s: swr dmic component is NULL\n", __func__);
+		pr_err_ratelimited("%s: swr dmic component is NULL\n", __func__);
 		return -EINVAL;
 	}
 
 	swr_dmic = snd_soc_component_get_drvdata(component);
 	if (NULL == swr_dmic) {
-		pr_err("%s: swr_dmic_priv is NULL\n", __func__);
+		pr_err_ratelimited("%s: swr_dmic_priv is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -198,7 +204,7 @@ static int swr_dmic_tx_master_port_put(struct snd_kcontrol *kcontrol,
 	}
 
 	if (slave_port_idx >= SWR_DMIC_MAX_PORTS) {
-		pr_err("%s: invalid slave port id\n", __func__);
+		pr_err_ratelimited("%s: invalid slave port id\n", __func__);
 		return -EINVAL;
 	}
 
@@ -261,7 +267,7 @@ static int dmic_swr_ctrl(struct snd_soc_dapm_widget *w,
 
 	if (port_id >= SWR_DMIC_MAX_PORTS)
 	{
-		dev_err(component->dev, "%s: invalid port id: %d\n",
+		dev_err_ratelimited(component->dev, "%s: invalid port id: %d\n",
 			__func__, port_id);
 		return -EINVAL;
 	}
@@ -364,10 +370,10 @@ err_port_map:
 }
 
 static const char * const tx_master_port_text[] = {
-	"ZERO", "SWRM_TX1_CH1", "SWRM_TX1_CH2", "SWRM_TX1_CH3", "SWRM_TX1_CH4",
-	"SWRM_TX2_CH1", "SWRM_TX2_CH2", "SWRM_TX2_CH3", "SWRM_TX2_CH4",
-	"SWRM_TX3_CH1", "SWRM_TX3_CH2", "SWRM_TX3_CH3", "SWRM_TX3_CH4",
-	"SWRM_PCM_IN",
+	"ZERO", "SWRM_PCM_OUT", "SWRM_TX1_CH1", "SWRM_TX1_CH2", "SWRM_TX1_CH3",
+	"SWRM_TX1_CH4", "SWRM_TX2_CH1", "SWRM_TX2_CH2", "SWRM_TX2_CH3",
+	"SWRM_TX2_CH4", "SWRM_TX3_CH1", "SWRM_TX3_CH2", "SWRM_TX3_CH3",
+	"SWRM_TX3_CH4", "SWRM_PCM_IN",
 };
 
 static const struct soc_enum tx_master_port_enum =
@@ -444,47 +450,52 @@ static int swr_dmic_codec_probe(struct snd_soc_component *component)
 	}
 
 	memset(w_name, 0, sizeof(w_name));
-	strlcpy(w_name, component->name_prefix, sizeof(w_name));
+	strscpy(w_name, component->name_prefix, sizeof(w_name));
 	strlcat(w_name, " ", sizeof(w_name));
 	strlcat(w_name, swr_dmic->dai_driver->capture.stream_name,
 				sizeof(w_name));
 	snd_soc_dapm_ignore_suspend(dapm, w_name);
 
 	memset(w_name, 0, sizeof(w_name));
-	strlcpy(w_name, component->name_prefix, sizeof(w_name));
+	strscpy(w_name, component->name_prefix, sizeof(w_name));
 	strlcat(w_name, " SWR_DMIC", sizeof(w_name));
 	snd_soc_dapm_ignore_suspend(dapm, w_name);
 
 	memset(w_name, 0, sizeof(w_name));
-	strlcpy(w_name, component->name_prefix, sizeof(w_name));
+	strscpy(w_name, component->name_prefix, sizeof(w_name));
 	strlcat(w_name, " SMIC_PORT_EN", sizeof(w_name));
 	snd_soc_dapm_ignore_suspend(dapm, w_name);
 
 	memset(w_name, 0, sizeof(w_name));
-	strlcpy(w_name, component->name_prefix, sizeof(w_name));
+	strscpy(w_name, component->name_prefix, sizeof(w_name));
 	strlcat(w_name, " SWR_DMIC_OUTPUT", sizeof(w_name));
 	snd_soc_dapm_ignore_suspend(dapm, w_name);
 
 	memset(w_name, 0, sizeof(w_name));
-	strlcpy(w_name, component->name_prefix, sizeof(w_name));
+	strscpy(w_name, component->name_prefix, sizeof(w_name));
 	strlcat(w_name, " VA_SWR_DMIC", sizeof(w_name));
 	snd_soc_dapm_ignore_suspend(dapm, w_name);
 
 	memset(w_name, 0, sizeof(w_name));
-	strlcpy(w_name, component->name_prefix, sizeof(w_name));
+	strscpy(w_name, component->name_prefix, sizeof(w_name));
 	strlcat(w_name, " SMIC_VA_PORT_EN", sizeof(w_name));
 	snd_soc_dapm_ignore_suspend(dapm, w_name);
 
 	memset(w_name, 0, sizeof(w_name));
-	strlcpy(w_name, component->name_prefix, sizeof(w_name));
+	strscpy(w_name, component->name_prefix, sizeof(w_name));
 	strlcat(w_name, " SWR_DMIC_VA_OUTPUT", sizeof(w_name));
 	snd_soc_dapm_ignore_suspend(dapm, w_name);
 
 	snd_soc_dapm_sync(dapm);
 
 	swr_dmic->nblock.notifier_call = swr_dmic_event_notify;
+#ifdef CONFIG_SND_SOC_WCD939X
+	wcd939x_swr_dmic_register_notifier(swr_dmic->supply_component,
+					&swr_dmic->nblock, true);
+#else
 	wcd938x_swr_dmic_register_notifier(swr_dmic->supply_component,
 					&swr_dmic->nblock, true);
+#endif
 
 	return 0;
 }
@@ -517,19 +528,28 @@ static int enable_wcd_codec_supply(struct swr_dmic_priv *swr_dmic, bool enable)
 	struct snd_soc_component *component = swr_dmic->supply_component;
 
 	if (!component) {
-		pr_err("%s: component is NULL\n", __func__);
+		pr_err_ratelimited("%s: component is NULL\n", __func__);
 		return -EINVAL;
 	}
 	dev_dbg(component->dev, "%s: supply %d micbias: %d enable: %d\n",
 		__func__, swr_dmic->is_en_supply, micb_num, enable);
 
 	if (enable)
+#ifdef CONFIG_SND_SOC_WCD939X
+		rc = wcd939x_codec_force_enable_micbias_v2(component,
+					SND_SOC_DAPM_PRE_PMU, micb_num);
+#else
 		rc = wcd938x_codec_force_enable_micbias_v2(component,
 					SND_SOC_DAPM_PRE_PMU, micb_num);
+#endif
 	else
+#ifdef CONFIG_SND_SOC_WCD939X
+		rc = wcd939x_codec_force_enable_micbias_v2(component,
+					SND_SOC_DAPM_POST_PMD, micb_num);
+#else
 		rc = wcd938x_codec_force_enable_micbias_v2(component,
 					SND_SOC_DAPM_POST_PMD, micb_num);
-
+#endif
 	return rc;
 }
 
@@ -580,10 +600,18 @@ static int swr_dmic_event_notify(struct notifier_block *block,
 					struct swr_dmic_priv,
 					nblock);
 	switch (event) {
+#ifdef CONFIG_SND_SOC_WCD939X
+	case WCD939X_EVT_SSR_DOWN:
+#else
 	case WCD938X_EVT_SSR_DOWN:
+#endif
 		ret = swr_dmic_down(swr_dmic->swr_slave);
 		break;
+#ifdef CONFIG_SND_SOC_WCD939X
+	case WCD939X_EVT_SSR_UP:
+#else
 	case WCD938X_EVT_SSR_UP:
+#endif
 		ret = swr_dmic_up(swr_dmic->swr_slave);
 		if (!ret)
 			ret = swr_dmic_reset(swr_dmic->swr_slave);
@@ -784,7 +812,7 @@ static int swr_dmic_up(struct swr_device *pdev)
 
 	swr_dmic = swr_get_dev_data(pdev);
 	if (!swr_dmic) {
-		dev_err(&pdev->dev, "%s: swr_dmic is NULL\n", __func__);
+		dev_err_ratelimited(&pdev->dev, "%s: swr_dmic is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -802,7 +830,7 @@ static int swr_dmic_down(struct swr_device *pdev)
 
 	swr_dmic = swr_get_dev_data(pdev);
 	if (!swr_dmic) {
-		dev_err(&pdev->dev, "%s: swr_dmic is NULL\n", __func__);
+		dev_err_ratelimited(&pdev->dev, "%s: swr_dmic is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -830,7 +858,7 @@ static int swr_dmic_reset(struct swr_device *pdev)
 
 	swr_dmic = swr_get_dev_data(pdev);
 	if (!swr_dmic) {
-		dev_err(&pdev->dev, "%s: swr_dmic is NULL\n", __func__);
+		dev_err_ratelimited(&pdev->dev, "%s: swr_dmic is NULL\n", __func__);
 		return -EINVAL;
 	}
 
@@ -856,7 +884,7 @@ static int swr_dmic_resume(struct device *dev)
 	struct swr_dmic_priv *swr_dmic = swr_get_dev_data(to_swr_device(dev));
 
 	if (!swr_dmic) {
-		dev_err(dev, "%s: swr_dmic private data is NULL\n", __func__);
+		dev_err_ratelimited(dev, "%s: swr_dmic private data is NULL\n", __func__);
 		return -EINVAL;
 	}
 	dev_dbg(dev, "%s: system resume\n", __func__);
