@@ -14,13 +14,10 @@
 
 #include "ufs-oplus-dbg.h"
 #ifdef CONFIG_OPLUS_QCOM_UFS_DRIVER
-#include "../../../../../ufs/host/ufs-qcom.h"
+#include "ufs-qcom.h"
 #endif /* CONFIG_OPLUS_QCOM_UFS_DRIVER */
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
-#ifdef CONFIG_OPLUS_QCOM_UFS_DRIVER
-#include "../../../../../ufs/core/ufshcd-priv.h"
-#endif /* CONFIG_OPLUS_QCOM_UFS_DRIVER */
 #include "ufshcd-priv.h"
 #else
 #ifdef CONFIG_OPLUS_QCOM_UFS_DRIVER
