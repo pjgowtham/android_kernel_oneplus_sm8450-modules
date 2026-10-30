@@ -1,1 +1,8 @@
+ifeq ($(CONFIG_ARCH_WAIPIO), y)
+	include $(AUDIO_ROOT)/config/waipioauto.conf
+	export INCS += -include $(AUDIO_ROOT)/config/waipioautoconf.h
+	export INCS += -I$(AUDIO_ROOT)/../../../oplus/kernel/audio/oplus_audio_daemon
+endif
+
 obj-y := dsp/ ipc/ soc/ asoc/ asoc/codecs/ asoc/codecs/lpass-cdc/ asoc/codecs/bolero/ asoc/codecs/wcd939x/ asoc/codecs/wsa884x/ asoc/codecs/wcd938x/ asoc/codecs/wsa883x/ asoc/codecs/wcd937x/ asoc/codecs/wcd9378/ asoc/codecs/qmp1000/
+obj-y += oplus/
