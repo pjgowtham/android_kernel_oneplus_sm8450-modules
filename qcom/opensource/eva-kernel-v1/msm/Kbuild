@@ -3,6 +3,11 @@ LINUXINCLUDE    += -I$(EVA_ROOT)/include \
 				   -I$(EVA_ROOT)/include/uapi/eva
 
 ccflags-y += -I$(srctree)/drivers/media/platform/msm/synx/
+ccflags-y += -I$(EVA_ROOT)/../dsp-kernel/include \
+             -I$(EVA_ROOT)/../mmrm-driver/include \
+             -I$(EVA_ROOT)/../synx-kernel-v1/include/uapi/synx \
+             -I$(EVA_ROOT)/../synx-kernel-v1/msm/synx
+ccflags-y += -Wno-format -Wno-array-bounds
 
 # add flag to compile mmrm actual implementatio instead of stub version.
 # to follow up with mmrm team if techpack users need to define this for long term?
@@ -15,6 +20,7 @@ ifeq ($(CONFIG_ARCH_WAIPIO), y)
 $(info within KBUILD file CONFIG_ARCH_WAIPIO = $(CONFIG_ARCH_WAIPIO))
 # include $(EVA_ROOT)/config/waipio.mk
 KBUILD_CPPFLAGS += -DCONFIG_EVA_WAIPIO=1
+KBUILD_CPPFLAGS += -DCONFIG_MSM_GLOBAL_SYNX
 ccflags-y += -DCONFIG_EVA_WAIPIO=1
 endif
 
