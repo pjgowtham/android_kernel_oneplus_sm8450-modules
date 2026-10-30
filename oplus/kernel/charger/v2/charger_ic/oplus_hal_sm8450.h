@@ -18,7 +18,12 @@
 #include <linux/mutex.h>
 #include <linux/pm_wakeup.h>
 #include <linux/power_supply.h>
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+#include <linux/soc/qcom/qti_pmic_glink.h>
+#else
 #include <linux/soc/qcom/pmic_glink.h>
+#endif
 #include <linux/soc/qcom/battery_charger.h>
 #include <oplus_chg_ic.h>
 
