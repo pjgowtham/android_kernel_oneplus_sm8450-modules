@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
+ * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
  *
  * Copyright (c) 2009 Keith Packard
@@ -1630,6 +1631,17 @@ int dp_link_configure(struct drm_dp_aux *aux, struct drm_dp_link *link)
 		DP_ERR("failed to configure link, ret:%d\n", ret);
 		return -EIO;
 	}
+
+	/*
+	 * Set eDP link rate to 5.4 Gbps (index 6) if the MAX_LINK_RATE is 0
+	 * TODO: Set eDP rate index based on rates stored from DPCD 0x10h - 0x1Fh
+	 */
+	ret = drm_dp_dpcd_readb(aux, DP_MAX_LINK_RATE, &values[0]);
+	if (ret < 0)
+		return ret;
+
+	if (!values[0])
+		drm_dp_dpcd_writeb(aux, 0x115, 6);
 
 	return 0;
 }

@@ -12,9 +12,6 @@
 
 struct sde_hw_ds;
 
-/* Destination Scaler DUAL mode overfetch pixel count */
-#define SDE_DS_OVERFETCH_SIZE 5
-
 /* Destination scaler DUAL mode operation bit */
 #define SDE_DS_OP_MODE_DUAL BIT(16)
 
@@ -23,6 +20,7 @@ struct sde_hw_ds;
  * @flags        : Flag to switch between mode for DS
  * @lm_width     : Layer mixer width configuration
  * @lm_heigh     : Layer mixer height configuration
+ * @merge_mode   : Specify pipe merge mode for each DS block
  * @scl3_cfg     : Configuration data for scaler
  */
 struct sde_hw_ds_cfg {
@@ -30,6 +28,7 @@ struct sde_hw_ds_cfg {
 	int flags;
 	u32 lm_width;
 	u32 lm_height;
+	u32 merge_mode;
 	struct sde_hw_scaler3_cfg scl3_cfg;
 };
 
@@ -44,9 +43,10 @@ struct sde_hw_ds_ops {
 	 * setup_opmode - destination scaler op mode setup
 	 * @hw_ds   : Pointer to ds context
 	 * @op_mode : Op mode configuration
+	 * @merge_mode : Specify pipe merge mode for each DS block
 	 */
 	void (*setup_opmode)(struct sde_hw_ds *hw_ds,
-				u32 op_mode);
+				u32 op_mode, u32 merge_mode);
 
 	/**
 	 * setup_scaler - destination scaler block setup

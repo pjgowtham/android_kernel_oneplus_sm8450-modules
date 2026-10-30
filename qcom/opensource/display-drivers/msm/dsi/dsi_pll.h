@@ -39,6 +39,7 @@
 
 #define DFPS_MAX_NUM_OF_FRAME_RATES 16
 #define MAX_DSI_PLL_EN_SEQS	10
+#define MAX_DSI_PLL_SLAVE_NUM	3
 
 /* Register offsets for 5nm PHY PLL */
 #define MMSS_DSI_PHY_PLL_PLL_CNTRL		(0x0014)
@@ -57,6 +58,7 @@ struct lpfr_cfg {
 };
 
 enum {
+	DSI_PLL_3NM,
 	DSI_PLL_4NM,
 	DSI_PLL_5NM,
 	DSI_PLL_10NM,
@@ -151,7 +153,7 @@ struct dsi_pll_resource {
 	u32 ssc_freq;
 	u32 ssc_ppm;
 
-	struct dsi_pll_resource *slave;
+	struct dsi_pll_resource *slave[MAX_DSI_PLL_SLAVE_NUM];
 
 	void *priv;
 
@@ -173,6 +175,13 @@ struct dsi_pll_resource {
 	 */
 	enum dsi_phy_type type;
 	bool in_trusted_vm;
+
+	/*
+	 * PLL enable refcount used in case of sync panels to make sure:
+	 * 1. master PLL does not turn off while slave PLL is on.
+	 * 2. master PLL does not turn on if it is already on.
+	 */
+	u32 refcount;
 };
 
 struct dsi_pll_clk {
@@ -206,11 +215,16 @@ static inline struct dsi_pll_clk *to_pll_clk_hw(struct clk_hw *hw)
 int dsi_pll_clock_register_5nm(struct platform_device *pdev,
 				  struct dsi_pll_resource *pll_res);
 int dsi_pll_clock_register_4nm(struct platform_device *pdev, struct dsi_pll_resource *pll_res);
-int dsi_pll_clock_register_10nm(struct platform_device *pdev, struct dsi_pll_resource *pll_res);
+int dsi_pll_clock_register_3nm(struct platform_device *pdev, struct dsi_pll_resource *pll_res);
 
 int dsi_pll_init(struct platform_device *pdev,
 				struct dsi_pll_resource **pll_res);
 
 void dsi_pll_parse_dfps_data(struct platform_device *pdev, struct dsi_pll_resource *pll_res);
 
+int dsi_pll_program_slave(struct dsi_pll_resource *pll_res, bool skip_op);
+
+int dsi_pll_5nm_program_slave(struct dsi_pll_resource *pll_res, bool skip_op);
+
+int dsi_pll_4nm_program_slave(struct dsi_pll_resource *pll_res, bool skip_op);
 #endif

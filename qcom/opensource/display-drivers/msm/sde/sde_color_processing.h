@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -9,7 +9,40 @@
 #include "sde_hw_mdss.h"
 #include <drm/drm_crtc.h>
 
-struct sde_irq_callback;
+/**
+ * struct sde_cp_node - structure to define color processing
+ *                      property info
+ * @property_id: drm id for the property
+ * @prop_flags: flags to indicate type of property
+ * @feature: cp crtc feature enum
+ * @blob_ptr: pointer to drm blob property
+ * @prop_val: property value
+ * @pp_blk: pointer to sde_pp_blk struct
+ * @cp_feature_list: color processing feature list
+ * @cp_active_list: color processing active feature list
+ * @cp_dirty_list: color processing dirty feature list
+ * @is_dspp_feature: indicate if the feature is in dspp
+ * @lm_flush_override: indicate if lm flush override is enabled
+ * @prob_blob_sz: size of blob property
+ * @irq: pointer to sde_irq_callback
+ */
+struct sde_cp_node {
+	u32 property_id;
+	u32 prop_flags;
+	u32 feature;
+	void *blob_ptr;
+	uint64_t prop_val;
+	const struct sde_pp_blk *pp_blk;
+	struct list_head cp_feature_list;
+	struct list_head cp_active_list;
+	struct list_head cp_dirty_list;
+	bool is_dspp_feature;
+	bool lm_flush_override;
+	u32 prop_blob_sz;
+	struct sde_irq_callback *irq;
+};
+
+struct sde_kms *get_kms(struct drm_crtc *crtc);
 
 /*
  * PA MEMORY COLOR types
@@ -109,6 +142,14 @@ enum sde_cp_crtc_features {
 	SDE_CP_CRTC_DSPP_DEMURA_BACKLIGHT,
 	SDE_CP_CRTC_DSPP_DEMURA_BOOT_PLANE,
 	SDE_CP_CRTC_DSPP_DEMURA_CFG0_PARAM2,
+	SDE_CP_CRTC_DSPP_MDNIE,
+	SDE_CP_CRTC_DSPP_MDNIE_ART,
+	SDE_CP_CRTC_DSPP_MDNIE_IPC,
+	SDE_CP_CRTC_DSPP_AIQE_SSRC_CONFIG,
+	SDE_CP_CRTC_DSPP_AIQE_SSRC_DATA,
+	SDE_CP_CRTC_DSPP_COPR,
+	SDE_CP_CRTC_DSPP_AI_SCALER,
+	SDE_CP_CRTC_DSPP_AIQE_ABC,
 	SDE_CP_CRTC_DSPP_MAX,
 	/* DSPP features end */
 
@@ -149,6 +190,7 @@ struct sde_cp_crtc_range_prop_payload {
  * @plane: plane that has been enabled and skipped blending
  * @width: plane width
  * @height: plane height
+ * @is_virtual: indicates plane type
  */
 
 struct sde_cp_crtc_skip_blend_plane {
@@ -156,6 +198,7 @@ struct sde_cp_crtc_skip_blend_plane {
 	enum sde_sspp plane;
 	u32 width;
 	u32 height;
+	bool is_virtual;
 };
 
 /**
@@ -320,6 +363,10 @@ int sde_cp_ltm_off_event_handler(struct drm_crtc *crtc_drm, bool en,
  */
 void sde_cp_crtc_res_change(struct drm_crtc *crtc_drm);
 
+#ifdef OPLUS_FEATURE_DISPLAY
+struct sde_kms *get_kms_(struct drm_crtc *crtc);
+#endif /* OPLUS_FEATURE_DISPLAY */
+
 /**
  * sde_cp_crtc_vm_primary_handoff: Properly handoff CRTC color mode features
  * when switching from primary VM to trusted VM
@@ -375,5 +422,22 @@ void sde_cp_set_skip_blend_plane_info(struct drm_crtc *crtc,
  * @opr_value: Pointer to opr value.
  */
 int sde_dspp_spr_read_opr_value(struct sde_hw_dspp *hw_dspp, u32 *opr_value);
+
+/**
+ * _sde_cp_mark_mdnie_art_property(): mark mdnie art property internally as dirty.
+ * @crtc: pointer to drm crtc.
+ */
+void _sde_cp_mark_mdnie_art_property(struct drm_crtc *crtc);
+
+/** _sde_cp_check_mdnie_art_done: check mdnie art done status .
+ * @crtc: pointer to drm crtc.
+ */
+void _sde_cp_check_mdnie_art_done(struct drm_crtc *crtc);
+
+/**
+ * sde_cp_get_ai_scaler_io_res - populates the destination scaler src/dst w/h
+ * @crtc_state: pointer to drm crtc state
+ */
+void sde_cp_get_ai_scaler_io_res(struct drm_crtc_state *crtc_state);
 
 #endif /*_SDE_COLOR_PROCESSING_H */

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2009-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -52,6 +52,10 @@
 #define DBGBUS_DSPP		0x348
 #define DBGBUS_DSPP_STATUS	0x34C
 #define DBGBUS_PERIPH		0x418
+
+#define DBGBUS_DSPP_VER_C00		0x384
+#define DBGBUS_DSPP1_VER_C00		0x348
+#define DBGBUS_DSPP_STATUS_VER_C00	0x388
 
 /* offsets from DSI CTRL base address for the DSI debug buses */
 #define DSI_DEBUG_BUS_CTRL	0x0124
@@ -120,6 +124,12 @@
 
 #define SDE_DBG_LOG_DEBUGBUS(name, addr, block_id, test_id, val) \
 	dev_err(sde_dbg_base.dev, "%s 0x%x %d %d 0x%x\n", name, addr, block_id, test_id, val)
+
+#define SDE_DBG_PRINT_DBGBUS_HEADER(dbg_base, name) do {\
+	drm_printf(dbg_base->sde_dbg_printer, "---------------------------------\n");\
+	drm_printf(dbg_base->sde_dbg_printer, "[dbgbus_%s]\n", name);\
+	drm_printf(dbg_base->sde_dbg_printer, "---------------------------------\n");\
+} while (0)
 
 /**
  * struct sde_dbg_reg_offset - tracking for start and end of region
@@ -375,6 +385,34 @@ static struct sde_debug_bus_entry dbg_bus_sde_limited[] = {
 	{ DBGBUS_PERIPH, DBGBUS_DSPP_STATUS, 80, 3, 0, 8 },
 };
 
+static struct sde_debug_bus_entry dbg_bus_sde_limited_ver_c00[] = {
+	{ DBGBUS_SSPP0, DBGBUS_DSPP_STATUS_VER_C00, 0, 9, 0, 8 },
+	{ DBGBUS_SSPP0, DBGBUS_DSPP_STATUS_VER_C00, 20, 34, 0, 8 },
+	{ DBGBUS_SSPP0, DBGBUS_DSPP_STATUS_VER_C00, 60, 4, 0, 8 },
+	{ DBGBUS_SSPP0, DBGBUS_DSPP_STATUS_VER_C00, 70, 4, 0, 8 },
+
+	{ DBGBUS_SSPP1, DBGBUS_DSPP_STATUS_VER_C00, 0, 9, 0, 8 },
+	{ DBGBUS_SSPP1, DBGBUS_DSPP_STATUS_VER_C00, 20, 34, 0, 8 },
+	{ DBGBUS_SSPP1, DBGBUS_DSPP_STATUS_VER_C00, 60, 4, 0, 8 },
+	{ DBGBUS_SSPP1, DBGBUS_DSPP_STATUS_VER_C00, 70, 4, 0, 8 },
+
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 0, 1, 0, 8 },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 9, 1, 0, 8 },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 13, 2, 0, 8 },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 19, 2, 0, 8 },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 24, 2, 0, 8 },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 31, 8, 0, 8 },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 42, 12, 0, 8 },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 54, 2, 0, 32 },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 56, 2, 0, 8 },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 63, 73, 0, 8 },
+
+	{ DBGBUS_PERIPH, DBGBUS_DSPP_STATUS_VER_C00, 0, 1, 0, 8 },
+	{ DBGBUS_PERIPH, DBGBUS_DSPP_STATUS_VER_C00, 47, 7, 0, 8 },
+	{ DBGBUS_PERIPH, DBGBUS_DSPP_STATUS_VER_C00, 60, 14, 0, 8 },
+	{ DBGBUS_PERIPH, DBGBUS_DSPP_STATUS_VER_C00, 80, 3, 0, 8 },
+};
+
 static struct sde_debug_bus_entry dbg_bus_sde[] = {
 	{ DBGBUS_SSPP0, DBGBUS_DSPP_STATUS, 0, 74, 0, 32 },
 	{ DBGBUS_SSPP1, DBGBUS_DSPP_STATUS, 0, 74, 0, 32 },
@@ -410,6 +448,42 @@ static struct sde_debug_bus_entry dbg_bus_sde[] = {
 	{ DBGBUS_DSPP, DBGBUS_DSPP_STATUS, 124, 1, 7, 1, _sde_debug_bus_lm_dump }
 };
 
+static struct sde_debug_bus_entry dbg_bus_sde_ver_c00[] = {
+	{ DBGBUS_SSPP0, DBGBUS_DSPP_STATUS_VER_C00, 0, 74, 0, 32 },
+	{ DBGBUS_SSPP1, DBGBUS_DSPP_STATUS_VER_C00, 0, 74, 0, 32 },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 0, 137, 0, 32 },
+	{ DBGBUS_DSPP1_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 0, 137, 0, 32 },
+	{ DBGBUS_PERIPH, DBGBUS_DSPP_STATUS_VER_C00, 0, 78, 0, 32 },
+	{ DBGBUS_AXI_INTF, DBGBUS_DSPP_STATUS_VER_C00, 0, 63, 0, 32 },
+
+	/* ppb_0 */
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 31, 1, 0, 1, _sde_debug_bus_ppb0_dump },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 33, 1, 0, 1, _sde_debug_bus_ppb0_dump },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 35, 1, 0, 1, _sde_debug_bus_ppb0_dump },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 42, 1, 0, 1, _sde_debug_bus_ppb0_dump },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 47, 1, 0, 1, _sde_debug_bus_ppb0_dump },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 49, 1, 0, 1, _sde_debug_bus_ppb0_dump },
+
+	/* ppb_1 */
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 32, 1, 0, 1, _sde_debug_bus_ppb1_dump },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 34, 1, 0, 1, _sde_debug_bus_ppb1_dump },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 36, 1, 0, 1, _sde_debug_bus_ppb1_dump },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 43, 1, 0, 1, _sde_debug_bus_ppb1_dump },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 48, 1, 0, 1, _sde_debug_bus_ppb1_dump },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 50, 1, 0, 1, _sde_debug_bus_ppb1_dump },
+
+	/* crossbar */
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 0, 1, 0, 1, _sde_debug_bus_xbar_dump },
+
+	/* blend */
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 63, 1, 7, 1, _sde_debug_bus_lm_dump },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 70, 1, 7, 1, _sde_debug_bus_lm_dump },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 77, 1, 7, 1, _sde_debug_bus_lm_dump },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 110, 1, 7, 1, _sde_debug_bus_lm_dump },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 96, 1, 7, 1, _sde_debug_bus_lm_dump },
+	{ DBGBUS_DSPP_VER_C00, DBGBUS_DSPP_STATUS_VER_C00, 124, 1, 7, 1, _sde_debug_bus_lm_dump }
+};
+
 static struct sde_debug_bus_entry vbif_dbg_bus_limited[] = {
 	{ MMSS_VBIF_TEST_BUS1_CTRL0, MMSS_VBIF_TEST_BUS_OUT, 0, 2, 0, 12},
 	{ MMSS_VBIF_TEST_BUS1_CTRL0, MMSS_VBIF_TEST_BUS_OUT, 4, 6, 0, 12},
@@ -443,6 +517,7 @@ static struct sde_debug_bus_entry dbg_bus_lutdma[] = {
 	{ LUTDMA_0_DEBUG_BUS_CTRL, LUTDMA_0_DEBUG_BUS_STATUS, 0, 1, 256, 1 },
 	{ LUTDMA_0_DEBUG_BUS_CTRL, LUTDMA_0_DEBUG_BUS_STATUS, 0, 1, 512, 4 },
 	{ LUTDMA_0_DEBUG_BUS_CTRL, LUTDMA_0_DEBUG_BUS_STATUS, 0, 1, 768, 1 },
+	{ LUTDMA_0_DEBUG_BUS_CTRL, LUTDMA_0_DEBUG_BUS_STATUS, 0, 1, 784, 11 },
 	{ LUTDMA_0_DEBUG_BUS_CTRL, LUTDMA_0_DEBUG_BUS_STATUS, 0, 1, 8192, 2 },
 	{ LUTDMA_0_DEBUG_BUS_CTRL, LUTDMA_0_DEBUG_BUS_STATUS, 0, 1, 8448, 1 },
 	{ LUTDMA_0_DEBUG_BUS_CTRL, LUTDMA_0_DEBUG_BUS_STATUS, 0, 1, 8704, 1 },
@@ -452,6 +527,7 @@ static struct sde_debug_bus_entry dbg_bus_lutdma[] = {
 	{ LUTDMA_1_DEBUG_BUS_CTRL, LUTDMA_1_DEBUG_BUS_STATUS, 0, 1, 256, 1 },
 	{ LUTDMA_1_DEBUG_BUS_CTRL, LUTDMA_1_DEBUG_BUS_STATUS, 0, 1, 512, 4 },
 	{ LUTDMA_1_DEBUG_BUS_CTRL, LUTDMA_1_DEBUG_BUS_STATUS, 0, 1, 768, 1 },
+	{ LUTDMA_1_DEBUG_BUS_CTRL, LUTDMA_1_DEBUG_BUS_STATUS, 0, 1, 784, 11 },
 	{ LUTDMA_1_DEBUG_BUS_CTRL, LUTDMA_1_DEBUG_BUS_STATUS, 0, 1, 8192, 2 },
 	{ LUTDMA_1_DEBUG_BUS_CTRL, LUTDMA_1_DEBUG_BUS_STATUS, 0, 1, 8448, 1 },
 	{ LUTDMA_1_DEBUG_BUS_CTRL, LUTDMA_1_DEBUG_BUS_STATUS, 0, 1, 8704, 1 },
@@ -670,7 +746,7 @@ void sde_mini_dump_add_va_region(const char *name, u32 size, void *virt_addr)
 	struct va_md_entry md_entry;
 	int ret;
 
-	strlcpy(md_entry.owner, name, sizeof(md_entry.owner));
+	strscpy(md_entry.owner, name, sizeof(md_entry.owner));
 	md_entry.vaddr = (uintptr_t)virt_addr;
 	md_entry.size = size;
 
@@ -925,10 +1001,26 @@ static void _sde_dbg_vbif_clear_test_point(void __iomem *mem_base, u32 wr_addr)
 	wmb(); /* update test point clear */
 }
 
+static u32 _sde_dbg_sde_read_test_point_ver_c00(void __iomem *mem_base, u32 wr_addr, u32 rd_addr,
+			u32 block_id, u32 test_id)
+{
+	if (test_id > EXT_TEST_GROUP_SEL_EN)
+		writel_relaxed(TEST_EXT_MASK(block_id, test_id), mem_base + wr_addr);
+	else
+		writel_relaxed(TEST_MASK(block_id, test_id), mem_base + wr_addr);
+
+	/* keep DSPP test point enabled */
+	if (wr_addr != DBGBUS_DSPP_VER_C00)
+		writel_relaxed(DSPP_DEBUGBUS_CTRL_EN, mem_base + DBGBUS_DSPP_VER_C00);
+	wmb(); /* make sure test bits were written */
+
+	return readl_relaxed(mem_base + rd_addr);
+}
+
 static u32 _sde_dbg_sde_read_test_point(void __iomem *mem_base, u32 wr_addr, u32 rd_addr,
 			u32 block_id, u32 test_id)
 {
-	if (block_id > EXT_TEST_GROUP_SEL_EN)
+	if (test_id > EXT_TEST_GROUP_SEL_EN)
 		writel_relaxed(TEST_EXT_MASK(block_id, test_id), mem_base + wr_addr);
 	else
 		writel_relaxed(TEST_MASK(block_id, test_id), mem_base + wr_addr);
@@ -939,6 +1031,13 @@ static u32 _sde_dbg_sde_read_test_point(void __iomem *mem_base, u32 wr_addr, u32
 	wmb(); /* make sure test bits were written */
 
 	return readl_relaxed(mem_base + rd_addr);
+}
+
+static void _sde_dbg_sde_clear_test_point_ver_c00(void __iomem *mem_base, u32 wr_addr)
+{
+	writel_relaxed(0x0, mem_base + wr_addr);
+	if (wr_addr != DBGBUS_DSPP_VER_C00)
+		writel_relaxed(0x0, mem_base + DBGBUS_DSPP_VER_C00);
 }
 
 static void _sde_dbg_sde_clear_test_point(void __iomem *mem_base, u32 wr_addr)
@@ -1052,6 +1151,10 @@ static void _sde_dbg_dump_bus_entry(struct sde_dbg_sde_debug_bus *bus,
 							bus, entry->wr_addr, block_id, test_id))))
 					SDE_DBG_LOG_ENTRY(0, wr_addr, block_id,
 							test_id, status, true);
+				if (entry->analyzer) {
+					entry->analyzer(wr_addr, i, j, status);
+					continue;
+				}
 
 				if (dump_addr && (in_mem || in_dump)
 						&& (!sde_dbg_base.coredump_reading)) {
@@ -1069,8 +1172,6 @@ static void _sde_dbg_dump_bus_entry(struct sde_dbg_sde_debug_bus *bus,
 					dump_addr += 4;
 				}
 
-				if (entry->analyzer)
-					entry->analyzer(entry->wr_addr, i, j, status);
 			}
 		}
 		/* Disable debug bus once we are done */
@@ -1245,6 +1346,37 @@ void sde_evtlog_dump_all(struct sde_dbg_evtlog *evtlog)
 
 }
 
+#ifdef OPLUS_FEATURE_DISPLAY
+void oplus_sde_evtlog_dump_all(void)
+{
+	struct sde_dbg_base *dbg_base = &sde_dbg_base;
+	u32 reg_dump_size;
+	u32 dump_mode_temp;
+
+	pr_err("oplus_sde_evtlog_dump_all entry\n");
+	SDE_EVT32(0x11, 0x22, 0x33);
+	SDE_EVT32(0x11, 0x22, 0x33);
+
+	mutex_lock(&dbg_base->mutex);
+
+	reg_dump_size =  _sde_dbg_get_reg_dump_size();
+	if (!dbg_base->reg_dump_base)
+		dbg_base->reg_dump_base = vzalloc(reg_dump_size);
+
+	dbg_base->reg_dump_addr =  dbg_base->reg_dump_base;
+	dump_mode_temp = dbg_base->evtlog->dump_mode;
+
+	if (sde_evtlog_is_enabled(dbg_base->evtlog, SDE_EVTLOG_ALWAYS)) {
+		dbg_base->evtlog->dump_mode = SDE_DBG_DUMP_IN_LOG;
+		sde_evtlog_dump_all(dbg_base->evtlog);
+		dbg_base->evtlog->dump_mode = dump_mode_temp;
+	}
+
+	mutex_unlock(&dbg_base->mutex);
+	pr_err("oplus_sde_evtlog_dump_all end\n");
+}
+#endif /* OPLUS_FEATURE_DISPLAY */
+
 /**
  * _sde_dump_array - dump array of register bases
  * @do_panic: whether to trigger a panic after dumping
@@ -1300,32 +1432,32 @@ static void _sde_dump_array(bool do_panic, const char *name, bool dump_secure, u
 
 	start = ktime_get();
 	if (in_dump && coredump_reading)
-		drm_printf(dbg_base->sde_dbg_printer, "============== dump dbgbus_sde ==============\n");
+		SDE_DBG_PRINT_DBGBUS_HEADER(dbg_base, "sde");
 	if (dump_blk_mask & SDE_DBG_SDE_DBGBUS)
 		_sde_dbg_dump_sde_dbg_bus(&dbg_base->dbgbus_sde, dbg_base->dump_option);
 
 	if (in_dump && coredump_reading)
-		drm_printf(dbg_base->sde_dbg_printer, "============== dump dbgbus_lutdma ==============\n");
+		SDE_DBG_PRINT_DBGBUS_HEADER(dbg_base, "lutdma");
 	if (dump_blk_mask & SDE_DBG_LUTDMA_DBGBUS)
 		_sde_dbg_dump_sde_dbg_bus(&dbg_base->dbgbus_lutdma, dbg_base->dump_option);
 
 	if (in_dump && coredump_reading)
-		drm_printf(dbg_base->sde_dbg_printer, "============== dump dbgbus_rsc ==============\n");
+		SDE_DBG_PRINT_DBGBUS_HEADER(dbg_base, "rsc");
 	if (dump_blk_mask & SDE_DBG_RSC_DBGBUS)
 		_sde_dbg_dump_sde_dbg_bus(&dbg_base->dbgbus_rsc, dbg_base->dump_option);
 
 	if (in_dump && coredump_reading)
-		drm_printf(dbg_base->sde_dbg_printer, "============== dump dbgbus_vbif_rt ==============\n");
+		SDE_DBG_PRINT_DBGBUS_HEADER(dbg_base, "vbif_rt");
 	if (dump_blk_mask & SDE_DBG_VBIF_RT_DBGBUS)
 		_sde_dbg_dump_sde_dbg_bus(&dbg_base->dbgbus_vbif_rt, dbg_base->dump_option);
 
 	if (in_dump && coredump_reading)
-		drm_printf(dbg_base->sde_dbg_printer, "============== dump dbgbus_dsi ==============\n");
+		SDE_DBG_PRINT_DBGBUS_HEADER(dbg_base, "dsi");
 	if (dump_blk_mask & SDE_DBG_DSI_DBGBUS)
 		_sde_dbg_dump_dsi_dbg_bus(&dbg_base->dbgbus_dsi, dbg_base->dump_option);
 
 	if (in_dump && coredump_reading)
-		drm_printf(dbg_base->sde_dbg_printer, "============== dump dbgbus_dp ==============\n");
+		SDE_DBG_PRINT_DBGBUS_HEADER(dbg_base, "dp");
 	if (dump_blk_mask & SDE_DBG_DP_DBGBUS)
 		_sde_dbg_dump_sde_dbg_bus(&dbg_base->dbgbus_dp, dbg_base->dump_option);
 
@@ -1342,6 +1474,24 @@ static void _sde_dump_array(bool do_panic, const char *name, bool dump_secure, u
 
 	mutex_unlock(&dbg_base->mutex);
 }
+
+#ifdef OPLUS_FEATURE_APDMR
+void sde_dump_evtlog_and_reg(void)
+{
+	u32 old_dump_option = sde_dbg_base.dump_option;
+	u32 old_enable = sde_dbg_base.evtlog->enable;
+	u32 old_dump_mode = sde_dbg_base.evtlog->dump_mode;
+
+	sde_dbg_base.dump_option = SDE_DBG_DUMP_IN_LOG;
+	sde_dbg_base.evtlog->enable = SDE_EVTLOG_ALWAYS;
+	sde_dbg_base.evtlog->dump_mode = SDE_DBG_DUMP_IN_LOG;
+	_sde_dump_array(false, "sde", false, SDE_DBG_SDE);
+
+	sde_dbg_base.dump_option = old_dump_option;
+	sde_dbg_base.evtlog->enable = old_enable;
+	sde_dbg_base.evtlog->dump_mode = old_dump_mode;
+}
+#endif
 
 #ifdef CONFIG_DEV_COREDUMP
 #define MAX_BUFF_SIZE ((3072 - 256) * 1024)
@@ -1551,7 +1701,11 @@ void sde_dbg_ctrl(const char *name, ...)
  * @inode: debugfs inode
  * @file: file handle
  */
+#ifdef OPLUS_FEATURE_DISPLAY
+int sde_dbg_debugfs_open(struct inode *inode, struct file *file)
+#else /* OPLUS_FEATURE_DISPLAY */
 static int sde_dbg_debugfs_open(struct inode *inode, struct file *file)
+#endif /* OPLUS_FEATURE_DISPLAY */
 {
 	if (!inode || !file)
 		return -EINVAL;
@@ -1562,11 +1716,14 @@ static int sde_dbg_debugfs_open(struct inode *inode, struct file *file)
 	mutex_lock(&sde_dbg_base.mutex);
 	sde_dbg_base.cur_evt_index = 0;
 	sde_dbg_base.evtlog->first = (u32)atomic_add_return(0, &sde_dbg_base.evtlog->curr) + 1;
-	sde_dbg_base.evtlog->last =
-		sde_dbg_base.evtlog->first + SDE_EVTLOG_ENTRY;
+	atomic_set(&sde_dbg_base.evtlog->last,
+			(sde_dbg_base.evtlog->first + SDE_EVTLOG_ENTRY));
 	mutex_unlock(&sde_dbg_base.mutex);
 	return 0;
 }
+#ifdef OPLUS_FEATURE_DISPLAY
+EXPORT_SYMBOL(sde_dbg_debugfs_open);
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 /*
  * sde_dbg_reg_base_open - debugfs open handler for reg base
@@ -1605,8 +1762,13 @@ static int sde_dbg_reg_base_open(struct inode *inode, struct file *file)
  * @count: size of user buffer
  * @ppos: position offset of user buffer
  */
+#ifdef OPLUS_FEATURE_DISPLAY
+ssize_t sde_evtlog_dump_read(struct file *file, char __user *buff,
+		size_t count, loff_t *ppos)
+#else /* OPLUS_FEATURE_DISPLAY */
 static ssize_t sde_evtlog_dump_read(struct file *file, char __user *buff,
 		size_t count, loff_t *ppos)
+#endif /* OPLUS_FEATURE_DISPLAY */
 {
 	ssize_t len = 0;
 	char evtlog_buf[SDE_EVTLOG_BUF_MAX];
@@ -1632,6 +1794,9 @@ static ssize_t sde_evtlog_dump_read(struct file *file, char __user *buff,
 
 	return len;
 }
+#ifdef OPLUS_FEATURE_DISPLAY
+EXPORT_SYMBOL(sde_evtlog_dump_read);
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 /**
  * sde_evtlog_dump_write - debugfs write handler for evtlog dump
@@ -2493,6 +2658,82 @@ static const struct file_operations sde_reg_fops = {
 #endif
 };
 
+static ssize_t _sde_dbg_power_wakelock_rd(struct file *file,
+		char __user *user_buf, size_t count, loff_t *ppos)
+{
+	struct sde_power_handle *phandle;
+	int len = 0;
+	char buf[DUMP_LINE_SIZE + 1] = {'\0'};
+
+	if (*ppos)
+		return 0;
+
+	if (!file || !file->private_data)
+		return -EINVAL;
+
+	phandle = file->private_data;
+
+	if (!phandle->dev) {
+		len = scnprintf(buf + len, DUMP_LINE_SIZE - len, "device not initialized\n");
+		goto buf_check;
+	}
+
+	if (!phandle->dev->power.can_wakeup || !phandle->dev->power.wakeup) {
+		len = scnprintf(buf + len, DUMP_LINE_SIZE - len, "device cannot wakeup\n");
+		goto buf_check;
+	}
+
+	len = scnprintf(buf + len, DUMP_LINE_SIZE - len, "%d\n",
+			atomic_read(&phandle->wakelock_count));
+
+buf_check:
+	if (count <= len) {
+		len = 0;
+		goto end;
+	}
+
+	if (copy_to_user(user_buf, buf, len)) {
+		len = -EFAULT;
+		goto end;
+	}
+
+	*ppos += len;
+end:
+	return len;
+}
+
+static ssize_t _sde_dbg_power_wakelock_wr(struct file *file,
+		const char __user *user_buf, size_t count, loff_t *ppos)
+{
+	struct sde_power_handle *phandle;
+	size_t buf_copy;
+	u32 enable;
+	char buf[DUMP_LINE_SIZE + 1] = {'\0'};
+
+	if (!file || !file->private_data)
+		return -EINVAL;
+
+	phandle = file->private_data;
+	if (!phandle)
+		return -EINVAL;
+
+	buf_copy = min_t(size_t, count, DUMP_LINE_SIZE);
+	if (copy_from_user(buf, user_buf, buf_copy))
+		return -EINVAL;
+
+	buf[buf_copy] = 0;
+
+	if (kstrtouint(buf, 0, &enable))
+		return -EINVAL;
+
+	if (enable)
+		sde_power_wakelock_ctrl(phandle, true);
+	else
+		sde_power_wakelock_ctrl(phandle, false);
+
+	return count;
+}
+
 int sde_dbg_debugfs_register(struct device *dev)
 {
 	static struct sde_dbg_base *dbg = &sde_dbg_base;
@@ -2502,6 +2743,12 @@ int sde_dbg_debugfs_register(struct device *dev)
 	struct platform_device *pdev = to_platform_device(dev);
 	struct drm_device *ddev = platform_get_drvdata(pdev);
 	struct msm_drm_private *priv = NULL;
+
+	static const struct file_operations sde_power_wakelock_debugfs_fops = {
+		.open = simple_open,
+		.read = _sde_dbg_power_wakelock_rd,
+		.write = _sde_dbg_power_wakelock_wr,
+	};
 
 	if (!ddev || !ddev->dev_private) {
 		pr_err("Invalid drm device node\n");
@@ -2523,10 +2770,13 @@ int sde_dbg_debugfs_register(struct device *dev)
 	debugfs_create_file("recovery_reg", 0400, debugfs_root, NULL, &sde_recovery_reg_fops);
 
 	debugfs_create_u32("enable", 0600, debugfs_root, &(sde_dbg_base.evtlog->enable));
+	debugfs_create_u32("reglog_enable", 0600, debugfs_root, &(sde_dbg_base.reglog->enable));
 	debugfs_create_u32("panic", 0600, debugfs_root, &sde_dbg_base.panic_on_err);
 	debugfs_create_u32("dump_mode", 0600, debugfs_root, &sde_dbg_base.dump_option);
 	debugfs_create_u64("reg_dump_blk_mask", 0600, debugfs_root, &sde_dbg_base.dump_blk_mask);
 	debugfs_create_u32("evtlog_dump", 0600, debugfs_root, &(sde_dbg_base.evtlog->dump_mode));
+	debugfs_create_file("wakelock", 0600, debugfs_root, &priv->phandle,
+		&sde_power_wakelock_debugfs_fops);
 
 #ifndef CONFIG_DEV_COREDUMP
 	if (dbg->dbgbus_sde.entries)
@@ -2588,14 +2838,23 @@ void sde_dbg_init_dbg_buses(u32 hw_rev)
 	memset(&dbg->dbgbus_rsc, 0, sizeof(dbg->dbgbus_rsc));
 	memset(&dbg->dbgbus_dp, 0, sizeof(dbg->dbgbus_dp));
 
-	dbg->dbgbus_sde.entries = dbg_bus_sde;
-	dbg->dbgbus_sde.cmn.entries_size = ARRAY_SIZE(dbg_bus_sde);
-	dbg->dbgbus_sde.limited_entries = dbg_bus_sde_limited;
-	dbg->dbgbus_sde.cmn.limited_entries_size = ARRAY_SIZE(dbg_bus_sde_limited);
+	if (SDE_HW_MAJOR(hw_rev) >= SDE_HW_MAJOR(SDE_HW_VER_C00)) {
+		dbg->dbgbus_sde.entries = dbg_bus_sde_ver_c00;
+		dbg->dbgbus_sde.cmn.entries_size = ARRAY_SIZE(dbg_bus_sde_ver_c00);
+		dbg->dbgbus_sde.limited_entries = dbg_bus_sde_limited_ver_c00;
+		dbg->dbgbus_sde.cmn.limited_entries_size = ARRAY_SIZE(dbg_bus_sde_limited_ver_c00);
+		dbg->dbgbus_sde.clear_tp = _sde_dbg_sde_clear_test_point_ver_c00;
+		dbg->dbgbus_sde.read_tp = _sde_dbg_sde_read_test_point_ver_c00;
+	} else {
+		dbg->dbgbus_sde.entries = dbg_bus_sde;
+		dbg->dbgbus_sde.cmn.entries_size = ARRAY_SIZE(dbg_bus_sde);
+		dbg->dbgbus_sde.limited_entries = dbg_bus_sde_limited;
+		dbg->dbgbus_sde.cmn.limited_entries_size = ARRAY_SIZE(dbg_bus_sde_limited);
+		dbg->dbgbus_sde.clear_tp = _sde_dbg_sde_clear_test_point;
+		dbg->dbgbus_sde.read_tp = _sde_dbg_sde_read_test_point;
+	}
 	dbg->dbgbus_sde.cmn.name = DBGBUS_NAME_SDE;
 	dbg->dbgbus_sde.cmn.blk_id = SDE_DBG_SDE_DBGBUS;
-	dbg->dbgbus_sde.read_tp = _sde_dbg_sde_read_test_point;
-	dbg->dbgbus_sde.clear_tp = _sde_dbg_sde_clear_test_point;
 
 	dbg->dbgbus_vbif_rt.entries = vbif_dbg_bus;
 	dbg->dbgbus_vbif_rt.cmn.entries_size = ARRAY_SIZE(vbif_dbg_bus);
@@ -2732,6 +2991,7 @@ void sde_dbg_destroy(void)
 	sde_dbg_base_evtlog = NULL;
 	sde_evtlog_destroy(sde_dbg_base.evtlog);
 	sde_dbg_base.evtlog = NULL;
+	sde_dbg_base_reglog = NULL;
 	sde_reglog_destroy(sde_dbg_base.reglog);
 	sde_dbg_base.reglog = NULL;
 	sde_dbg_reg_base_destroy();
@@ -2773,7 +3033,7 @@ int sde_dbg_reg_register_base(const char *name, void __iomem *base, size_t max_o
 	if (!reg_base)
 		return -ENOMEM;
 
-	strlcpy(reg_base->name, name, sizeof(reg_base->name));
+	strscpy(reg_base->name, name, sizeof(reg_base->name));
 	reg_base->base = base;
 	reg_base->phys_addr = phys_addr;
 	reg_base->max_offset = max_offset;
@@ -2807,7 +3067,7 @@ int sde_dbg_reg_register_cb(const char *name, void (*cb)(void *), void *ptr)
 	if (!reg_base)
 		return -ENOMEM;
 
-	strlcpy(reg_base->name, name, sizeof(reg_base->name));
+	strscpy(reg_base->name, name, sizeof(reg_base->name));
 	reg_base->base = NULL;
 	reg_base->max_offset = 0;
 	reg_base->off = 0;
@@ -2868,8 +3128,8 @@ void sde_dbg_reg_register_dump_range(const char *base_name,
 		return;
 	}
 
-	if ((!offset_start && !offset_end) || (offset_start > offset_end)) {
-		pr_info("%pS: bad range, base_name %s, range_name %s, offset_start 0x%X, end 0x%X\n",
+	if (offset_start > offset_end) {
+		pr_err("%pS: bad range, base_name %s, range_name %s, offset_start 0x%X, end 0x%X\n",
 				__builtin_return_address(0), base_name,
 				range_name, offset_start, offset_end);
 		return;
@@ -2879,7 +3139,7 @@ void sde_dbg_reg_register_dump_range(const char *base_name,
 	if (!range)
 		return;
 
-	strlcpy(range->range_name, range_name, sizeof(range->range_name));
+	strscpy(range->range_name, range_name, sizeof(range->range_name));
 	range->offset.start = offset_start;
 	range->offset.end = offset_end;
 	range->xin_id = xin_id;

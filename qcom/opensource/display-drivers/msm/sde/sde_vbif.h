@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -135,6 +135,11 @@ void sde_vbif_init_memtypes(struct sde_kms *sde_kms);
  */
 void sde_vbif_axi_halt_request(struct sde_kms *sde_kms);
 
+void sde_vbif_set_vbif_counters(struct sde_kms *sde_kms);
+
+void sde_vbif_read_vbif_counters(struct sde_kms *sde_kms, bool reset_cnt);
+u32 sde_vbif_get_vbif_halt_status(struct sde_kms *sde_kms);
+
 /**
  * sde_vbif_halt_xin_mask - halts/unhalts all the xin clients present in
  * the mask.
@@ -143,6 +148,16 @@ void sde_vbif_axi_halt_request(struct sde_kms *sde_kms);
  * halt:	boolen to indicate halt/unhalt
  */
 int sde_vbif_halt_xin_mask(struct sde_kms *sde_kms, u32 xin_id_mask, bool halt);
+
+/**
+ * sde_vbif_setup_clk_force_ctrl - set clock force control
+ * @sde_kms:	Pointer to sde_kms object
+ * @clk_ctrl:	clock to be controlled
+ * @enable:	force on enable
+ * @return:	if the clock is forced-on by this function
+ */
+int sde_vbif_setup_clk_force_ctrl(struct sde_kms *sde_kms, enum sde_clk_ctrl_type clk_ctrl,
+		bool enable);
 
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 int sde_debugfs_vbif_init(struct sde_kms *sde_kms, struct dentry *debugfs_root);

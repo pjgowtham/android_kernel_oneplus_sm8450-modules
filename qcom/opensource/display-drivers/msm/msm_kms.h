@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -47,6 +47,8 @@
 #define MSM_MODE_FLAG_SEAMLESS_POMS_VID			(1<<6)
 /* Request to switch the panel mode to command */
 #define MSM_MODE_FLAG_SEAMLESS_POMS_CMD			(1<<7)
+/* Request to switch bpp without DSC */
+#define MSM_MODE_FLAG_NONDSC_BPP_SWITCH			(1<<8)
 
 /* As there are different display controller blocks depending on the
  * snapdragon version, the kms support is split out and the appropriate
@@ -108,6 +110,8 @@ struct msm_kms_funcs {
 				 bool cmd_mode);
 	void (*display_early_wakeup)(struct drm_device *dev,
 				const int32_t connector_id);
+	void (*display_early_ept_hint)(struct drm_device *dev,
+				const int32_t connector_id, u64 frame_interval, u64 ept_ns);
 	/* pm suspend/resume hooks */
 	int (*pm_suspend)(struct device *dev);
 	int (*pm_resume)(struct device *dev);
@@ -141,6 +145,11 @@ struct msm_kms_funcs {
 	int (*get_dsc_count)(const struct msm_kms *kms,
 			u32 hdisplay, u32 *num_dsc);
 	bool (*in_trusted_vm)(const struct msm_kms *kms);
+	bool (*in_loopback_mode)(struct drm_crtc_state *crtc_state);
+#if defined(CONFIG_PXLW_IRIS) || defined(CONFIG_PXLW_SOFT_IRIS)
+	int (*iris_operate)(struct msm_kms *kms, u32 operate_type,
+			struct msm_iris_operate_value *operate_value);
+#endif
 };
 
 struct msm_kms {
@@ -211,6 +220,7 @@ static inline int msm_mdss_disable(struct msm_mdss *mdss)
 
 struct msm_kms *sde_kms_init(struct drm_device *dev);
 
+void msm_sde_qtimer_install(struct device *dev);
 
 /**
  * Mode Set Utility Functions
@@ -222,8 +232,7 @@ static inline bool msm_is_mode_seamless(const struct msm_display_mode *mode)
 
 static inline bool msm_is_mode_seamless_dms(const struct msm_display_mode *mode)
 {
-	return mode ? (mode->private_flags & MSM_MODE_FLAG_SEAMLESS_DMS)
-		: false;
+	return mode ? (mode->private_flags & MSM_MODE_FLAG_SEAMLESS_DMS) : false;
 }
 
 static inline bool msm_is_mode_dynamic_fps(const struct msm_display_mode *mode)
@@ -234,40 +243,36 @@ static inline bool msm_is_mode_dynamic_fps(const struct msm_display_mode *mode)
 
 static inline bool msm_is_mode_seamless_vrr(const struct msm_display_mode *mode)
 {
-	return mode ? (mode->private_flags & MSM_MODE_FLAG_SEAMLESS_VRR)
-		: false;
+	return mode ? (mode->private_flags & MSM_MODE_FLAG_SEAMLESS_VRR) : false;
 }
 
-static inline bool msm_is_mode_seamless_poms_to_vid(
-		const struct msm_display_mode *mode)
+static inline bool msm_is_mode_seamless_poms_to_vid(const struct msm_display_mode *mode)
 {
-	return mode ? (mode->private_flags & MSM_MODE_FLAG_SEAMLESS_POMS_VID)
-		: false;
+	return mode ? (mode->private_flags & MSM_MODE_FLAG_SEAMLESS_POMS_VID) : false;
 }
 
-static inline bool msm_is_mode_seamless_poms_to_cmd(
-		const struct msm_display_mode *mode)
+static inline bool msm_is_mode_seamless_poms_to_cmd(const struct msm_display_mode *mode)
 {
-	return mode ? (mode->private_flags & MSM_MODE_FLAG_SEAMLESS_POMS_CMD)
-		: false;
+	return mode ? (mode->private_flags & MSM_MODE_FLAG_SEAMLESS_POMS_CMD) : false;
 }
 
-static inline bool msm_is_mode_seamless_poms(
-			const struct msm_display_mode *mode)
+static inline bool msm_is_mode_seamless_poms(const struct msm_display_mode *mode)
 {
 	return (msm_is_mode_seamless_poms_to_vid(mode) ||
 		msm_is_mode_seamless_poms_to_cmd(mode));
 }
 
-static inline bool msm_is_mode_seamless_dyn_clk(
-					const struct msm_display_mode *mode)
+static inline bool msm_is_mode_seamless_dyn_clk(const struct msm_display_mode *mode)
 {
-	return mode ? (mode->private_flags & MSM_MODE_FLAG_SEAMLESS_DYN_CLK)
-		: false;
+	return mode ? (mode->private_flags & MSM_MODE_FLAG_SEAMLESS_DYN_CLK) : false;
 }
 
-static inline bool msm_needs_vblank_pre_modeset(
-		const struct msm_display_mode *mode)
+static inline bool msm_is_mode_bpp_switch(const struct msm_display_mode *mode)
+{
+	return mode ? (mode->private_flags & MSM_MODE_FLAG_NONDSC_BPP_SWITCH) : false;
+}
+
+static inline bool msm_needs_vblank_pre_modeset(const struct msm_display_mode *mode)
 {
 	return (mode->private_flags & MSM_MODE_FLAG_VBLANK_PRE_MODESET);
 }
@@ -301,6 +306,9 @@ static inline bool msm_is_private_mode_changed(
 		return true;
 
 	if (msm_is_mode_seamless_dms(msm_mode))
+		return true;
+
+	if (msm_is_mode_bpp_switch(msm_mode))
 		return true;
 
 	return false;

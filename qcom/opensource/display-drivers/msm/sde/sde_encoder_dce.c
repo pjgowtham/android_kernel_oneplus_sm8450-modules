@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
  */
 
@@ -338,7 +338,8 @@ static int _dce_dsc_setup_single(struct sde_encoder_virt *sde_enc,
 	 * 3d_merge dsc should be bound to left side of the pipe
 	 */
 	if (merge_3d || half_panel_partial_update)
-		hw_pp = (active) ? sde_enc->hw_pp[0] : sde_enc->hw_pp[1];
+		hw_pp = (active) ? sde_enc->hw_pp[(index/2) * 2]
+				: sde_enc->hw_pp[((index/2) * 2) + 1];
 	else
 		hw_pp = sde_enc->hw_pp[index];
 
@@ -438,10 +439,10 @@ static int _dce_dsc_setup_helper(struct sde_encoder_virt *sde_enc,
 
 	dsc->half_panel_pu = _dce_check_half_panel_update(num_lm, sde_enc);
 	dsc_merge = ((num_dsc > num_intf) && !dsc->half_panel_pu &&
-			!(enc_master->hw_intf->cfg.split_link_en)) ?
+			!(enc_master->hw_intf->cfg.split_link_en) && !merge_3d) ?
 			true : false;
 	disable_merge_3d = (merge_3d && dsc->half_panel_pu) ?
-			false : true;
+			true : false;
 	dsc_4hsmerge = (dsc_merge && num_dsc == 4 && num_intf == 1) ?
 			true : false;
 
@@ -503,6 +504,8 @@ static int _dce_dsc_setup_helper(struct sde_encoder_virt *sde_enc,
 				roi->w, roi->h, dsc_common_mode);
 
 	for (i = 0; i < num_dsc; i++) {
+		if (merge_3d && (i & 1))
+			continue;
 		rc = _dce_dsc_setup_single(sde_enc, dsc, affected_displays, i,
 				roi, dsc_common_mode, merge_3d,
 				disable_merge_3d, mode_3d, dsc_4hsmerge,
@@ -519,6 +522,7 @@ static int _dce_dsc_setup(struct sde_encoder_virt *sde_enc,
 {
 	struct drm_connector *drm_conn;
 	enum sde_rm_topology_name topology;
+	struct sde_crtc_state *cstate;
 
 	if (!sde_enc || !params || !sde_enc->phys_encs[0] ||
 			!sde_enc->phys_encs[0]->connector)
@@ -534,8 +538,10 @@ static int _dce_dsc_setup(struct sde_encoder_virt *sde_enc,
 
 	SDE_DEBUG_DCE(sde_enc, "topology:%d\n", topology);
 
+	cstate = to_sde_crtc_state(sde_enc->crtc->state);
 	if (sde_kms_rect_is_equal(&sde_enc->cur_conn_roi,
-			&sde_enc->prv_conn_roi))
+			&sde_enc->prv_conn_roi) &&
+			!cstate->in_loopback_transition)
 		return 0;
 
 	SDE_EVT32(DRMID(&sde_enc->base), topology,
@@ -934,26 +940,6 @@ void sde_encoder_dce_set_bpp(struct msm_mode_info mode_info,
 
 	SDE_DEBUG("sde_crtc src_bpp = %d, target_bpp = %d\n",
 			sde_crtc->src_bpp, sde_crtc->target_bpp);
-}
-
-bool sde_encoder_has_dsc_hw_rev_2(struct sde_encoder_virt *sde_enc)
-{
-	enum msm_display_compression_type comp_type;
-	int i;
-
-	if (!sde_enc)
-		return false;
-
-	comp_type = sde_enc->mode_info.comp_info.comp_type;
-
-	if (comp_type != MSM_DISPLAY_COMPRESSION_DSC)
-		return false;
-
-	for (i = 0; i < MAX_CHANNELS_PER_ENC; i++)
-		if (sde_enc->hw_dsc[i])
-			return test_bit(SDE_DSC_HW_REV_1_2, &sde_enc->hw_dsc[i]->caps->features);
-
-	return false;
 }
 
 void sde_encoder_dce_disable(struct sde_encoder_virt *sde_enc)

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
  *
  */
@@ -69,6 +69,14 @@ struct sde_uidle_status {
 	u32 uidle_fal_status_1;
 	u32 uidle_status;
 	u32 uidle_en_fal10;
+	u32 uidle_danger_status_2;
+	u32 uidle_safe_status_2;
+	u32 uidle_idle_status_2;
+	u32 uidle_fal_status_2;
+	u32 uidle_danger_status_3;
+	u32 uidle_safe_status_3;
+	u32 uidle_idle_status_3;
+	u32 uidle_fal_status_3;
 };
 
 struct sde_hw_uidle_ops {
@@ -110,6 +118,14 @@ struct sde_hw_uidle_ops {
 	 * @status: pointer to return the status of uidle
 	 */
 	void (*uidle_get_status)(struct sde_hw_uidle *uidle,
+		struct sde_uidle_status *status);
+
+	/**
+	 * uidle_get_status_ext1 - get uidle status from status2/status3 registers
+	 * @uidle: uidle context driver
+	 * @status: pointer to return the status of uidle
+	 */
+	void (*uidle_get_status_ext1)(struct sde_hw_uidle *uidle,
 		struct sde_uidle_status *status);
 
 	/**

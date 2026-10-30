@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -42,6 +42,12 @@
 #include "sde_power_handle.h"
 #include "sde_irq.h"
 #include "sde_core_perf.h"
+#ifdef OPLUS_FEATURE_DISPLAY
+#include <soc/oplus/system/oplus_project.h>
+#endif /* OPLUS_FEATURE_DISPLAY */
+#ifdef OPLUS_TRACKPOINT_REPORT
+#include <soc/oplus/oplus_trackpoint_report.h>
+#endif /* OPLUS_TRACKPOINT_REPORT */
 
 #define DRMID(x) ((x) ? (x)->base.id : -1)
 
@@ -262,8 +268,9 @@ struct sde_kms {
 	struct dentry *debugfs_vbif;
 
 	/* io/register spaces: */
-	void __iomem *mmio, *vbif[VBIF_MAX], *reg_dma, *sid;
+	void __iomem *mmio, *vbif[VBIF_MAX], *reg_dma, *sid, *sw_fuse;
 	unsigned long mmio_len, vbif_len[VBIF_MAX], reg_dma_len, sid_len;
+	unsigned long sw_fuse_len;
 	unsigned long reg_dma_off;
 
 	struct regulator *vdd;
@@ -290,7 +297,9 @@ struct sde_kms {
 	struct sde_hw_vbif *hw_vbif[VBIF_MAX];
 	struct sde_hw_mdp *hw_mdp;
 	struct sde_hw_uidle *hw_uidle;
+	struct sde_hw_ctl *hw_ctl_0;
 	struct sde_hw_sid *hw_sid;
+	struct sde_hw_sw_fuse *hw_sw_fuse;
 	int dsi_display_count;
 	void **dsi_displays;
 	int wb_display_count;
@@ -298,6 +307,8 @@ struct sde_kms {
 	int dp_display_count;
 	void **dp_displays;
 	int dp_stream_count;
+	void **lb_displays;
+	int lb_disp_count;
 	bool dsc_switch_support;
 
 	bool has_danger_ctrl;
@@ -320,6 +331,9 @@ struct sde_kms {
 
 	unsigned long ipcc_base_addr;
 	u32 debugfs_hw_fence;
+	u32 debugfs_early_ept_handling;
+	atomic_t stay_awake_count;
+	struct sde_qtimer sde_qtimer;
 };
 
 struct vsync_info {
@@ -486,11 +500,15 @@ void *sde_debugfs_get_root(struct sde_kms *sde_kms);
  * These functions/definitions allow for building up a 'sde_info' structure
  * containing one or more "key=value\n" entries.
  */
+#ifdef OPLUS_FEATURE_DISPLAY
+#define SDE_KMS_INFO_MAX_SIZE	8192
+#else /* OPLUS_FEATURE_DISPLAY */
 #if IS_ENABLED(CONFIG_DRM_LOW_MSM_MEM_FOOTPRINT)
 #define SDE_KMS_INFO_MAX_SIZE	(1 << 12)
 #else
 #define SDE_KMS_INFO_MAX_SIZE	(1 << 14)
 #endif
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 /**
  * struct sde_kms_info - connector information structure container

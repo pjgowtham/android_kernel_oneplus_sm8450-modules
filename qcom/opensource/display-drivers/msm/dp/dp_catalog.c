@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -12,6 +12,7 @@
 #include "dp_reg.h"
 #include "dp_debug.h"
 #include "dp_link.h"
+#include "dp_lphw_hpd.h"
 
 #define DP_GET_MSB(x)	(x >> 8)
 #define DP_GET_LSB(x)	(x & 0xff)
@@ -40,13 +41,24 @@
 
 #define DP_INTR_MASK2		(DP_INTERRUPT_STATUS2 << 2)
 
+/**
+ * FIFO errors should be enabled in development environment
+ * to capture issues during internal testing.
+ * In production environment, driver should ignore the errors
+ * and let the black screen persist and end user should replug
+ * to recover from this.
+ */
 
-#define DP_INTERRUPT_STATUS3 \
+#define DP_INTERRUPT_STATUS3_DEV \
 	(DP_INTR_SST_ML_FIFO_OVERFLOW | DP_INTR_MST0_ML_FIFO_OVERFLOW | \
 	DP_INTR_MST1_ML_FIFO_OVERFLOW | DP_INTR_DP1_FRAME_END | DP_INTR_SDP0_COLLISION | \
 	DP_INTR_SDP1_COLLISION)
 
-#define DP_INTR_MASK3		(DP_INTERRUPT_STATUS3 << 2)
+#define DP_INTERRUPT_STATUS3_PROD \
+	(DP_INTR_DP1_FRAME_END | DP_INTR_SDP0_COLLISION | DP_INTR_SDP1_COLLISION)
+
+#define DP_INTR_MASK3_DEV	(DP_INTERRUPT_STATUS3_DEV << 2)
+#define DP_INTR_MASK3_PROD	(DP_INTERRUPT_STATUS3_PROD << 2)
 
 #define DP_INTERRUPT_STATUS5 \
 	(DP_INTR_MST_DP0_VCPF_SENT | DP_INTR_MST_DP1_VCPF_SENT)
@@ -1333,8 +1345,7 @@ static void dp_catalog_panel_config_msa(struct dp_catalog_panel *panel,
 
 	DP_DEBUG("rate = %d\n", rate);
 
-	if (panel->widebus_en)
-		mvid <<= 1;
+	mvid = mvid * (panel->pclk_factor);
 
 	if (link_rate_hbr2 == rate)
 		nvid *= 2;
@@ -1799,6 +1810,8 @@ end:
 static void dp_catalog_ctrl_enable_irq(struct dp_catalog_ctrl *ctrl,
 						bool enable)
 {
+	u32 DP_INTR_MASK3 = DP_INTR_MASK3_PROD;
+	u32 DP_INTERRUPT_STATUS3 = DP_INTERRUPT_STATUS3_PROD;
 	struct dp_catalog_private *catalog;
 	struct dp_io_data *io_data;
 
@@ -1809,6 +1822,11 @@ static void dp_catalog_ctrl_enable_irq(struct dp_catalog_ctrl *ctrl,
 
 	catalog = dp_catalog_get_priv(ctrl);
 	io_data = catalog->io.dp_ahb;
+
+	if (catalog->parser->fifo_error_enable) {
+		DP_INTR_MASK3 = DP_INTR_MASK3_DEV;
+		DP_INTERRUPT_STATUS3 = DP_INTERRUPT_STATUS3_DEV;
+	}
 
 	if (enable) {
 		dp_write(DP_INTR_STATUS, DP_INTR_MASK1);
@@ -1838,7 +1856,8 @@ static void dp_catalog_ctrl_enable_irq(struct dp_catalog_ctrl *ctrl,
 
 static void dp_catalog_ctrl_get_interrupt(struct dp_catalog_ctrl *ctrl)
 {
-	u32 ack = 0;
+	u32 ack = 0, DP_INTR_MASK3 = DP_INTR_MASK3_PROD;
+	u32 DP_INTERRUPT_STATUS3 = DP_INTERRUPT_STATUS3_PROD;
 	struct dp_catalog_private *catalog;
 	struct dp_io_data *io_data;
 
@@ -1849,6 +1868,11 @@ static void dp_catalog_ctrl_get_interrupt(struct dp_catalog_ctrl *ctrl)
 
 	catalog = dp_catalog_get_priv(ctrl);
 	io_data = catalog->io.dp_ahb;
+
+	if (catalog->parser->fifo_error_enable) {
+		DP_INTR_MASK3 = DP_INTR_MASK3_DEV;
+		DP_INTERRUPT_STATUS3 = DP_INTERRUPT_STATUS3_DEV;
+	}
 
 	ctrl->isr = dp_read(DP_INTR_STATUS2);
 	ctrl->isr &= ~DP_INTR_MASK2;
@@ -2102,7 +2126,7 @@ static void dp_catalog_ctrl_fec_config(struct dp_catalog_ctrl *ctrl,
 	if (enable)
 		reg |= BIT(12) | BIT(22) | BIT(23) | BIT(24) | BIT(25);
 	else
-		reg &= ~BIT(12);
+		reg &= ~(BIT(12) | BIT(23) | BIT(24));
 
 	dp_write(DP_MAINLINK_CTRL, reg);
 	/* make sure mainlink configuration is updated with fec sequence */
@@ -2498,6 +2522,16 @@ end:
 	return 0;
 }
 
+static void dp_catalog_hpd_set_edp_mode(struct dp_catalog_hpd *hpd, bool is_edp)
+{
+	if (!hpd) {
+		DP_ERR("invalid input\n");
+		return;
+	}
+
+	hpd->is_edp = is_edp;
+}
+
 static void dp_catalog_hpd_config_hpd(struct dp_catalog_hpd *hpd, bool en)
 {
 	struct dp_catalog_private *catalog;
@@ -2514,9 +2548,15 @@ static void dp_catalog_hpd_config_hpd(struct dp_catalog_hpd *hpd, bool en)
 	if (en) {
 		u32 reftimer = dp_read(DP_DP_HPD_REFTIMER);
 
-		/* Arm only the UNPLUG and HPD_IRQ interrupts */
+		/*
+		 * Arm only the UNPLUG and HPD_IRQ interrupts for DP
+		 * whereas for EDP arm only the HPD_IRQ interrupt
+		 */
 		dp_write(DP_DP_HPD_INT_ACK, 0xF);
-		dp_write(DP_DP_HPD_INT_MASK, 0xA);
+		if (hpd->is_edp)
+			dp_write(DP_DP_HPD_INT_MASK, 0x2);
+		else
+			dp_write(DP_DP_HPD_INT_MASK, 0xA);
 
 		/* Enable REFTIMER to count 1ms */
 		reftimer |= BIT(16);
@@ -2537,7 +2577,7 @@ static void dp_catalog_hpd_config_hpd(struct dp_catalog_hpd *hpd, bool en)
 
 static u32 dp_catalog_hpd_get_interrupt(struct dp_catalog_hpd *hpd)
 {
-	u32 isr = 0;
+	u32 isr = 0, isr_mask = 0;
 	struct dp_catalog_private *catalog;
 	struct dp_io_data *io_data;
 
@@ -2552,7 +2592,35 @@ static u32 dp_catalog_hpd_get_interrupt(struct dp_catalog_hpd *hpd)
 	isr = dp_read(DP_DP_HPD_INT_STATUS);
 	dp_write(DP_DP_HPD_INT_ACK, (isr & 0xf));
 
-	return isr;
+	isr_mask = dp_read(DP_DP_HPD_INT_MASK);
+
+	return (isr & isr_mask);
+}
+
+static bool dp_catalog_hpd_wait_for_edp_panel_ready(struct dp_catalog_hpd *hpd)
+{
+	u32 reg, state;
+	void __iomem *base;
+	bool success = true;
+	u32 const poll_sleep_us = 2000;
+	u32 const pll_timeout_us = 1000000;
+	struct dp_catalog_private *catalog;
+
+	catalog = dp_catalog_get_priv(hpd);
+
+	base = catalog->io.dp_aux->io.base;
+
+	reg = DP_DP_HPD_INT_STATUS;
+
+	if (readl_poll_timeout_atomic((base + reg), state,
+			((state & DP_HPD_STATE_STATUS_CONNECTED) > 0),
+			poll_sleep_us, pll_timeout_us)) {
+		DP_ERR("DP_HPD_STATE_STATUS CONNECTED bit is still low, status=%x\n", state);
+
+		success = false;
+	}
+
+	return success;
 }
 
 static void dp_catalog_audio_init(struct dp_catalog_audio *audio)
@@ -2926,7 +2994,7 @@ static void dp_catalog_set_exe_mode(struct dp_catalog *dp_catalog, char *mode)
 	catalog = container_of(dp_catalog, struct dp_catalog_private,
 		dp_catalog);
 
-	strlcpy(catalog->exe_mode, mode, sizeof(catalog->exe_mode));
+	strscpy(catalog->exe_mode, mode, sizeof(catalog->exe_mode));
 
 	if (!strcmp(catalog->exe_mode, "hw"))
 		catalog->parser->clear_io_buf(catalog->parser);
@@ -2956,12 +3024,24 @@ static int dp_catalog_init(struct device *dev, struct dp_catalog *dp_catalog,
 	struct dp_catalog_private *catalog = container_of(dp_catalog,
 				struct dp_catalog_private, dp_catalog);
 
-	if (parser->hw_cfg.phy_version >= DP_PHY_VERSION_4_2_0)
-		dp_catalog->sub = dp_catalog_get_v420(dev, dp_catalog, &catalog->io);
-	else if (parser->hw_cfg.phy_version == DP_PHY_VERSION_2_0_0)
-		dp_catalog->sub = dp_catalog_get_v200(dev, dp_catalog, &catalog->io);
-	else
+	switch (parser->hw_cfg.phy_version) {
+	case DP_PHY_VERSION_4_2_0:
+	case DP_PHY_VERSION_6_0_0:
+	case DP_PHY_VERSION_8_0_0:
+		dp_catalog->sub = dp_catalog_get_v420(dev, dp_catalog,
+					&catalog->io);
+		break;
+	case DP_PHY_VERSION_2_0_0:
+		dp_catalog->sub = dp_catalog_get_v200(dev, dp_catalog,
+					&catalog->io);
+		break;
+	case DP_PHY_VERSION_5_0_0:
+		dp_catalog->sub = dp_catalog_get_v500(dev, dp_catalog,
+					&catalog->io);
+		break;
+	default:
 		goto end;
+	}
 
 	if (IS_ERR(dp_catalog->sub)) {
 		rc = PTR_ERR(dp_catalog->sub);
@@ -3041,6 +3121,8 @@ struct dp_catalog *dp_catalog_get(struct device *dev, struct dp_parser *parser)
 	struct dp_catalog_hpd hpd = {
 		.config_hpd	= dp_catalog_hpd_config_hpd,
 		.get_interrupt	= dp_catalog_hpd_get_interrupt,
+		.wait_for_edp_panel_ready = dp_catalog_hpd_wait_for_edp_panel_ready,
+		.set_edp_mode = dp_catalog_hpd_set_edp_mode,
 	};
 	struct dp_catalog_audio audio = {
 		.init       = dp_catalog_audio_init,
@@ -3089,9 +3171,26 @@ struct dp_catalog *dp_catalog_get(struct device *dev, struct dp_parser *parser)
 
 	dp_catalog_get_io(catalog);
 
-	strlcpy(catalog->exe_mode, "hw", sizeof(catalog->exe_mode));
+	strscpy(catalog->exe_mode, "hw", sizeof(catalog->exe_mode));
+
+	if (parser->valid_lt_params) {
+		ctrl.swing_hbr2_3 = parser->swing_hbr2_3;
+		ctrl.pre_emp_hbr2_3 = parser->pre_emp_hbr2_3;
+
+		ctrl.swing_hbr_rbr = parser->swing_hbr_rbr;
+		ctrl.pre_emp_hbr_rbr = parser->pre_emp_hbr_rbr;
+		ctrl.valid_lt_params = true;
+	} else {
+		ctrl.swing_hbr2_3 = NULL;
+		ctrl.pre_emp_hbr2_3 = NULL;
+
+		ctrl.swing_hbr_rbr = NULL;
+		ctrl.pre_emp_hbr_rbr = NULL;
+		ctrl.valid_lt_params = false;
+	}
 
 	dp_catalog = &catalog->dp_catalog;
+	dp_catalog->parser = parser;
 
 	dp_catalog->aux   = aux;
 	dp_catalog->ctrl  = ctrl;

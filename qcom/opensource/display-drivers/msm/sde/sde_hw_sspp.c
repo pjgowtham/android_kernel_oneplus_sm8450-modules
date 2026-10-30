@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -14,11 +14,15 @@
 #include "sde_kms.h"
 #include "sde_hw_reg_dma_v1_color_proc.h"
 #include "sde_hw_vbif.h"
+#if defined(PXLW_IRIS_DUAL)
+#include "dsi_iris_api.h"
+#endif
 
 #define SDE_FETCH_CONFIG_RESET_VALUE   0x00000087
 
 /* SDE_SSPP_SRC */
 #define SSPP_SRC_SIZE                      0x00
+#define SSPP_SRC_IMG_SIZE                  0x04
 #define SSPP_SRC_XY                        0x08
 #define SSPP_OUT_SIZE                      0x0c
 #define SSPP_OUT_XY                        0x10
@@ -122,6 +126,20 @@
 #define SSPP_LINE_INSERTION_CTRL           0x1E0
 #define SSPP_LINE_INSERTION_OUT_SIZE       0x1E8
 
+/* SSPP_MULTIRECT_EXTN*/
+#define SSPP_OUT_SIZE_REC2                 0x300
+#define SSPP_OUT_XY_REC2                   0x304
+#define SSPP_SRC_XY_REC2                   0x308
+#define SSPP_SRC_SIZE_REC2                 0x30C
+#define SSPP_OUT_SIZE_REC3                 0x310
+#define SSPP_OUT_XY_REC3                   0x314
+#define SSPP_SRC_XY_REC3                   0x318
+#define SSPP_SRC_SIZE_REC3                 0x31C
+
+#define SSPP_CAC_CTRL                      0x328
+#define SSPP_SW_PIX_EXT_C2_LR              0x320
+#define SSPP_SW_PIX_EXT_C2_TB              0x324
+
 /* SSPP_QOS_CTRL */
 #define SSPP_QOS_CTRL_VBLANK_EN            BIT(16)
 #define SSPP_QOS_CTRL_DANGER_SAFE_EN       BIT(0)
@@ -214,6 +232,13 @@ static inline int _sspp_subblk_offset(struct sde_hw_pipe *ctx,
 
 	return rc;
 }
+
+#if defined(PXLW_IRIS_DUAL)
+int iris_sspp_subblk_offset(struct sde_hw_pipe *ctx, int s_id, u32 *idx)
+{
+	return _sspp_subblk_offset(ctx, s_id, idx);
+}
+#endif
 
 static void sde_hw_sspp_update_multirect(struct sde_hw_pipe *ctx,
 		bool enable,
@@ -318,7 +343,7 @@ static void sde_hw_sspp_setup_ubwc(struct sde_hw_pipe *ctx, struct sde_hw_blk_re
 		const struct sde_format *fmt, bool const_alpha_en, bool const_color_en,
 		enum sde_sspp_multirect_index rect_mode)
 {
-	u32 alpha_en_mask = 0, color_en_mask = 0, ubwc_ctrl_off;
+	u32 alpha_en_mask = 0, color_en_mask = 0, ubwc_ctrl_off, ctrl_val = 0;
 
 	SDE_REG_WRITE(c, SSPP_FETCH_CONFIG,
 		SDE_FETCH_CONFIG_RESET_VALUE |
@@ -330,7 +355,14 @@ static void sde_hw_sspp_setup_ubwc(struct sde_hw_pipe *ctx, struct sde_hw_blk_re
 	else
 		ubwc_ctrl_off = SSPP_UBWC_STATIC_CTRL_REC1;
 
-	if (IS_UBWC_40_SUPPORTED(ctx->catalog->ubwc_rev)) {
+	if (SDE_HW_MAJOR(ctx->catalog->ubwc_rev) >= SDE_HW_MAJOR(SDE_HW_UBWC_VER_50)) {
+		if (!SDE_FORMAT_IS_YUV(fmt))
+			ctrl_val |= (SDE_FORMAT_IS_DX(fmt) || SDE_FORMAT_IS_FP16(fmt)) ?
+					BIT(30) : (BIT(31) | BIT(30));
+		ctrl_val |= SDE_FORMAT_IS_UBWC_LOSSY_2_1(fmt) ? (0x3 << 16) : 0;
+		ctrl_val |= SDE_FORMAT_IS_UBWC_LOSSY_8_5(fmt) ? BIT(16) : 0;
+		SDE_REG_WRITE(c, ubwc_ctrl_off, ctrl_val);
+	} else if (IS_UBWC_40_SUPPORTED(ctx->catalog->ubwc_rev)) {
 		SDE_REG_WRITE(c, ubwc_ctrl_off, SDE_FORMAT_IS_YUV(fmt) ? 0 : BIT(30));
 	} else if (IS_UBWC_30_SUPPORTED(ctx->catalog->ubwc_rev)) {
 		color_en_mask = const_color_en ? BIT(30) : 0;
@@ -646,7 +678,7 @@ static void sde_hw_sspp_setup_secure(struct sde_hw_pipe *ctx,
 
 
 static void sde_hw_sspp_setup_pe_config(struct sde_hw_pipe *ctx,
-		struct sde_hw_pixel_ext *pe_ext)
+		struct sde_hw_pixel_ext *pe_ext, bool cac_en)
 {
 	struct sde_hw_blk_reg_map *c;
 	u8 color;
@@ -663,8 +695,6 @@ static void sde_hw_sspp_setup_pe_config(struct sde_hw_pipe *ctx,
 	/* program SW pixel extension override for all pipes*/
 	for (color = 0; color < SDE_MAX_PLANES; color++) {
 		/* color 2 has the same set of registers as color 1 */
-		if (color == 2)
-			continue;
 
 		lr_pe[color] = ((pe_ext->right_ftch[color] & bytemask) << 24)|
 			((pe_ext->right_rpt[color] & bytemask) << 16)|
@@ -701,6 +731,11 @@ static void sde_hw_sspp_setup_pe_config(struct sde_hw_pipe *ctx,
 	SDE_REG_WRITE(c, SSPP_SW_PIX_EXT_C3_TB + idx, tb_pe[3]);
 	SDE_REG_WRITE(c, SSPP_SW_PIX_EXT_C3_REQ_PIXELS + idx,
 			tot_req_pixels[3]);
+
+	if (cac_en) {
+		SDE_REG_WRITE(c, SSPP_SW_PIX_EXT_C2_LR + idx, lr_pe[2]);
+		SDE_REG_WRITE(c, SSPP_SW_PIX_EXT_C2_TB + idx, tb_pe[2]);
+	}
 }
 
 static void _sde_hw_sspp_setup_scaler(struct sde_hw_pipe *ctx,
@@ -808,8 +843,10 @@ static void sde_hw_sspp_setup_rects(struct sde_hw_pipe *ctx,
 	struct sde_hw_blk_reg_map *c;
 	u32 src_size, src_xy, dst_size, dst_xy, ystride0, ystride1;
 	u32 src_size_off, src_xy_off, out_size_off, out_xy_off;
+	u32 src_size_ext_off, src_xy_ext_off, out_size_ext_off, out_xy_ext_off;
+	u32 src_extn_size, src_extn_xy, dst_extn_size, dst_extn_xy;
 	u32 decimation = 0;
-	u32 idx;
+	u32 idx, opmode, mask_extn = 0;
 
 	if (_sspp_subblk_offset(ctx, SDE_SSPP_SRC, &idx) || !cfg)
 		return;
@@ -875,6 +912,43 @@ static void sde_hw_sspp_setup_rects(struct sde_hw_pipe *ctx,
 	SDE_REG_WRITE(c, SSPP_SRC_YSTRIDE0 + idx, ystride0);
 	SDE_REG_WRITE(c, SSPP_SRC_YSTRIDE1 + idx, ystride1);
 	SDE_REG_WRITE(c, SSPP_DECIMATION_CONFIG + idx, decimation);
+
+	if (rect_index == SDE_SSPP_RECT_SOLO)
+		return;
+
+	src_extn_size = (cfg->src_rect_extn.h << 16) | (cfg->src_rect_extn.w);
+	dst_extn_size = (cfg->dst_rect_extn.h << 16) | (cfg->dst_rect_extn.w);
+	src_extn_xy = (cfg->src_rect_extn.y << 16) | (cfg->src_rect_extn.x);
+	dst_extn_xy = (cfg->dst_rect_extn.y << 16) | (cfg->dst_rect_extn.x);
+
+	opmode = SDE_REG_READ(c, SSPP_MULTIRECT_OPMODE + idx);
+
+	if (rect_index == SDE_SSPP_RECT_0) {
+		mask_extn = BIT(8);
+		src_size_ext_off = SSPP_SRC_SIZE_REC2;
+		src_xy_ext_off = SSPP_SRC_XY_REC2;
+		out_size_ext_off = SSPP_OUT_SIZE_REC2;
+		out_xy_ext_off = SSPP_OUT_XY_REC2;
+	} else {
+		mask_extn = BIT(9);
+		src_size_ext_off = SSPP_SRC_SIZE_REC3;
+		src_xy_ext_off = SSPP_SRC_XY_REC3;
+		out_size_ext_off = SSPP_OUT_SIZE_REC3;
+		out_xy_ext_off = SSPP_OUT_XY_REC3;
+	}
+
+	if (!src_extn_size && !dst_extn_size) {
+		opmode &= ~mask_extn;
+		SDE_REG_WRITE(c, SSPP_MULTIRECT_OPMODE + idx, opmode);
+		return;
+	}
+
+	opmode |= mask_extn;
+	SDE_REG_WRITE(c, SSPP_MULTIRECT_OPMODE + idx, opmode);
+	SDE_REG_WRITE(c, src_size_ext_off + idx, src_extn_size);
+	SDE_REG_WRITE(c, src_xy_ext_off + idx, src_extn_xy);
+	SDE_REG_WRITE(c, out_size_ext_off + idx, dst_extn_size);
+	SDE_REG_WRITE(c, out_xy_ext_off + idx, dst_extn_xy);
 }
 
 /**
@@ -1159,9 +1233,12 @@ static void sde_hw_sspp_setup_sys_cache(struct sde_hw_pipe *ctx,
 	if (cfg->flags & SYS_CACHE_EN_FLAG)
 		val = (val & ~BIT(15)) | ((cfg->rd_en & 0x1) << 15);
 
-	if (cfg->flags & SYS_CACHE_SCID)
-		val = (val & ~0x1F00) | ((cfg->rd_scid & 0x1f) << 8);
-
+	if (cfg->flags & SYS_CACHE_SCID) {
+		if (SDE_HW_MAJOR(ctx->catalog->hw_rev) >= SDE_HW_MAJOR(SDE_HW_VER_C00))
+			val = (val & ~0x3F00) | ((cfg->rd_scid & 0x3f) << 8);
+		else
+			val = (val & ~0x1F00) | ((cfg->rd_scid & 0x1f) << 8);
+	}
 	if (cfg->flags & SYS_CACHE_OP_MODE)
 		val = (val & ~0xC0000) | ((cfg->op_mode & 0x3) << 18);
 
@@ -1247,7 +1324,7 @@ static void _setup_layer_ops_colorproc(struct sde_hw_pipe *c,
 		if (c->cap->sblk->gamut_blk.version ==
 			(SDE_COLOR_PROCESS_VER(0x5, 0x0))) {
 			ret = reg_dmav1_init_sspp_op_v4(SDE_SSPP_VIG_GAMUT,
-							c->idx);
+							c);
 			if (!ret)
 				c->ops.setup_vig_gamut =
 					reg_dmav1_setup_vig_gamutv5;
@@ -1258,7 +1335,7 @@ static void _setup_layer_ops_colorproc(struct sde_hw_pipe *c,
 		if (c->cap->sblk->gamut_blk.version ==
 			(SDE_COLOR_PROCESS_VER(0x6, 0x0))) {
 			ret = reg_dmav1_init_sspp_op_v4(SDE_SSPP_VIG_GAMUT,
-							c->idx);
+							c);
 			if (!ret)
 				c->ops.setup_vig_gamut =
 					reg_dmav1_setup_vig_gamutv6;
@@ -1267,7 +1344,7 @@ static void _setup_layer_ops_colorproc(struct sde_hw_pipe *c,
 		} else if (c->cap->sblk->gamut_blk.version ==
 			(SDE_COLOR_PROCESS_VER(0x6, 0x1))) {
 			ret = reg_dmav1_init_sspp_op_v4(SDE_SSPP_VIG_GAMUT,
-							c->idx);
+							c);
 			if (!ret)
 				c->ops.setup_vig_gamut =
 					reg_dmav2_setup_vig_gamutv61;
@@ -1280,7 +1357,7 @@ static void _setup_layer_ops_colorproc(struct sde_hw_pipe *c,
 		if (c->cap->sblk->igc_blk[0].version ==
 			(SDE_COLOR_PROCESS_VER(0x5, 0x0))) {
 			ret = reg_dmav1_init_sspp_op_v4(SDE_SSPP_VIG_IGC,
-							c->idx);
+							c);
 			if (!ret)
 				c->ops.setup_vig_igc =
 					reg_dmav1_setup_vig_igcv5;
@@ -1291,7 +1368,7 @@ static void _setup_layer_ops_colorproc(struct sde_hw_pipe *c,
 		if (c->cap->sblk->igc_blk[0].version ==
 			(SDE_COLOR_PROCESS_VER(0x6, 0x0))) {
 			ret = reg_dmav1_init_sspp_op_v4(SDE_SSPP_VIG_IGC,
-							c->idx);
+							c);
 			if (!ret)
 				c->ops.setup_vig_igc =
 					reg_dmav1_setup_vig_igcv6;
@@ -1304,7 +1381,7 @@ static void _setup_layer_ops_colorproc(struct sde_hw_pipe *c,
 		if (c->cap->sblk->igc_blk[0].version ==
 			(SDE_COLOR_PROCESS_VER(0x5, 0x0))) {
 			ret = reg_dmav1_init_sspp_op_v4(SDE_SSPP_DMA_IGC,
-							c->idx);
+							c);
 			if (!ret)
 				c->ops.setup_dma_igc =
 					reg_dmav1_setup_dma_igcv5;
@@ -1317,7 +1394,7 @@ static void _setup_layer_ops_colorproc(struct sde_hw_pipe *c,
 		if (c->cap->sblk->gc_blk[0].version ==
 			(SDE_COLOR_PROCESS_VER(0x5, 0x0))) {
 			ret = reg_dmav1_init_sspp_op_v4(SDE_SSPP_DMA_GC,
-							c->idx);
+							c);
 			if (!ret)
 				c->ops.setup_dma_gc =
 					reg_dmav1_setup_dma_gcv5;
@@ -1342,21 +1419,45 @@ static void _setup_layer_ops_colorproc(struct sde_hw_pipe *c,
 			IS_SDE_CP_VER_1_0(c->cap->sblk->fp16_unmult_blk[0].version))
 		c->ops.setup_fp16_unmult = sde_setup_fp16_unmultv1;
 
-	if (test_bit(SDE_SSPP_UCSC_IGC, &features) &&
-			IS_SDE_CP_VER_1_0(c->cap->sblk->ucsc_igc_blk[0].version))
-		c->ops.setup_ucsc_igc = sde_setup_ucsc_igcv1;
+	if (test_bit(SDE_SSPP_UCSC_IGC, &features)) {
+		if (c->cap->sblk->ucsc_igc_blk[0].version ==
+			SDE_COLOR_PROCESS_VER(0x1, 0x1))
+			c->ops.setup_ucsc_igc = sde_setup_ucsc_igcv1_1;
+		else if (IS_SDE_CP_VER_1_0(c->cap->sblk->ucsc_igc_blk[0].version))
+			c->ops.setup_ucsc_igc = sde_setup_ucsc_igcv1;
+		else
+			c->ops.setup_ucsc_igc = NULL;
+	}
 
-	if (test_bit(SDE_SSPP_UCSC_GC, &features) &&
-			IS_SDE_CP_VER_1_0(c->cap->sblk->ucsc_gc_blk[0].version))
-		c->ops.setup_ucsc_gc = sde_setup_ucsc_gcv1;
+	if (test_bit(SDE_SSPP_UCSC_GC, &features)) {
+		if (c->cap->sblk->ucsc_gc_blk[0].version ==
+			SDE_COLOR_PROCESS_VER(0x1, 0x1))
+			c->ops.setup_ucsc_gc = sde_setup_ucsc_gcv1_1;
+		else if (IS_SDE_CP_VER_1_0(c->cap->sblk->ucsc_gc_blk[0].version))
+			c->ops.setup_ucsc_gc = sde_setup_ucsc_gcv1;
+		else
+			c->ops.setup_ucsc_gc = NULL;
+	}
 
-	if (test_bit(SDE_SSPP_UCSC_CSC, &features) &&
-			IS_SDE_CP_VER_1_0(c->cap->sblk->ucsc_csc_blk[0].version))
-		c->ops.setup_ucsc_csc = sde_setup_ucsc_cscv1;
+	if (test_bit(SDE_SSPP_UCSC_CSC, &features)) {
+		if (c->cap->sblk->ucsc_csc_blk[0].version ==
+			SDE_COLOR_PROCESS_VER(0x1, 0x1))
+			c->ops.setup_ucsc_csc = sde_setup_ucsc_cscv1_1;
+		else if (IS_SDE_CP_VER_1_0(c->cap->sblk->ucsc_csc_blk[0].version))
+			c->ops.setup_ucsc_csc = sde_setup_ucsc_cscv1;
+		else
+			c->ops.setup_ucsc_csc = NULL;
+	}
 
-	if (test_bit(SDE_SSPP_UCSC_UNMULT, &features) &&
-			IS_SDE_CP_VER_1_0(c->cap->sblk->ucsc_unmult_blk[0].version))
-		c->ops.setup_ucsc_unmult = sde_setup_ucsc_unmultv1;
+	if (test_bit(SDE_SSPP_UCSC_UNMULT, &features)) {
+		if (c->cap->sblk->ucsc_unmult_blk[0].version ==
+			SDE_COLOR_PROCESS_VER(0x1, 0x1))
+			c->ops.setup_ucsc_unmult = sde_setup_ucsc_unmultv1_1;
+		else if (IS_SDE_CP_VER_1_0(c->cap->sblk->ucsc_unmult_blk[0].version))
+			c->ops.setup_ucsc_unmult = sde_setup_ucsc_unmultv1;
+		else
+			c->ops.setup_ucsc_unmult = NULL;
+	}
 
 	if (test_bit(SDE_SSPP_UCSC_ALPHA_DITHER, &features) &&
 			IS_SDE_CP_VER_1_0(c->cap->sblk->ucsc_alpha_dither_blk[0].version))
@@ -1429,6 +1530,14 @@ static void sde_hw_sspp_setup_dgm_csc(struct sde_hw_pipe *ctx,
 	SDE_REG_WRITE(&ctx->hw, offset, op_mode);
 }
 
+#if defined(PXLW_IRIS_DUAL)
+static void sde_hw_sspp_setup_csc_v2(struct sde_hw_pipe *ctx,
+		const struct sde_format *fmt, struct sde_csc_cfg *data)
+{
+	return iris_sde_hw_sspp_setup_csc_v2(ctx, fmt, data);
+}
+#endif
+
 static bool sde_hw_sspp_setup_clk_force_ctrl(struct sde_hw_blk_reg_map *hw,
 		enum sde_clk_ctrl_type clk_ctrl, bool enable)
 {
@@ -1498,6 +1607,64 @@ static void sde_hw_sspp_setup_line_insertion(struct sde_hw_pipe *ctx,
 	SDE_REG_WRITE(c, size_off, cfg->dst_h << 16);
 }
 
+static void sde_hw_sspp_setup_cac(struct sde_hw_pipe *ctx, u32 cac_mode,
+		bool fov_en, u32 pp_idx)
+{
+	u32 opmode;
+	u32 idx;
+
+	if (_sspp_subblk_offset(ctx, SDE_SSPP_SRC, &idx))
+		return;
+
+	opmode = SDE_REG_READ(&ctx->hw, SSPP_CAC_CTRL + idx);
+	if (cac_mode == SDE_CAC_UNPACK)
+		opmode |= BIT(8);
+	else if (cac_mode == SDE_CAC_FETCH)
+		opmode |= BIT(0) | BIT(8);
+	else if (cac_mode == SDE_CAC_LOOPBACK_FETCH) {
+		if (SDE_SSPP_VALID_VIG(ctx->idx)) {
+			opmode &= (pp_idx << 24);
+			opmode |= BIT(0) | BIT(8) | BIT(16);
+		} else
+			opmode |= BIT(0) | BIT(8);
+	} else {
+		opmode |= 0xF << 24;
+		opmode &= ~(BIT(0) | BIT(8) | BIT(16));
+	}
+
+	if (fov_en)
+		opmode |= BIT(12);
+	else
+		opmode &= ~BIT(12);
+
+	SDE_REG_WRITE(&ctx->hw, SSPP_CAC_CTRL + idx, opmode);
+}
+
+static void sde_hw_sspp_setup_scaler_cac(struct sde_hw_pipe *ctx,
+		struct sde_hw_cac_cfg *cac_cfg)
+{
+	u32 idx;
+
+	if (!ctx || !cac_cfg ||
+		_sspp_subblk_offset(ctx, SDE_SSPP_SCALER_QSEED3, &idx))
+		return;
+
+	sde_hw_setup_scaler_cac(&ctx->hw, idx, cac_cfg);
+}
+
+static void sde_hw_sspp_setup_img_size(struct sde_hw_pipe *ctx,
+	struct sde_rect *img_rec)
+{
+	u32 img_size, idx;
+
+	if (_sspp_subblk_offset(ctx, SDE_SSPP_SRC, &idx))
+		return;
+
+	img_size = img_rec->h << 16 | img_rec->w;
+
+	SDE_REG_WRITE(&ctx->hw, SSPP_SRC_IMG_SIZE + idx, img_size);
+}
+
 static void _setup_layer_ops(struct sde_hw_pipe *c,
 		unsigned long features, unsigned long perf_features,
 		bool is_virtual_pipe)
@@ -1529,7 +1696,14 @@ static void _setup_layer_ops(struct sde_hw_pipe *c,
 
 	if (test_bit(SDE_SSPP_CSC, &features) ||
 		test_bit(SDE_SSPP_CSC_10BIT, &features))
+#if defined(PXLW_IRIS_DUAL)
+	{
+#endif
 		c->ops.setup_csc = sde_hw_sspp_setup_csc;
+#if defined(PXLW_IRIS_DUAL)
+		c->ops.setup_csc_v2 = sde_hw_sspp_setup_csc_v2;
+	}
+#endif
 
 	if (test_bit(SDE_SSPP_DGM_CSC, &features))
 		c->ops.setup_dgm_csc = sde_hw_sspp_setup_dgm_csc;
@@ -1542,6 +1716,12 @@ static void _setup_layer_ops(struct sde_hw_pipe *c,
 	if (sde_hw_sspp_multirect_enabled(c->cap))
 		c->ops.update_multirect = sde_hw_sspp_update_multirect;
 
+	if (test_bit(SDE_SSPP_CAC_V2, &features) ||
+			test_bit(SDE_SSPP_CAC_LOOPBACK, &features)) {
+		c->ops.setup_img_size = sde_hw_sspp_setup_img_size;
+		c->ops.setup_cac_ctrl = sde_hw_sspp_setup_cac;
+	}
+
 	if (test_bit(SDE_SSPP_SCALER_QSEED3, &features) ||
 			test_bit(SDE_SSPP_SCALER_QSEED3LITE, &features)) {
 		c->ops.setup_scaler = _sde_hw_sspp_setup_scaler3;
@@ -1550,9 +1730,14 @@ static void _setup_layer_ops(struct sde_hw_pipe *c,
 				: reg_dmav1_setup_scaler3_lut;
 		ret = reg_dmav1_init_sspp_op_v4(is_qseed3_rev_qseed3lite(
 					c->catalog) ? SDE_SSPP_SCALER_QSEED3LITE
-					: SDE_SSPP_SCALER_QSEED3, c->idx);
+					: SDE_SSPP_SCALER_QSEED3, c);
 		if (!ret)
 			c->ops.setup_scaler = reg_dmav1_setup_vig_qseed3;
+		else
+			c->ops.setup_scaler_cac =
+				(test_bit(SDE_SSPP_CAC_V2, &features) ||
+				test_bit(SDE_SSPP_CAC_LOOPBACK, &features)) ?
+				sde_hw_sspp_setup_scaler_cac : NULL;
 	}
 
 	if (test_bit(SDE_SSPP_MULTIRECT_ERROR, &features)) {
@@ -1629,7 +1814,8 @@ static struct sde_sspp_cfg *_sspp_offset(enum sde_sspp sspp,
 
 struct sde_hw_pipe *sde_hw_sspp_init(enum sde_sspp idx,
 		void __iomem *addr, struct sde_mdss_cfg *catalog,
-		bool is_virtual_pipe, struct sde_vbif_clk_client *clk_client)
+		bool is_virtual_pipe, struct sde_vbif_clk_client *clk_client,
+		u32 dpu_idx)
 {
 	struct sde_hw_pipe *hw_pipe;
 	struct sde_sspp_cfg *cfg;
@@ -1652,6 +1838,7 @@ struct sde_hw_pipe *sde_hw_sspp_init(enum sde_sspp idx,
 	hw_pipe->mdp = &catalog->mdp[0];
 	hw_pipe->idx = idx;
 	hw_pipe->cap = cfg;
+	hw_pipe->dpu_idx = dpu_idx;
 	_setup_layer_ops(hw_pipe, hw_pipe->cap->features,
 		hw_pipe->cap->perf_features, is_virtual_pipe);
 
@@ -1731,7 +1918,7 @@ struct sde_hw_pipe *sde_hw_sspp_init(enum sde_sspp idx,
 void sde_hw_sspp_destroy(struct sde_hw_pipe *ctx)
 {
 	if (ctx) {
-		reg_dmav1_deinit_sspp_ops(ctx->idx);
+		reg_dmav1_deinit_sspp_ops(ctx);
 		kfree(ctx->cap);
 	}
 	kfree(ctx);

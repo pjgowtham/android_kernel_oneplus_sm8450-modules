@@ -267,20 +267,11 @@ static int dp_ctrl_read_link_status(struct dp_ctrl_private *ctrl,
 					u8 *link_status)
 {
 	int ret = 0, len;
-	u32 const offset = DP_LANE_ALIGN_STATUS_UPDATED - DP_LANE0_1_STATUS;
-	u32 link_status_read_max_retries = 100;
 
-	while (--link_status_read_max_retries) {
-		len = drm_dp_dpcd_read_link_status(ctrl->aux->drm_aux,
-			link_status);
-		if (len != DP_LINK_STATUS_SIZE) {
-			DP_ERR("DP link status read failed, err: %d\n", len);
-			ret = len;
-			break;
-		}
-
-		if (link_status[offset] & DP_LINK_STATUS_UPDATED)
-			break;
+	len = drm_dp_dpcd_read_link_status(ctrl->aux->drm_aux, link_status);
+	if (len != DP_LINK_STATUS_SIZE) {
+		DP_ERR("DP link status read failed, err: %d\n", len);
+		ret = len;
 	}
 
 	return ret;
@@ -323,7 +314,7 @@ static u8 dp_ctrl_get_active_lanes(struct dp_ctrl_private *ctrl,
 	u8 lane, count = 0;
 
 	for (lane = 0; lane < ctrl->link->link_params.lane_count; lane++) {
-		if (link_status[lane / 2] & (1 << (lane * 4)))
+		if (link_status[lane / 2] & (1 << ((lane % 2) * 4)))
 			count++;
 		else
 			break;
@@ -798,8 +789,10 @@ static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
 			break;
 		}
 
-		if (rc != -EAGAIN)
+		if (rc != -EAGAIN) {
 			dp_ctrl_link_rate_down_shift(ctrl);
+			ctrl->panel->init(ctrl->panel);
+		}
 
 		dp_ctrl_configure_source_link_params(ctrl, false);
 		dp_ctrl_disable_link_clock(ctrl);
@@ -827,19 +820,17 @@ static int dp_ctrl_enable_stream_clocks(struct dp_ctrl_private *ctrl,
 
 	if (dp_panel->stream_id == DP_STREAM_0) {
 		clk_type = DP_STREAM0_PM;
-		strlcpy(clk_name, "strm0_pixel_clk", 32);
+		strscpy(clk_name, "strm0_pixel_clk", 32);
 	} else if (dp_panel->stream_id == DP_STREAM_1) {
 		clk_type = DP_STREAM1_PM;
-		strlcpy(clk_name, "strm1_pixel_clk", 32);
+		strscpy(clk_name, "strm1_pixel_clk", 32);
 	} else {
 		DP_ERR("Invalid stream:%d for clk enable\n",
 				dp_panel->stream_id);
 		return -EINVAL;
 	}
 
-	pclk = dp_panel->pinfo.widebus_en ?
-		(dp_panel->pinfo.pixel_clk_khz >> 1) :
-		(dp_panel->pinfo.pixel_clk_khz);
+	pclk = dp_panel->pinfo.pixel_clk_khz / (dp_panel->pclk_factor);
 
 	dp_ctrl_set_clock_rate(ctrl, clk_name, clk_type, pclk);
 
@@ -1122,7 +1113,7 @@ static void dp_ctrl_mst_calculate_rg(struct dp_ctrl_private *ctrl,
 	u64 lclk = 0;
 	u64 lanes = ctrl->link->link_params.lane_count;
 	u64 bpp = panel->pinfo.bpp;
-	u64 pbn = panel->pbn;
+	u64 pbn = panel->pinfo.pbn_no_overhead; // before dsc/fec overhead
 	u64 numerator, denominator, temp, temp1, temp2;
 	u32 x_int = 0, y_frac_enum = 0;
 	u64 target_strm_sym, ts_int_fixp, ts_frac_fixp, y_frac_enum_fixp;
@@ -1245,6 +1236,7 @@ static void dp_ctrl_dsc_setup(struct dp_ctrl_private *ctrl, struct dp_panel *pan
 	int rlen;
 	u32 dsc_enable;
 	struct dp_panel_info *pinfo = &panel->pinfo;
+	u8 dsc_status = 0;
 
 	if (!ctrl->fec_mode)
 		return;
@@ -1257,6 +1249,14 @@ static void dp_ctrl_dsc_setup(struct dp_ctrl_private *ctrl, struct dp_panel *pan
 
 	if (ctrl->mst_mode && (panel->stream_id == DP_STREAM_1) && !dsc_enable)
 		return;
+
+	if (dsc_enable && ctrl->mst_mode && (ctrl->stream_count > 1)) {
+		drm_dp_dpcd_readb(ctrl->aux->drm_aux, DP_DSC_ENABLE, &dsc_status);
+
+		// Avoid writing DP_DSC_ENABLE if it is already enabled.
+		if (dsc_status & DP_DECOMPRESSION_EN)
+			return;
+	}
 
 	rlen = drm_dp_dpcd_writeb(ctrl->aux->drm_aux, DP_DSC_ENABLE,
 			dsc_enable);
@@ -1312,7 +1312,13 @@ static int dp_ctrl_stream_on(struct dp_ctrl *dp_ctrl, struct dp_panel *panel)
 	/* wait for link training completion before fec config as per spec */
 	dp_ctrl_fec_setup(ctrl);
 	dp_ctrl_dsc_setup(ctrl, panel);
-	panel->sink_crc_enable(panel, true);
+
+	/*
+	 * Enabling TEST SINK CRC is causing blank screen on some monitors. This change is
+	 * required only for internal testing, hence disabling for commercial use. To be enabled
+	 * by dev team as required.
+	 * panel->sink_crc_enable(panel, true);
+	 */
 
 	return rc;
 }

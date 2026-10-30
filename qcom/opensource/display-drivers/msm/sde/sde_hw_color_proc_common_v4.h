@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2017-2019, 2021 The Linux Foundation. All rights reserved.
  */
 #ifndef _SDE_HW_COLOR_PROC_COMMON_V4_H_
@@ -61,6 +61,7 @@ enum {
 #define GC_EN BIT(0)
 #define GC_TBL_NUM 3
 #define GC_LUT_SWAP_OFF 0x1c
+#define GC_HIGHPREC_EN BIT(2)
 
 #define IGC_TBL_NUM 3
 #define IGC_DITHER_OFF 0x7e0
@@ -186,6 +187,10 @@ enum {
 
 #define RC_IDX(hw_dspp) hw_dspp->cap->sblk->rc.idx
 
+/*
+ * RC_PARAM_R1     = 0x1,  # TOP_EN
+ * RC_PARAM_R2     = 0x2,  # BOT_EN
+ */
 enum rc_param_r {
 	RC_PARAM_R0     = 0x0,
 	RC_PARAM_R1     = 0x1,
@@ -193,11 +198,22 @@ enum rc_param_r {
 	RC_PARAM_R1R2   = (RC_PARAM_R1 | RC_PARAM_R2),
 };
 
+/*
+ * RC_PARAM_A0     = 0x2,
+ * RC_PARAM_A1     = 0x4,
+ * Number of regions in top and bottom region (usually 2 or 4)
+ */
 enum rc_param_a {
 	RC_PARAM_A0     = 0x2,
 	RC_PARAM_A1     = 0x4,
 };
 
+/*
+ * RC_PARAM_B0    - No ROI
+ * RC_PARAM_B1    - left panel need to update
+ * RC_PARAM_B2    - right panel need to update
+ * RC_PARAM_B1B2  - both need to update
+ */
 enum rc_param_b {
 	RC_PARAM_B0     = 0x0,
 	RC_PARAM_B1     = 0x1,
@@ -205,6 +221,10 @@ enum rc_param_b {
 	RC_PARAM_B1B2   = (RC_PARAM_B1 | RC_PARAM_B2),
 };
 
+/*
+ * Register: MDP_RC_0_RC_CONFIG,
+ * BIT(8) - BIT(11) means Region 0 - 3 enabled
+ */
 enum rc_param_c {
 	RC_PARAM_C0     = (BIT(8)),
 	RC_PARAM_C1     = (BIT(10)),
@@ -216,7 +236,8 @@ enum rc_param_c {
 
 enum rc_merge_mode {
 	RC_MERGE_SINGLE_PIPE = 0x0,
-	RC_MERGE_DUAL_PIPE   = 0x1
+	RC_MERGE_DUAL_PIPE   = 0x1,
+	RC_MERGE_QUAD_PIPE   = 0x3,
 };
 
 struct rc_config_table {
@@ -337,7 +358,35 @@ static struct rc_config_table config_table[] =  {
 		.merge_mode = RC_MERGE_DUAL_PIPE,
 		.merge_mode_en = RC_MERGE_SINGLE_PIPE,
 	},
-
+	/* RC_PARAM_A0 quad configurations */
+	{
+		.param_a = RC_PARAM_A0,
+		.param_b = RC_PARAM_B0,
+		.param_c = RC_PARAM_C5,
+		.merge_mode = RC_MERGE_QUAD_PIPE,
+		.merge_mode_en = RC_MERGE_QUAD_PIPE,
+	},
+	{
+		.param_a = RC_PARAM_A0,
+		.param_b = RC_PARAM_B1B2,
+		.param_c = RC_PARAM_C3,
+		.merge_mode = RC_MERGE_QUAD_PIPE,
+		.merge_mode_en = RC_MERGE_QUAD_PIPE,
+	},
+	{
+		.param_a = RC_PARAM_A0,
+		.param_b = RC_PARAM_B1,
+		.param_c = RC_PARAM_C0,
+		.merge_mode = RC_MERGE_QUAD_PIPE,
+		.merge_mode_en = RC_MERGE_SINGLE_PIPE,
+	},
+	{
+		.param_a = RC_PARAM_A0,
+		.param_b = RC_PARAM_B2,
+		.param_c = RC_PARAM_C1,
+		.merge_mode = RC_MERGE_QUAD_PIPE,
+		.merge_mode_en = RC_MERGE_SINGLE_PIPE,
+	},
 	/* RC_PARAM_A1 configurations */
 	{
 		.param_a = RC_PARAM_A1,
@@ -403,6 +452,35 @@ static struct rc_config_table config_table[] =  {
 		.merge_mode_en = RC_MERGE_SINGLE_PIPE,
 
 	},
+	/* RC_PARAM_A1 quad configurations */
+	{
+		.param_a = RC_PARAM_A1,
+		.param_b = RC_PARAM_B0,
+		.param_c = RC_PARAM_C5,
+		.merge_mode = RC_MERGE_QUAD_PIPE,
+		.merge_mode_en = RC_MERGE_QUAD_PIPE,
+	},
+	{
+		.param_a = RC_PARAM_A1,
+		.param_b = RC_PARAM_B1B2,
+		.param_c = RC_PARAM_C5,
+		.merge_mode = RC_MERGE_QUAD_PIPE,
+		.merge_mode_en = RC_MERGE_QUAD_PIPE,
+	},
+	{
+		.param_a = RC_PARAM_A1,
+		.param_b = RC_PARAM_B1,
+		.param_c = RC_PARAM_C4,
+		.merge_mode = RC_MERGE_QUAD_PIPE,
+		.merge_mode_en = RC_MERGE_SINGLE_PIPE,
+	},
+	{
+		.param_a = RC_PARAM_A1,
+		.param_b = RC_PARAM_B2,
+		.param_c = RC_PARAM_C2,
+		.merge_mode = RC_MERGE_QUAD_PIPE,
+		.merge_mode_en = RC_MERGE_SINGLE_PIPE,
+	},
 };
 
 static inline int _sde_hw_rc_get_enable_bits(
@@ -450,6 +528,8 @@ static inline int _sde_hw_rc_get_merge_mode(
 		*merge_mode = RC_MERGE_SINGLE_PIPE;
 	else if (hw_cfg->num_of_mixers == 2)
 		*merge_mode = RC_MERGE_DUAL_PIPE;
+	else if (hw_cfg->num_of_mixers == 4)
+		*merge_mode = RC_MERGE_QUAD_PIPE;
 	else {
 		DRM_ERROR("invalid number of mixers:%d\n",
 				hw_cfg->num_of_mixers);

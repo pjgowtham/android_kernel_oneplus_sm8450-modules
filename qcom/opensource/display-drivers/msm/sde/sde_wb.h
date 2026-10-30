@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
+ * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -78,17 +79,19 @@ int sde_wb_get_output_roi(struct sde_wb_device *wb_dev, struct sde_rect *roi);
 
 /**
  * sde_wb_get_num_of_displays - get total number of writeback devices
+ * @dev: Pointer to DRM device
  * Returns:	Number of writeback devices
  */
-u32 sde_wb_get_num_of_displays(void);
+u32 sde_wb_get_num_of_displays(struct drm_device *dev);
 
 /**
  * wb_display_get_displays - returns pointers for supported display devices
+ * @dev: Pointer to DRM device
  * @display_array: Pointer to display array to be filled
  * @max_display_count: Size of display_array
  * @Returns: Number of display entries filled
  */
-int wb_display_get_displays(void **display_array, u32 max_display_count);
+int wb_display_get_displays(struct drm_device *dev, void **display_array, u32 max_display_count);
 
 void sde_wb_set_active_state(struct sde_wb_device *wb_dev, bool is_active);
 bool sde_wb_is_active(struct sde_wb_device *wb_dev);
@@ -254,12 +257,12 @@ int sde_wb_get_output_roi(struct sde_wb_device *wb_dev, struct sde_rect *roi)
 	return 0;
 }
 static inline
-u32 sde_wb_get_num_of_displays(void)
+u32 sde_wb_get_num_of_displays(struct drm_device *dev)
 {
 	return 0;
 }
 static inline
-int wb_display_get_displays(void **display_array, u32 max_display_count)
+int wb_display_get_displays(struct drm_device *dev, void **display_array, u32 max_display_count)
 {
 	return 0;
 }

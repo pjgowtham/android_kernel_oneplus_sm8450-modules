@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -228,6 +228,12 @@ struct sde_hw_wb_ops {
 	 * @ctx: Pointer to wb context
 	 */
 	void (*clear_ubwc_error)(struct sde_hw_wb *ctx);
+
+	/**
+	 * get_frame_count - get wb frame count
+	 * @ctx: pointer to wb context
+	 */
+	u32 (*get_frame_count)(struct sde_hw_wb *ctx);
 };
 
 /**

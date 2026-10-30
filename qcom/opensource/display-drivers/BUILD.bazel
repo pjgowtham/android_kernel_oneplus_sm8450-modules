@@ -40,6 +40,37 @@ ddk_headers(
 )
 
 ddk_headers(
+    name = "iris_core_headers",
+    hdrs = glob([
+      "msm/iris/core/*.h",
+      "msm/iris/core/include/*.h",
+      "msm/iris/core/common/*.h",
+      "msm/iris/core/iris7p/*.h",
+    ]),
+    includes = [
+      "msm/iris/core/include",
+      "msm/iris/core",
+      "msm/iris/core/common",
+      "msm/iris/core/iris7p",
+     ]
+)
+
+ddk_headers(
+    name = "iris_vendor_headers",
+    hdrs = glob([
+      "msm/iris/vendor/*.h",
+      "msm/iris/vendor/include/*.h",
+      "msm/iris/vendor/common/*.h",
+      "msm/iris/vendor/iris7p/*.h",
+    ]),
+    includes = [
+      "msm/iris/vendor",
+      "msm/iris/vendor/common",
+      "msm/iris/vendor/iris7p",
+     ]
+)
+
+ddk_headers(
     name = "sde_headers",
     hdrs = glob([
       "msm/sde/*.h",
@@ -63,13 +94,30 @@ ddk_headers(
     includes = ["msm"]
 )
 
+#ifdef OPLUS_FEATURE_DISPLAY
+ddk_headers(
+    name = "oplus_drm_headers",
+    hdrs = glob([
+      "oplus/SM8750/include/*.h",
+      "oplus/SM8750/*.h",
+    ]),
+    includes = ["oplus/SM8750/include", "oplus/SM8750"]
+)
+#endif /* OPLUS_FEATURE_DISPLAY */
+
 ddk_headers(
     name = "display_drivers_headers",
-    hdrs = [ ":linux_includes", ":uapi_headers", ":msm_headers",":dp_headers",":dsi_headers",":sde_headers",":rotator_headers"]
+    hdrs = [ ":linux_includes", ":uapi_headers", ":msm_headers",":dp_headers",":dsi_headers",":sde_headers",":rotator_headers", ":iris_core_headers",":iris_vendor_headers",":oplus_drm_headers"]
 )
 
-load(":targets/parrot.bzl", "define_parrot")
-define_parrot()
+load(":targets/sun.bzl", "define_sun")
+define_sun()
 
-load(":targets/waipio.bzl", "define_waipio")
-define_waipio()
+load(":targets/pineapple.bzl", "define_pineapple")
+define_pineapple()
+
+load(":targets/niobe.bzl", "define_niobe")
+define_niobe()
+
+load(":targets/monaco.bzl", "define_monaco")
+define_monaco()

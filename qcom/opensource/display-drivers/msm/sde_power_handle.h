@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -19,6 +20,7 @@
 
 #include <linux/sde_io_util.h>
 #include <linux/interconnect.h>
+#include <dt-bindings/interconnect/qcom,icc.h>
 
 /* event will be triggered before power handler disable */
 #define SDE_POWER_EVENT_PRE_DISABLE	0x1
@@ -36,22 +38,6 @@
 #define SDE_POWER_EVENT_MMRM_CALLBACK	0x10
 
 #define DATA_BUS_PATH_MAX	0x2
-
-/*
- * The AMC bucket denotes constraints that are applied to hardware when
- * icc_set_bw() completes, whereas the WAKE and SLEEP constraints are applied
- * when the execution environment transitions between active and low power mode.
- */
-#define QCOM_ICC_BUCKET_AMC            0
-#define QCOM_ICC_BUCKET_WAKE           1
-#define QCOM_ICC_BUCKET_SLEEP          2
-#define QCOM_ICC_NUM_BUCKETS           3
-#define QCOM_ICC_TAG_AMC               BIT(QCOM_ICC_BUCKET_AMC)
-#define QCOM_ICC_TAG_WAKE              BIT(QCOM_ICC_BUCKET_WAKE)
-#define QCOM_ICC_TAG_SLEEP             BIT(QCOM_ICC_BUCKET_SLEEP)
-#define QCOM_ICC_TAG_ACTIVE_ONLY       (QCOM_ICC_TAG_AMC | QCOM_ICC_TAG_WAKE)
-#define QCOM_ICC_TAG_ALWAYS            (QCOM_ICC_TAG_AMC | QCOM_ICC_TAG_WAKE |\
-                                        QCOM_ICC_TAG_SLEEP)
 
 /**
  * mdss_bus_vote_type: register bus vote type
@@ -86,11 +72,13 @@ enum sde_power_handle_data_bus_client {
  * @SDE_POWER_HANDLE_DBUS_ID_MNOC: DPU/MNOC data bus
  * @SDE_POWER_HANDLE_DBUS_ID_LLCC: MNOC/LLCC data bus
  * @SDE_POWER_HANDLE_DBUS_ID_EBI: LLCC/EBI data bus
+ * @SDE_POWER_HANDLE_DBUS_ID_DDR_RT: DDR RT data bus
  */
 enum SDE_POWER_HANDLE_DBUS_ID {
 	SDE_POWER_HANDLE_DBUS_ID_MNOC,
 	SDE_POWER_HANDLE_DBUS_ID_LLCC,
 	SDE_POWER_HANDLE_DBUS_ID_EBI,
+	SDE_POWER_HANDLE_DBUS_ID_DDR_RT,
 	SDE_POWER_HANDLE_DBUS_ID_MAX,
 };
 
@@ -169,7 +157,9 @@ struct sde_power_mmrm_reserve {
  * @rsc_client_init: boolean to control rsc client create
  * @mmrm_enable: boolean to indicate if mmrm is enabled
  * @ib_quota: ib quota of the given bus
+ * @hw_fence_enable: boolean to indicate if hw-fence is enabled
  * @mmrm_reserve: mmrm resource reservation
+ * @wakelock_count: wakelock coint to avoid pm suspend
  */
 struct sde_power_handle {
 	struct dss_module_power mp;
@@ -184,8 +174,10 @@ struct sde_power_handle {
 	bool rsc_client_init;
 	bool mmrm_enable;
 	u64 ib_quota[SDE_POWER_HANDLE_DBUS_ID_MAX];
+	bool hw_fence_enable;
 
 	struct sde_power_mmrm_reserve mmrm_reserve;
+	atomic_t wakelock_count;
 };
 
 /**
@@ -212,10 +204,11 @@ void sde_power_resource_deinit(struct platform_device *pdev,
  * sde_power_resource_enable() - enable/disable the power resources
  * @pdata:  power handle containing the resources
  * @enable: boolean request for enable/disable
+ * @dev_idx: device index for the drm device
  *
  * Return: error code.
  */
-int sde_power_resource_enable(struct sde_power_handle *pdata, bool enable);
+int sde_power_resource_enable(struct sde_power_handle *pdata, bool enable, int dev_idx);
 
 /**
  * sde_power_scale_reg_bus() - Scale the registers bus for the specified client
@@ -346,6 +339,17 @@ void sde_power_data_bus_bandwidth_ctrl(struct sde_power_handle *phandle,
 		int enable);
 
 /**
+ * sde_power_set_clk_retention() - enable/disable clock retention
+ * @phandle:  power handle containing the resources
+ * @clock_name: clock name
+ * @enable: true to enable clock retention
+ *
+ * Return: none
+ */
+void sde_power_set_clk_retention(struct sde_power_handle *phandle,
+		char *clock_name, bool enable);
+
+/**
  * sde_power_handle_register_event - register a callback function for an event.
  *	Clients can register for multiple events with a single register.
  *	Any block with access to phandle can register for the event
@@ -375,5 +379,20 @@ void sde_power_handle_unregister_event(struct sde_power_handle *phandle,
  * Return:	Pointer to name string if success; NULL otherwise
  */
 const char *sde_power_handle_get_dbus_name(u32 bus_id);
+
+/**
+ * sde_power_mmrm_reserve - requests the mmrm supported clk reservation
+ * @phandle:	pointer to power handle
+ */
+void sde_power_mmrm_reserve(struct sde_power_handle *phandle);
+
+/**
+ * sde_power_wakelock_ctrl - control wakelock
+ * @phandle: power handle containing the resources
+ * @enable: true to enable wakelock
+ *
+ * Return: 0 on success, error code otherwise
+ */
+int sde_power_wakelock_ctrl(struct sde_power_handle *phandle, bool enable);
 
 #endif /* _SDE_POWER_HANDLE_H_ */

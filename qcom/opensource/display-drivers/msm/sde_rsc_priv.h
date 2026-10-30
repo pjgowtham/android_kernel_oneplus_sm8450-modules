@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
@@ -168,7 +168,8 @@ enum sde_rsc_bw_delta {
  * @version:		rsc sequence version
  * @hw_drv_ver:		rscc hw version
  * @phandle:		module power handle for clocks
- * @fs:			"MDSS GDSC" handle
+ * @fs:			"MDSS GDSC" regulator handle, only fs or pd_fs will be valid
+ * @pd_fs:		"MDSS GDSC" power domain device, only pd_fs or fs will be valid
  * @sw_fs_enabled:	track "MDSS GDSC" sw vote during probe
  *
  * @rpmh_dev:		rpmh device node
@@ -217,6 +218,7 @@ struct sde_rsc_priv {
 	u32 hw_drv_ver;
 	struct sde_power_handle phandle;
 	struct regulator *fs;
+	struct device *pd_fs;
 	bool sw_fs_enabled;
 
 	struct device *rpmh_dev;

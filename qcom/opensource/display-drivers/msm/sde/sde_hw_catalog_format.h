@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2019, 2021 The Linux Foundation. All rights reserved.
  */
 
@@ -189,8 +189,41 @@ static const struct sde_format_extended true_inline_rot_v201_restricted_fmts[] =
 	{0, 0},
 };
 
+static const struct sde_format_extended true_inline_rot_v202_fmts[] = {
+	{DRM_FORMAT_NV12, DRM_FORMAT_MOD_QCOM_COMPRESSED},
+	{DRM_FORMAT_ABGR8888, DRM_FORMAT_MOD_QCOM_COMPRESSED},
+	{DRM_FORMAT_ABGR2101010, DRM_FORMAT_MOD_QCOM_COMPRESSED},
+	TP10_UBWC_FMTS,
+	P010_UBWC_FMTS,
+	{DRM_FORMAT_ABGR16161616F, DRM_FORMAT_MOD_QCOM_COMPRESSED},
+	{DRM_FORMAT_ABGR8888, DRM_FORMAT_MOD_QCOM_COMPRESSED | DRM_FORMAT_MOD_QCOM_LOSSY_8_5},
+	{DRM_FORMAT_ABGR8888, DRM_FORMAT_MOD_QCOM_COMPRESSED | DRM_FORMAT_MOD_QCOM_LOSSY_2_1},
+	{0, 0},
+};
+
+static const struct sde_format_extended true_inline_rot_v202_restricted_fmts[] = {
+	{DRM_FORMAT_ABGR8888, DRM_FORMAT_MOD_QCOM_COMPRESSED},
+	{DRM_FORMAT_ABGR2101010, DRM_FORMAT_MOD_QCOM_COMPRESSED},
+	P010_UBWC_FMTS,
+	{DRM_FORMAT_ABGR16161616F, DRM_FORMAT_MOD_QCOM_COMPRESSED},
+	{DRM_FORMAT_ABGR8888, DRM_FORMAT_MOD_QCOM_COMPRESSED | DRM_FORMAT_MOD_QCOM_LOSSY_8_5},
+	{DRM_FORMAT_ABGR8888, DRM_FORMAT_MOD_QCOM_COMPRESSED | DRM_FORMAT_MOD_QCOM_LOSSY_2_1},
+	{0, 0},
+};
+
 static const struct sde_dnsc_blur_filter_info dnsc_blur_v100_filters[] = {
 	{DNSC_BLUR_GAUS_FILTER, 16, 8192, 1, 8192, 8, 64, 0, 7, {8, 12, 16, 24, 32, 48, 64}},
 	{DNSC_BLUR_PCMN_FILTER, 16, 8192, 1, 8192, 1, 128, 1, 0, {0}},
 };
 
+static const struct sde_format_extended cac_formats[] = {
+	{DRM_FORMAT_ABGR8888, DRM_FORMAT_MOD_QCOM_COMPRESSED},
+	{DRM_FORMAT_ABGR2101010, DRM_FORMAT_MOD_QCOM_COMPRESSED},
+	{0, 0},
+};
+
+static const struct sde_format_extended rgb_lossy_formats[] = {
+	{DRM_FORMAT_ABGR8888, DRM_FORMAT_MOD_QCOM_COMPRESSED | DRM_FORMAT_MOD_QCOM_LOSSY_8_5},
+	{DRM_FORMAT_ABGR8888, DRM_FORMAT_MOD_QCOM_COMPRESSED | DRM_FORMAT_MOD_QCOM_LOSSY_2_1},
+	{0, 0},
+};

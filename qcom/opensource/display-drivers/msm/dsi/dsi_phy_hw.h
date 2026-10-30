@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _DSI_PHY_HW_H_
@@ -9,6 +9,9 @@
 
 #include "dsi_defs.h"
 #include "dsi_hw.h"
+#ifdef OPLUS_FEATURE_DISPLAY
+#include "oplus_debug.h"
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 #define DSI_MAX_SETTINGS 8
 #define DSI_PHY_TIMING_V3_SIZE 12
@@ -27,6 +30,26 @@
 #define DSI_MISC_W32(dsi_phy_hw, off, val) \
 	DSI_GEN_W32_DEBUG((dsi_phy_hw)->phy_clamp_base, (dsi_phy_hw)->index, off, val)
 
+#ifdef OPLUS_FEATURE_DISPLAY
+#undef DSI_PHY_ERR
+#ifdef OPLUS_TRACKPOINT_REPORT
+#include <soc/oplus/oplus_trackpoint_report.h>
+#define DSI_PHY_ERR(p, fmt, ...) \
+	do { \
+		DRM_DEV_ERROR(NULL, "[msm-dsi-error]: DSI_%d: "\
+				fmt, p ? p->index : -1, ##__VA_ARGS__); \
+		display_exception_trackpoint_report("DisplayDriverID@@%d$$" pr_fmt(fmt), \
+			OPLUS_DISP_Q_ERROR_PHY_HW, ##__VA_ARGS__); \
+	} while(0)
+#else
+#define DSI_PHY_ERR(p, fmt, ...) \
+	do { \
+		DRM_DEV_ERROR(NULL, "[msm-dsi-error]: DSI_%d: "\
+				fmt, p ? p->index : -1, ##__VA_ARGS__); \
+	} while(0)
+#endif /* OPLUS_TRACKPOINT_REPORT */
+#endif /* OPLUS_FEATURE_DISPLAY */
+
 /**
  * enum dsi_phy_version - DSI PHY version enumeration
  * @DSI_PHY_VERSION_UNKNOWN:    Unknown version.
@@ -37,6 +60,7 @@
  * @DSI_PHY_VERSION_4_3:        5nm
  * @DSI_PHY_VERSION_4_3_2:	4nm (v4.3 specific to SM8475)
  * @DSI_PHY_VERSION_5_2:        4nm
+ * @DSI_PHY_VERSION_7_2:        3nm
  * @DSI_PHY_VERSION_MAX:
  */
 enum dsi_phy_version {
@@ -48,6 +72,7 @@ enum dsi_phy_version {
 	DSI_PHY_VERSION_4_3, /* 5nm */
 	DSI_PHY_VERSION_4_3_2, /* 4nm */
 	DSI_PHY_VERSION_5_2, /* 4nm */
+	DSI_PHY_VERSION_7_2, /* 3nm */
 	DSI_PHY_VERSION_MAX
 };
 
@@ -59,6 +84,7 @@ enum dsi_phy_version {
  * @DSI_PLL_VERSION_UNKNOWN:	Unknown PLL version
  */
 enum dsi_pll_version {
+	DSI_PLL_VERSION_3NM,
 	DSI_PLL_VERSION_4NM,
 	DSI_PLL_VERSION_5NM,
 	DSI_PLL_VERSION_10NM,

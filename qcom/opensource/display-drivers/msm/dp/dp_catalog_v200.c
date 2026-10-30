@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/delay.h>
@@ -152,8 +153,7 @@ static void dp_catalog_panel_config_msa_v200(struct dp_catalog_panel *panel,
 
 	DP_DEBUG("rate = %d\n", rate);
 
-	if (panel->widebus_en)
-		mvid <<= 1;
+	mvid = mvid * (panel->pclk_factor);
 
 	if (link_rate_hbr2 == rate)
 		nvid *= 2;

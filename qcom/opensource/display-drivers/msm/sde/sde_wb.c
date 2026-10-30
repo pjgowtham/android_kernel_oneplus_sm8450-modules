@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -472,9 +472,6 @@ int sde_wb_get_mode_info(struct drm_connector *connector,
 	const u32 single_intf = 1;
 	const u32 no_enc = 0;
 	struct msm_display_topology *topology;
-	struct sde_wb_device *wb_dev = display;
-	u16 hdisplay;
-	int i;
 
 	if (!drm_mode || !mode_info || !avail_res ||
 			!avail_res->max_mixer_width || !display) {
@@ -482,17 +479,16 @@ int sde_wb_get_mode_info(struct drm_connector *connector,
 		return -EINVAL;
 	}
 
-	hdisplay = drm_mode->hdisplay;
-
-	/* find maximum display width to support */
-	for (i = 0; i < wb_dev->count_modes; i++)
-		hdisplay = max(hdisplay, wb_dev->modes[i].hdisplay);
-
 	topology = &mode_info->topology;
-	topology->num_lm = (avail_res->max_mixer_width <= hdisplay) ?
+	topology->num_lm = (avail_res->max_mixer_width <= drm_mode->hdisplay) ?
 			dual_lm : single_lm;
 	topology->num_enc = no_enc;
 	topology->num_intf = single_intf;
+
+	if (topology->num_lm == dual_lm && (drm_mode->hdisplay % 4)) {
+		SDE_ERROR("invalid mode settings for 3d-merge, hdisplay:%d\n", drm_mode->hdisplay);
+		return -EINVAL;
+	}
 
 	mode_info->comp_info.comp_type = MSM_DISPLAY_COMPRESSION_NONE;
 	mode_info->wide_bus_en = false;
@@ -738,7 +734,7 @@ int sde_wb_get_output_roi(struct sde_wb_device *wb_dev, struct sde_rect *roi)
 	return rc;
 }
 
-u32 sde_wb_get_num_of_displays(void)
+u32 sde_wb_get_num_of_displays(struct drm_device *dev)
 {
 	u32 count = 0;
 	struct sde_wb_device *wb_dev;
@@ -747,14 +743,15 @@ u32 sde_wb_get_num_of_displays(void)
 
 	mutex_lock(&sde_wb_list_lock);
 	list_for_each_entry(wb_dev, &sde_wb_list, wb_list) {
-		count++;
+		if (wb_dev->drm_dev == dev)
+			count++;
 	}
 	mutex_unlock(&sde_wb_list_lock);
 
 	return count;
 }
 
-int wb_display_get_displays(void **display_array, u32 max_display_count)
+int wb_display_get_displays(struct drm_device *dev, void **display_array, u32 max_display_count)
 {
 	struct sde_wb_device *curr;
 	int i = 0;
@@ -771,7 +768,8 @@ int wb_display_get_displays(void **display_array, u32 max_display_count)
 	list_for_each_entry(curr, &sde_wb_list, wb_list) {
 		if (i >= max_display_count)
 			break;
-		display_array[i++] = curr;
+		if (curr->drm_dev == dev)
+			display_array[i++] = curr;
 	}
 	mutex_unlock(&sde_wb_list_lock);
 

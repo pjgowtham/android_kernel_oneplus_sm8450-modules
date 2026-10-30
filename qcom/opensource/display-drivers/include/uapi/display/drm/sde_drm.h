@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 /*
- * Copyright (c) 2021-2022,2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -76,6 +76,18 @@ extern "C" {
 #define DRM_FORMAT_MOD_QCOM_CAC_R          fourcc_mod_code(QCOM, 0x40)
 #define DRM_FORMAT_MOD_QCOM_CAC_G          fourcc_mod_code(QCOM, 0x80)
 #define DRM_FORMAT_MOD_QCOM_CAC_B          fourcc_mod_code(QCOM, 0x100)
+
+/**
+ * @DRM_FORMAT_MOD_QCOM_LOSSY_8_5:	Refers to RGBA888 UBWC pixel format with 1.26x
+ *					compression ratio.
+ */
+#define DRM_FORMAT_MOD_QCOM_LOSSY_8_5	fourcc_mod_code(QCOM, 0x20)
+
+/**
+ * @DRM_FORMAT_MOD_QCOM_LOSSY_2_1:	Refers to RGBA8888 UBWC pixel format with 2x
+ *					compression ratio.
+ */
+#define DRM_FORMAT_MOD_QCOM_LOSSY_2_1	fourcc_mod_code(QCOM, 0x200)
 
 /**
  * Blend operations for "blend_op" property
@@ -281,6 +293,11 @@ struct sde_drm_de_v1 {
  * @cac_le_inc_skip_y:     LE vertical inc_skip control
  * @cac_re_inc_skip_x:     RE horizontal inc_skip control
  * @cac_re_inc_skip_y:     RE vertical inc_skip control
+ * @fov_mode:              Fovea mode for current configuration
+ * @cac_asym_phase_step_h: Horizontal phase step for fov mode after center region
+ * @cac_asym_phase_step_v: Vertical phase step for fov mode after center region
+ * @cac_re_phase_step_v:   Right eye vertical phase step for fov mode in beginning region
+ * @cac_re_asym_phase_step_v: Right eye vertical phase step for fov mode in ending region
  */
 struct sde_drm_cac {
 	__u32 cac_mode;
@@ -308,6 +325,12 @@ struct sde_drm_cac {
 	__u16 cac_le_inc_skip_y[SDE_MAX_PLANES];
 	__u16 cac_re_inc_skip_x[SDE_MAX_PLANES];
 	__u16 cac_re_inc_skip_y[SDE_MAX_PLANES];
+
+	__u32 fov_mode;
+	__u32 cac_asym_phase_step_h;
+	__u32 cac_asym_phase_step_v;
+	__u32 cac_re_phase_step_v;
+	__u32 cac_re_asym_phase_step_v;
 };
 
 /*
@@ -455,6 +478,13 @@ struct sde_drm_scaler_v2 {
 #define SDE_DRM_DESTSCALER_ENHANCER_UPDATE  0x4
 #define SDE_DRM_DESTSCALER_PU_ENABLE        0x8
 
+/*
+ * Possible merge_mode values for each Destination Scaler block
+ */
+#define DEST_SCALER_SINGLE_PIPE   1
+#define DEST_SCALER_DUAL_PIPE     2
+#define DEST_SCALER_QUAD_PIPE     3
+
 /**
  * struct sde_drm_dest_scaler_cfg - destination scaler config structure
  * @flags:      Flag to switch between mode for destination scaler
@@ -464,6 +494,7 @@ struct sde_drm_scaler_v2 {
  * @lm_height:  Layer mixer height configuration
  * @scaler_cfg: The scaling parameters for all the mode except disable
  *              Userspace pointer to struct sde_drm_scaler_v2
+ * @merge_mode: Specify pipe merge mode for each DS block
  */
 struct sde_drm_dest_scaler_cfg {
 	__u32 flags;
@@ -471,6 +502,7 @@ struct sde_drm_dest_scaler_cfg {
 	__u32 lm_width;
 	__u32 lm_height;
 	__u64 scaler_cfg;
+	__u32 merge_mode;
 };
 
 /**
@@ -577,15 +609,22 @@ struct sde_drm_wb_cfg {
 };
 
 #define SDE_MAX_ROI_V1	4
+#define SDE_DRM_SPR_ROI	1
+/* DRM_ROI_CONFIG_FLAGS */
+#define SDE_DRM_ROI_SPR_FLAG_EN	(1 << 0)
 
 /**
  * struct sde_drm_roi_v1 - list of regions of interest for a drm object
  * @num_rects: number of valid rectangles in the roi array
  * @roi: list of roi rectangles
+ * @roi_feature_flags: flags indicates that specific roi rect is valid or not
+ * @spr_roi: list of roi rectangles for spr
  */
 struct sde_drm_roi_v1 {
 	__u32 num_rects;
 	struct drm_clip_rect roi[SDE_MAX_ROI_V1];
+	__u32 roi_feature_flags;
+	struct drm_clip_rect spr_roi[SDE_MAX_ROI_V1];
 };
 
 /**
@@ -845,6 +884,20 @@ struct drm_msm_display_hint {
 	__u32 hint_flags;
 };
 
+/**
+ * struct drm_msm_display_early_ept: Payload for display early ept hint
+ * @ept:  Expected present time value in nano seconds.
+ * @frame_interval: Frame interval in nano seconds of vrr.
+ * @connector_id: connector id.
+ * @flags:  operation control flags, for future use
+ */
+struct drm_msm_display_early_ept {
+	__u64 ept_ns;
+	__u64 frame_interval;
+	__u32 connector_id;
+	__u32 flags;
+};
+
 #define DRM_NOISE_LAYER_CFG
 #define DRM_NOISE_TEMPORAL_FLAG (1 << 0)
 #define DRM_NOISE_ATTN_MAX 255
@@ -855,9 +908,11 @@ struct drm_msm_display_hint {
  * @flags: operation control flags, for future use
  * @zposn: noise zorder
  * @zposattn: attenuation zorder
- * @attn_factor: attenuation factor in range of 1 to 255
+ * @attn_factor: attenuation factor in range of 1 to 255 for 8 bit and
+ *               1 to 65535 for 10 bit alpha
  * @stength: strength in range of 0 to 6
- * @alpha_noise: attenuation in range of 1 to 255
+ * @alpha_noise: attenuation in range of 1 to 255 for 8 bit and
+ *               1 to 65535 for 10 bit alpha
 */
 struct drm_msm_noise_layer_cfg {
 	__u64 flags;
@@ -963,6 +1018,7 @@ struct sde_drm_dnsc_blur_cfg {
 #define DRM_MSM_RMFB2                  0x43
 #define DRM_MSM_POWER_CTRL             0x44
 #define DRM_MSM_DISPLAY_HINT           0x45
+#define DRM_MSM_EARLY_EPT              0x46
 
 /* sde custom events */
 #define DRM_EVENT_HISTOGRAM 0x80000000
@@ -982,12 +1038,25 @@ struct sde_drm_dnsc_blur_cfg {
 #define DRM_EVENT_VM_RELEASE 0X8000000E
 #define DRM_EVENT_OPR_VALUE 0X8000000F
 #define DRM_EVENT_MISR_SIGN 0X80000010
+#define DRM_EVENT_FRAME_DONE 0X8000011
+#define DRM_EVENT_MDNIE_ART 0X80000012
+#define DRM_EVENT_COPR 0X80000013
+#ifdef OPLUS_FEATURE_DISPLAY
+#define DRM_EVENT_TP_TOUCHDOWN 0x80000014 /* tp touch down event */
+#endif
 
 #ifndef DRM_MODE_FLAG_VID_MODE_PANEL
 #define DRM_MODE_FLAG_VID_MODE_PANEL        0x01
 #endif
 #ifndef DRM_MODE_FLAG_CMD_MODE_PANEL
 #define DRM_MODE_FLAG_CMD_MODE_PANEL        0x02
+#endif
+
+#ifndef DRM_MODE_FLAG_DSI_24BPP
+#define DRM_MODE_FLAG_DSI_24BPP             0x01
+#endif
+#ifndef DRM_MODE_FLAG_DSI_30BPP
+#define DRM_MODE_FLAG_DSI_30BPP             0x02
 #endif
 
 /* display hint flags*/
@@ -1010,6 +1079,8 @@ struct sde_drm_dnsc_blur_cfg {
 			DRM_MSM_POWER_CTRL), struct drm_msm_power_ctrl)
 #define DRM_IOCTL_MSM_DISPLAY_HINT DRM_IOW((DRM_COMMAND_BASE + \
 			DRM_MSM_DISPLAY_HINT), struct drm_msm_display_hint)
+#define DRM_IOCTL_MSM_EARLY_EPT DRM_IOW((DRM_COMMAND_BASE + \
+			DRM_MSM_EARLY_EPT), struct drm_msm_display_early_ept)
 
 #if defined(__cplusplus)
 }

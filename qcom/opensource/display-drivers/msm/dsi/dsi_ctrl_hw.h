@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -14,6 +14,10 @@
 
 #include "dsi_defs.h"
 #include "dsi_hw.h"
+
+#ifdef OPLUS_FEATURE_DISPLAY
+#include "oplus_debug.h"
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 #define DSI_CTRL_HW_DBG(c, fmt, ...)	DRM_DEV_DEBUG(NULL, "[msm-dsi-debug]: DSI_%d: "\
 		fmt, c ? c->index : -1,	##__VA_ARGS__)
@@ -33,6 +37,26 @@
 #define DSI_MDP_INTF_R32(dsi_ctrl_hw, off) DSI_GEN_R32((dsi_ctrl_hw)->mdp_intf_base, off)
 #define DSI_MDP_INTF_W32(dsi_ctrl_hw, off, val) \
 	DSI_GEN_W32_DEBUG((dsi_ctrl_hw)->mdp_intf_base, (dsi_ctrl_hw)->index, off, val)
+
+#ifdef OPLUS_FEATURE_DISPLAY
+#undef DSI_CTRL_HW_ERR
+#ifdef OPLUS_TRACKPOINT_REPORT
+#include <soc/oplus/oplus_trackpoint_report.h>
+#define DSI_CTRL_HW_ERR(c, fmt, ...) \
+	do { \
+		DRM_DEV_ERROR(NULL, "[msm-dsi-error]: DSI_%d: "\
+			fmt, c ? c->index : -1,	##__VA_ARGS__); \
+		display_exception_trackpoint_report("DisplayDriverID@@%d$$" pr_fmt(fmt), \
+			OPLUS_DISP_Q_ERROR_CTRL_HW, ##__VA_ARGS__); \
+	} while(0)
+#else
+#define DSI_CTRL_HW_ERR(c, fmt, ...) \
+	do { \
+		DRM_DEV_ERROR(NULL, "[msm-dsi-error]: DSI_%d: "\
+			fmt, c ? c->index : -1,	##__VA_ARGS__); \
+	} while(0)
+#endif /* OPLUS_TRACKPOINT_REPORT */
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 /**
  * Modifier flag for command transmission. If this flag is set, command
@@ -75,6 +99,7 @@ enum dsi_ctrl_tpg_pattern {
  * @DSI_CTRL_VERSION_2_6:     DSI host v2.6 controller
  * @DSI_CTRL_VERSION_2_7:     DSI host v2.7 controller
  * @DSI_CTRL_VERSION_2_8:     DSI host v2.8 controller
+ * @DSI_CTRL_VERSION_2_9:     DSI host v2.9 controller
  * @DSI_CTRL_VERSION_MAX:     max version
  */
 enum dsi_ctrl_version {
@@ -86,6 +111,7 @@ enum dsi_ctrl_version {
 	DSI_CTRL_VERSION_2_6,
 	DSI_CTRL_VERSION_2_7,
 	DSI_CTRL_VERSION_2_8,
+	DSI_CTRL_VERSION_2_9,
 	DSI_CTRL_VERSION_MAX
 };
 
@@ -817,11 +843,12 @@ struct dsi_ctrl_hw_ops {
 
 	/** schedule_dma_cmd() - Schdeule DMA command transfer on a
 	 *                       particular blanking line.
-	 * @ctrl:         Pointer to the controller host hardware.
-	 * @line_no:      Blanking line number on whihch DMA command
-	 *                needs to be sent.
+	 * @ctrl:                Pointer to the controller host hardware.
+	 * @line_no:             Blanking line number on whihch DMA command
+	 *                       needs to be sent.
+	 * @do_peripheral_flush: Flag for sending this command with peripheral flush.
 	 */
-	void (*schedule_dma_cmd)(struct dsi_ctrl_hw *ctrl, int line_no);
+	void (*schedule_dma_cmd)(struct dsi_ctrl_hw *ctrl, int line_no, bool do_peripheral_flush);
 
 	/**
 	 * ctrl_reset() - Reset DSI lanes to recover from DSI errors
@@ -912,11 +939,12 @@ struct dsi_ctrl_hw_ops {
 	/**
 	 * hw.ops.init_cmddma_trig_ctrl() - Initialize the default trigger used
 	 *                             for command mode DMA path.
-	 * @ctrl:	Pointer to the controller host hardware.
-	 * @cfg:	Common configuration parameters.
+	 * @ctrl:                Pointer to the controller host hardware.
+	 * @cfg:                 Common configuration parameters.
+	 * @do_peripheral_flush: Flag for sending this command with peripheral flush.
 	 */
 	void (*init_cmddma_trig_ctrl)(struct dsi_ctrl_hw *ctrl,
-			struct dsi_host_common_cfg *cfg);
+			struct dsi_host_common_cfg *cfg, bool do_peripheral_flush);
 
 	/**
 	 * hw.ops.log_line_count() - reads the MDP interface line count

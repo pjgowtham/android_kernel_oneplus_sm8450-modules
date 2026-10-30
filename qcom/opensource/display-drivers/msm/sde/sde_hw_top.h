@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -238,6 +238,22 @@ struct sde_hw_mdp_ops {
 	 * @sz:       indicates size of the ppb in terms of pixels
 	 */
 	void (*set_ppb_fifo_size)(struct sde_hw_mdp *mdp, u32 pp, u32 sz);
+
+	/**
+	 * dpu_sync_intf_mux - selects the Master INTF which drives the Slave DPU
+	 * @mdp:     mdp top context driver
+	 * @intf_idx:  intf block index which drives the master and Slave DPU
+	 *		INTF_1/INTF_5 are only possible values.
+	 */
+	void (*dpu_sync_intf_mux)(struct sde_hw_mdp *mdp, int intf_idx);
+
+	/**
+	 * flush_sync_intf_mux - selects the intf that decides the snapshot signal
+	 * @mdp:        mdp top context driver
+	 * @intf_idx:   intf(INTF_1/INTF_5) which decides the snapshot signal for
+	 *		flush sync logic
+	 */
+	void (*flush_sync_intf_mux)(struct sde_hw_mdp *mdp, int intf_idx);
 };
 
 struct sde_hw_mdp {
@@ -272,6 +288,14 @@ struct sde_hw_sid {
 	struct sde_hw_blk_reg_map hw;
 	/* ops */
 	struct sde_hw_sid_ops ops;
+};
+
+#define SW_FUSE_ENABLE 0x1
+struct sde_hw_sw_fuse {
+	/* sw fuse base */
+	struct sde_hw_blk_reg_map hw;
+	/* demura sw fuse offset */
+	u32 demura_sw_fuse_offset;
 };
 
 /**
@@ -310,4 +334,23 @@ struct sde_hw_mdp *sde_hw_mdptop_init(enum sde_mdp idx,
 
 void sde_hw_mdp_destroy(struct sde_hw_mdp *mdp);
 
+/**
+ * sde_hw_sw_fuse_init - initialize the sw fuse blk reg map
+ * @addr: Mapped register io address
+ * @sw_fuse_len: Length of block
+ * @m: Pointer to mdss catalog data
+ */
+struct sde_hw_sw_fuse *sde_hw_sw_fuse_init(void __iomem *addr,
+		u32 sw_fuse_len, const struct sde_mdss_cfg *m);
+/**
+ * sde_hw_sw_fuse_destroy - free memory for sw fuse
+ * @sw_fuse: sde_hw_sw_fuse
+ */
+void sde_hw_sw_fuse_destroy(struct sde_hw_sw_fuse *sw_fuse);
+
+/**
+ * sde_hw_get_demura_sw_fuse_value - read LTM sw fuse register value
+ * @sw_fuse: sde_hw_sw_fuse
+ */
+u32 sde_hw_get_demura_sw_fuse_value(struct sde_hw_sw_fuse *sw_fuse);
 #endif /*_SDE_HW_TOP_H */

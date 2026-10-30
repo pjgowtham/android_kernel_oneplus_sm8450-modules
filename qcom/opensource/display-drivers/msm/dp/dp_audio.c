@@ -409,6 +409,12 @@ static int dp_audio_info_setup(struct platform_device *pdev,
 		return rc;
 	}
 
+	if (!audio->panel || !audio->panel->get_panel_on) {
+		DP_ERR("invalid panel data\n");
+		rc = -EINVAL;
+		return rc;
+	}
+
 	if (audio->dp_audio.tui_active) {
 		DP_DEBUG("TUI session active\n");
 		return 0;
@@ -511,6 +517,11 @@ static void dp_audio_teardown_done(struct platform_device *pdev)
 	audio = dp_audio_get_data(pdev);
 	if (IS_ERR(audio))
 		return;
+
+	if (!audio->panel || !audio->panel->get_panel_on) {
+		DP_ERR("invalid panel data\n");
+		return;
+	}
 
 	if (audio->dp_audio.tui_active) {
 		DP_DEBUG("TUI session active\n");

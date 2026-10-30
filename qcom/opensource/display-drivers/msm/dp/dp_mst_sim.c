@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -332,7 +332,9 @@ int dp_sim_set_sim_mode(struct dp_aux_bridge *bridge, u32 sim_mode)
 
 	sim_dev = to_dp_sim_dev(bridge);
 
+	mutex_lock(&sim_dev->lock);
 	sim_dev->sim_mode = sim_mode;
+	mutex_unlock(&sim_dev->lock);
 
 	return 0;
 }
@@ -349,11 +351,15 @@ int dp_sim_update_port_num(struct dp_aux_bridge *bridge, u32 port_num)
 	sim_dev = to_dp_sim_dev(bridge);
 	DP_INFO("Update port count from %d to %d\n", sim_dev->port_num, port_num);
 
+	mutex_lock(&sim_dev->lock);
+
 	if (port_num > sim_dev->port_num) {
 		ports = devm_kzalloc(sim_dev->dev,
 				port_num * sizeof(*ports), GFP_KERNEL);
-		if (!ports)
-			return -ENOMEM;
+		if (!ports) {
+			rc = -ENOMEM;
+			goto bail;
+		}
 
 		memcpy(ports, sim_dev->ports,
 				sim_dev->port_num * sizeof(*ports));
@@ -373,9 +379,12 @@ int dp_sim_update_port_num(struct dp_aux_bridge *bridge, u32 port_num)
 	rc = dp_mst_sim_update(sim_dev->bridge.mst_ctx,
 			port_num, sim_dev->ports);
 	if (rc)
-		return rc;
+		goto bail;
 
 	sim_dev->current_port_num = port_num;
+
+bail:
+	mutex_unlock(&sim_dev->lock);
 
 	return rc;
 }
@@ -384,20 +393,29 @@ int dp_sim_update_port_status(struct dp_aux_bridge *bridge,
 		int port, enum drm_connector_status status)
 {
 	struct dp_sim_device *sim_dev;
+	int rc;
 
 	if (!bridge || !(bridge->flag & DP_SIM_BRIDGE_PRIV_FLAG))
 		return -EINVAL;
 
 	sim_dev = to_dp_sim_dev(bridge);
 
-	if (port < 0 || port >= sim_dev->current_port_num)
-		return -EINVAL;
+	mutex_lock(&sim_dev->lock);
+
+	if (port < 0 || port >= sim_dev->current_port_num) {
+		rc = -EINVAL;
+		goto bail;
+	}
 
 	sim_dev->ports[port].pdt = (status == connector_status_connected) ?
 			DP_PEER_DEVICE_SST_SINK : DP_PEER_DEVICE_NONE;
 
-	return dp_mst_sim_update(sim_dev->bridge.mst_ctx,
-			sim_dev->current_port_num, sim_dev->ports);
+	rc = dp_mst_sim_update(sim_dev->bridge.mst_ctx, sim_dev->current_port_num, sim_dev->ports);
+
+bail:
+	mutex_unlock(&sim_dev->lock);
+
+	return rc;
 }
 
 int dp_sim_update_port_edid(struct dp_aux_bridge *bridge,
@@ -405,14 +423,19 @@ int dp_sim_update_port_edid(struct dp_aux_bridge *bridge,
 {
 	struct dp_sim_device *sim_dev;
 	struct dp_mst_sim_port *sim_port;
+	int rc;
 
 	if (!bridge || !(bridge->flag & DP_SIM_BRIDGE_PRIV_FLAG))
 		return -EINVAL;
 
 	sim_dev = to_dp_sim_dev(bridge);
 
-	if (port < 0 || port >= sim_dev->current_port_num)
-		return -EINVAL;
+	mutex_lock(&sim_dev->lock);
+
+	if (port < 0 || port >= sim_dev->current_port_num) {
+		rc = -EINVAL;
+		goto bail;
+	}
 
 	sim_port = &sim_dev->ports[port];
 
@@ -430,8 +453,11 @@ int dp_sim_update_port_edid(struct dp_aux_bridge *bridge,
 
 	memcpy((u8 *)sim_port->edid, edid, size);
 
-	return dp_mst_sim_update(sim_dev->bridge.mst_ctx,
-			sim_dev->current_port_num, sim_dev->ports);
+	rc = dp_mst_sim_update(sim_dev->bridge.mst_ctx, sim_dev->current_port_num, sim_dev->ports);
+bail:
+	mutex_unlock(&sim_dev->lock);
+
+	return rc;
 }
 
 int dp_sim_write_dpcd_reg(struct dp_aux_bridge *bridge,
@@ -444,9 +470,10 @@ int dp_sim_write_dpcd_reg(struct dp_aux_bridge *bridge,
 		return -EINVAL;
 
 	sim_dev = to_dp_sim_dev(bridge);
-
+	mutex_lock(&sim_dev->lock);
 	for (i = 0; i < size; i++)
 		dp_sim_write_dpcd(sim_dev, offset + i, dpcd[i]);
+	mutex_unlock(&sim_dev->lock);
 
 	return 0;
 }
@@ -455,13 +482,17 @@ int dp_sim_read_dpcd_reg(struct dp_aux_bridge *bridge,
 		u8 *dpcd, u32 size, u32 offset)
 {
 	struct dp_sim_device *sim_dev;
+	int rc;
 
 	if (!bridge || !(bridge->flag & DP_SIM_BRIDGE_PRIV_FLAG))
 		return -EINVAL;
 
 	sim_dev = to_dp_sim_dev(bridge);
+	mutex_lock(&sim_dev->lock);
+	rc = dp_sim_read_dpcd_regs(sim_dev, dpcd, size, offset);
+	mutex_unlock(&sim_dev->lock);
 
-	return dp_sim_read_dpcd_regs(sim_dev, dpcd, size, offset);
+	return rc;
 }
 
 static void dp_sim_update_dtd(struct edid *edid,
@@ -1000,6 +1031,7 @@ static ssize_t dp_sim_debug_read_dpcd(struct file *file,
 	if (!buf)
 		return -ENOMEM;
 
+	mutex_lock(&debug->lock);
 	len += snprintf(buf, buf_size, "0x%x", debug->dpcd_write_addr);
 
 	while (1) {
@@ -1011,6 +1043,7 @@ static ssize_t dp_sim_debug_read_dpcd(struct file *file,
 			debug->dpcd_reg[debug->dpcd_write_addr + offset++]);
 	}
 
+	mutex_unlock(&debug->lock);
 	len = min_t(size_t, count, len);
 	if (!copy_to_user(user_buff, buf, len))
 		*ppos += len;
@@ -1042,8 +1075,10 @@ static ssize_t dp_sim_debug_write_hpd(struct file *file,
 	if (kstrtoint(buf, 10, &hpd) != 0)
 		goto end;
 
+	mutex_lock(&debug->lock);
 	if (debug->hpd_cb)
 		debug->hpd_cb(debug->host_dev, !!hpd, false);
+	mutex_unlock(&debug->lock);
 
 end:
 	return len;
@@ -1200,10 +1235,12 @@ static ssize_t dp_sim_debug_write_mst_hpd(struct file *file,
 	if (kstrtoint(buf, 10, &hpd) != 0)
 		goto end;
 
+	mutex_lock(&debug->lock);
 	dp_sim_update_port_status(&debug->bridge,
 				entry->index, hpd ?
 				connector_status_connected :
 				connector_status_disconnected);
+	mutex_unlock(&debug->lock);
 
 end:
 	return len;
@@ -1253,6 +1290,8 @@ static ssize_t dp_sim_debug_write_mst_mode(struct file *file,
 		return -EINVAL;
 	}
 
+	mutex_lock(&debug->lock);
+
 	if (!mst_port_cnt)
 		mst_port_cnt = 1;
 
@@ -1263,7 +1302,7 @@ static ssize_t dp_sim_debug_write_mst_mode(struct file *file,
 	mst_old_port_cnt = debug->port_num;
 	rc = dp_sim_update_port_num(&debug->bridge, mst_port_cnt);
 	if (rc)
-		return rc;
+		goto bail;
 
 	/* write mst */
 	dp_sim_write_dpcd(debug, DP_MSTM_CAP, debug->skip_mst);
@@ -1295,15 +1334,21 @@ static ssize_t dp_sim_debug_write_mst_mode(struct file *file,
 
 		edid = devm_kzalloc(debug->dev,
 				debug->ports[0].edid_size, GFP_KERNEL);
-		if (!edid)
-			return -ENOMEM;
+		if (!edid) {
+			rc = -ENOMEM;
+			goto bail;
+		}
 
 		memcpy(edid, debug->ports[0].edid, debug->ports[0].edid_size);
 		debug->ports[i].edid = edid;
 		debug->ports[i].edid_size = debug->ports[0].edid_size;
 	}
 
-	return count;
+	rc = count;
+bail:
+	mutex_unlock(&debug->lock);
+
+	return rc;
 }
 
 static const struct file_operations sim_dpcd_fops = {

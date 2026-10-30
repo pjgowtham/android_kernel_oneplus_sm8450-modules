@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
@@ -9,6 +9,8 @@
 #include <linux/kernel.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
+#include <linux/pm_domain.h>
+#include <linux/pm_runtime.h>
 
 #include "sde_rsc_priv.h"
 #include "sde_dbg.h"
@@ -530,7 +532,7 @@ static int sde_rsc_mode2_entry(struct sde_rsc_priv *rsc)
 	if (rsc->power_collapse_block)
 		return -EINVAL;
 
-	if (rsc->sw_fs_enabled) {
+	if (rsc->sw_fs_enabled && rsc->fs) {
 		rc = regulator_set_mode(rsc->fs, REGULATOR_MODE_FAST);
 		if (rc) {
 			pr_err("vdd reg fast mode set failed rc:%d\n", rc);
@@ -571,7 +573,10 @@ static int sde_rsc_mode2_entry(struct sde_rsc_priv *rsc)
 	rsc_event_trigger(rsc, SDE_RSC_EVENT_POST_CORE_PC);
 
 	if (rsc->sw_fs_enabled) {
-		regulator_disable(rsc->fs);
+		if (rsc->pd_fs)
+			pm_runtime_put_sync(rsc->pd_fs);
+		else if (rsc->fs)
+			regulator_disable(rsc->fs);
 		rsc->sw_fs_enabled = false;
 	}
 

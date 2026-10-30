@@ -106,6 +106,11 @@ struct sde_hw_vbif_ops {
 	 * @xin_id: client interface identifier
 	 */
 	void (*set_write_gather_en)(struct sde_hw_vbif *vbif, u32 xin_id);
+
+	void (*enable_dbg_counter)(struct sde_hw_vbif *vbif, u32 cnt_id, bool enable);
+	void (*select_dbg_counter)(struct sde_hw_vbif *vbif, u32 cnt_id, u32 event);
+	void (*read_dbg_counter)(struct sde_hw_vbif *vbif, bool reset_cnt);
+	u32 (*get_halt_status)(struct sde_hw_vbif *vbif);
 };
 
 struct sde_hw_vbif {

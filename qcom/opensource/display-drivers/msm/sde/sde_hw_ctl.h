@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -12,6 +12,7 @@
 #include "sde_hw_catalog.h"
 #include "sde_hw_sspp.h"
 #include "sde_fence.h"
+#include "sde_cesta.h"
 
 #define INVALID_CTL_STATUS 0xfffff88e
 #define CTL_MAX_DSPP_COUNT (DSPP_MAX - DSPP_0)
@@ -64,16 +65,6 @@ enum ctl_hw_flush_type {
 };
 
 struct sde_hw_ctl;
-/**
- * struct sde_hw_stage_cfg - blending stage cfg
- * @stage : SSPP_ID at each stage
- * @multirect_index: index of the rectangle of SSPP.
- */
-struct sde_hw_stage_cfg {
-	enum sde_sspp stage[SDE_STAGE_MAX][PIPES_PER_STAGE];
-	enum sde_sspp_multirect_index multirect_index
-					[SDE_STAGE_MAX][PIPES_PER_STAGE];
-};
 
 /**
  * struct sde_hw_intf_cfg :Describes how the SDE writes data to output interface
@@ -159,11 +150,30 @@ struct sde_hw_intf_cfg_v1 {
  * exercising top level flush
  * @pending_hw_flush_mask: pending flush mask for each active HW blk
  * @pending_dspp_flush_masks: pending flush masks for sub-blks of each DSPP
+ * @active_fetch_pipe_mask: active fetch pipes on this control path
+ * @active_pipe_mask: active pipes on this control path
+ * @active_lm_mask: active lms on this control path
  */
 struct sde_ctl_flush_cfg {
 	u32 pending_flush_mask;
 	u32 pending_hw_flush_mask[SDE_HW_FLUSH_MAX];
 	u32 pending_dspp_flush_masks[CTL_MAX_DSPP_COUNT];
+	u32 active_fetch_pipe_mask;
+	u32 active_pipe_mask;
+	u32 active_lm_mask;
+};
+
+enum sde_ctl_cesta_flag {
+	SDE_CTL_CESTA_SCC_WAIT = BIT(0),
+	SDE_CTL_CESTA_CHN_WAIT = BIT(1),
+	SDE_CTL_CESTA_SCC_FLUSH = BIT(2),
+	SDE_CTL_CESTA_OVERRIDE_FLAG = BIT(3),
+};
+
+struct sde_ctl_cesta_cfg {
+	u32 index;
+	u32 flags;
+	enum sde_cesta_vote_state vote_state;
 };
 
 /**
@@ -173,9 +183,15 @@ struct sde_ctl_flush_cfg {
 struct sde_hw_ctl_ops {
 	/**
 	 * hw fence control
-	 * @ctx         : ctl path ctx pointer
+	 * @ctx            : ctl path ctx pointer
+	 * @sw_set         : sw override to be set
+	 * @sw_clear       : sw override to clear
+	 * @mode           : HW fence enable
+	 * @sw_avr_set     : AVR is enabled
+	 * @sw_arp_set     : ARP mode is enabled
 	 */
-	void (*hw_fence_ctrl)(struct sde_hw_ctl *ctx, bool sw_set, bool sw_clear, u32 mode);
+	void (*hw_fence_ctrl)(struct sde_hw_ctl *ctx, bool sw_set, bool sw_clear, u32 mode,
+		bool sw_avr_set, bool sw_arp_set);
 
 	/**
 	 * override to trigger the signal for the output hw-fence
@@ -283,6 +299,13 @@ struct sde_hw_ctl_ops {
 	 * @enable: true to enable the feature
 	 */
 	void (*uidle_enable)(struct sde_hw_ctl *ctx, bool enable);
+
+	/**
+	 * clear flush mask
+	 * @ctx       : ctl path ctx pointer
+	 * @clear     : true to clear the flush mask
+	 */
+	int (*clear_flush_mask)(struct sde_hw_ctl *ctx, bool clear);
 
 	/**
 	 * Clear the value of the cached pending_flush_mask
@@ -468,6 +491,14 @@ struct sde_hw_ctl_ops {
 			enum ctl_hw_flush_type type, u32 blk_idx, bool enable);
 
 	/**
+	 * bitmask_has_bit: checks whether flush mask has given block set to flush
+	 * @type              : blk type to test
+	 * @blk_idx           : blk idx
+	 */
+	bool (*bitmask_has_bit)(struct sde_hw_ctl *ctx,
+			enum ctl_hw_flush_type type, u32 blk_idx);
+
+	/**
 	 * update_dnsc_blur_bitmask: updates dnsc_blur flush mask
 	 * @type              : blk type to flush
 	 * @blk_idx           : blk idx
@@ -481,6 +512,13 @@ struct sde_hw_ctl_ops {
 	 * @return	: bit mask with the active interfaces for the CTL
 	 */
 	u32 (*get_ctl_intf)(struct sde_hw_ctl *ctx);
+
+	/**
+	 * control the group setting in ctl_top.
+	 * @ctx		: ctl path ctx pointer
+	 * @enable	: flag to enable/disable group setting
+	 */
+	void (*update_ctl_top_group)(struct sde_hw_ctl *ctx, bool enable);
 
 	/**
 	 * read CTL layers register value and return
@@ -548,33 +586,122 @@ struct sde_hw_ctl_ops {
 	/**
 	 * set the active fetch pipes attached to this CTL
 	 * @ctx         : ctl path ctx pointer
-	 * @fetch_active: bitmap of enum sde_sspp pipes attached
+	 * @active_fetch_pipes: bitmap of enum sde_sspp pipes attached
 	 */
-	void (*set_active_pipes)(struct sde_hw_ctl *ctx,
-			unsigned long *fetch_active);
+	void (*set_active_fetch_pipes)(struct sde_hw_ctl *ctx,
+			unsigned long *active_fetch_pipes);
 
 	/**
 	 * Get all the sspp marked for fetching on the control path.
 	 * @ctx       : ctl path ctx pointer
 	 * @Return: bitmap of enum sde_sspp pipes found
 	 */
+	u32 (*get_active_fetch_pipes)(struct sde_hw_ctl *ctx);
+
+	/**
+	 * set the active pipes attached to this CTL
+	 * @ctx         : ctl path ctx pointer
+	 * @active_pipes: bitmap of enum sde_sspp pipes attached
+	 */
+	void (*set_active_pipes)(struct sde_hw_ctl *ctx,
+			unsigned long *active_pipes);
+
+	/**
+	 * Get all the sspp marked for on the control path.
+	 * @ctx       : ctl path ctx pointer
+	 * @Return: bitmap of enum sde_sspp pipes found
+	 */
 	u32 (*get_active_pipes)(struct sde_hw_ctl *ctx);
+
+	/**
+	 * set the active layer mixers attached to this CTL
+	 * @ctx         : ctl path ctx pointer
+	 * @active_lms: bitmap of enum sde_lm mixers attached
+	 */
+	void (*set_active_lms)(struct sde_hw_ctl *ctx,
+			unsigned long *active_lms);
+
+	/**
+	 * Get all the active layer mixers marked on the control path.
+	 * @ctx       : ctl path ctx pointer
+	 * @Return: bitmap of enum sde_lm mixers found
+	 */
+	u32 (*get_active_lms)(struct sde_hw_ctl *ctx);
+
+	/**
+	 * Setup Cesta flush
+	 * @ctx: ctl path ctx pointer
+	 * @cfg: Cesta flush config settings
+	 */
+	void (*cesta_flush)(struct sde_hw_ctl *ctx, struct sde_ctl_cesta_cfg *cfg);
+
+	/**
+	 * Reserve cesta for this ctl path
+	 * @ctx: ctl path ctx pointer
+	 * @scc_index: scc index
+	 */
+	void (*cesta_scc_reserve)(struct sde_hw_ctl *ctx, u32 scc_index);
+
+	/**
+	 * Reset Reservation cesta for all the CTL paths in VM
+	 * @ctx: ctl path ctx pointer
+	 * @ctl_count: ctl data path count
+	 */
+	void (*reset_cesta_reserve)(struct sde_hw_ctl *ctx, u32 ctl_count);
+
+	/**
+	 * setup flush sync mode for slave and master cores.
+	 * @ctx       : ctl path ctx pointer
+	 * @is_master : true for master, false for slave)
+	 * @enable    : true to enable flush sync, false otherwise
+	 */
+	void (*setup_flush_sync)(struct sde_hw_ctl *ctx, bool is_master,
+			bool enable);
+
+	/**
+	 * program sync or async mode for master and slave cores
+	 * @ctx       : ctl path ctx pointer
+	 * @async_en  : true to enable async, 0 to enable sync mode
+	 */
+	void (*enable_sync_mode)(struct sde_hw_ctl *ctx, bool async_en);
+
+	/**
+	 * get flush sync mode enabled for current commit
+	 * @ctx       : ctl path ctx pointer
+	 */
+	bool (*get_flush_sync_mode)(struct sde_hw_ctl *ctx);
+
+	/**
+	 * Set ctl_path INTF master
+	 * @ctx          : ctl path ctx pointer
+	 * @intf_master  : Master Interface idx
+	 */
+	int (*set_intf_master)(struct sde_hw_ctl *ctx, u32 intf_master);
+
+	/**
+	 * Get ctl_path INTF master
+	 * @ctx   : ctl path ctx pointer
+	 */
+	int (*get_intf_master)(struct sde_hw_ctl *ctx);
 };
 
 /**
  * struct sde_hw_ctl : CTL PATH driver object
  * @base: hardware block base structure
  * @hw: block register map object
+ * @ctl_hyp_hw: ctl hyp block register map object
  * @idx: control path index
  * @caps: control path capabilities
  * @mixer_count: number of mixers
  * @mixer_hw_caps: mixer hardware capabilities
  * @flush: storage for pending ctl_flush managed via ops
  * @ops: operation list
+ * @dpu_idx: dpu index
  */
 struct sde_hw_ctl {
 	struct sde_hw_blk_reg_map hw;
 
+	struct sde_hw_blk_reg_map ctl_hyp_hw;
 	/* ctl path */
 	int idx;
 	const struct sde_ctl_cfg *caps;
@@ -587,6 +714,8 @@ struct sde_hw_ctl {
 
 	/* ops */
 	struct sde_hw_ctl_ops ops;
+
+	u32 dpu_idx;
 };
 
 /**
@@ -605,10 +734,13 @@ static inline struct sde_hw_ctl *to_sde_hw_ctl(struct sde_hw_blk_reg_map *hw)
  * @idx:  ctl_path index for which driver object is required
  * @addr: mapped register io address of MDP
  * @m :   pointer to mdss catalog data
+ * @dpu_idx: dpu index
+ * @hw_ctl_0: pointer to ctl0 hw block
  */
 struct sde_hw_blk_reg_map *sde_hw_ctl_init(enum sde_ctl idx,
 		void __iomem *addr,
-		struct sde_mdss_cfg *m);
+		struct sde_mdss_cfg *m,
+		u32 dpu_idx, struct sde_hw_ctl **hw_ctl_0);
 
 /**
  * sde_hw_ctl_destroy(): Destroys ctl driver context

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 #include <linux/iopoll.h>
@@ -9,6 +9,7 @@
 #include "sde_hw_catalog.h"
 #include "sde_hw_vbif.h"
 #include "sde_dbg.h"
+#include "sde_trace.h"
 
 #define VBIF_VERSION			0x0000
 #define VBIF_CLKON			0x0004
@@ -38,6 +39,11 @@
 #define VBIF_XIN_HALT_CTRL1		0x0204
 #define VBIF_AXI_HALT_CTRL0		0x0208
 #define VBIF_AXI_HALT_CTRL1		0x020c
+#define VBIF_PERF_CNT_ENn		0x0300
+#define VBIF_PERF_CLEARn		0x0320
+#define VBIF_PERF_SELn			0x0340
+#define VBIF_PERF_Ln			0x0360
+#define VBIF_PERF_Hn			0x0380
 #define VBIF_XINL_QOS_RP_REMAP_000	0x0550
 #define VBIF_XINL_QOS_LVL_REMAP_000	0x0590
 
@@ -114,6 +120,98 @@ static void sde_hw_set_mem_type_v1(struct sde_hw_vbif *vbif,
 	reg_val = SDE_REG_READ(c, VBIF_OUT_AXI_AINNERSHARED);
 	reg_val &= ~BIT(xin_id);
 	SDE_REG_WRITE(c, VBIF_OUT_AXI_AINNERSHARED, 0);
+}
+
+static void sde_hw_enable_dbg_counter(struct sde_hw_vbif *vbif,
+		u32 counter_id, bool enable)
+{
+	struct sde_hw_blk_reg_map *c = &vbif->hw;
+	u32 reg_val;
+
+	// 0x0AEB0300+0x4*n
+
+	if (counter_id > 3 || counter_id < 0)
+		return;
+
+	if (enable)
+		reg_val = 0x1;
+	else
+		reg_val = 0x0;
+
+	SDE_REG_WRITE(c, (VBIF_PERF_CNT_ENn + 0x4 * counter_id), reg_val);
+	wmb();
+}
+
+static void sde_hw_select_dbg_counter(struct sde_hw_vbif *vbif,
+		u32 counter_id, u32 event)
+{
+	struct sde_hw_blk_reg_map *c = &vbif->hw;
+	u32 reg_val;
+
+	//0x0AEB0340+0x4*n
+
+	if (counter_id > 3 || counter_id < 0)
+		return;
+
+	reg_val = event;
+
+	SDE_REG_WRITE(c, (VBIF_PERF_SELn + 0x4 * counter_id), reg_val);
+	wmb();
+}
+
+static void sde_hw_read_dbg_counter(struct sde_hw_vbif *vbif, bool reset_cnt)
+{
+	struct sde_hw_blk_reg_map *c = &vbif->hw;
+	u32 val_low, val_high;
+
+	// Ln - 0x0AEB0360+0x4*n
+	// Hn - 0x0AEB0380+0x4*n
+
+	val_low = SDE_REG_READ(c, (VBIF_PERF_Ln + 0x4 * 0));
+	val_high = SDE_REG_READ(c, (VBIF_PERF_Hn + 0x4 * 0));
+	//pr_info("counter[0]: val_low:0x%x val_high:0x%x\n", val_low, val_high);
+	SDE_EVT32(vbif->idx, 0, val_high, val_low, 0xc000);
+
+	val_low = SDE_REG_READ(c, (VBIF_PERF_Ln + 0x4 * 1));
+	val_high = SDE_REG_READ(c, (VBIF_PERF_Hn + 0x4 * 1));
+	//pr_info("counter[1]: val_low:0x%x val_high:0x%x\n", val_low, val_high);
+	SDE_EVT32(vbif->idx, 1, val_high, val_low, 0xc111);
+
+	val_low = SDE_REG_READ(c, (VBIF_PERF_Ln + 0x4 * 2));
+	val_high = SDE_REG_READ(c, (VBIF_PERF_Hn + 0x4 * 2));
+	//pr_info("counter[2]: val_low:0x%x val_high:0x%x\n", val_low, val_high);
+	SDE_EVT32(vbif->idx, 2, val_high, val_low, 0xc222);
+
+	val_low = SDE_REG_READ(c, (VBIF_PERF_Ln + 0x4 * 3));
+	val_high = SDE_REG_READ(c, (VBIF_PERF_Hn + 0x4 * 3));
+	//pr_info("counter[3]: val_low:0x%x val_high:0x%x\n", val_low, val_high);
+	SDE_EVT32(vbif->idx, 3, val_high, val_low, 0xc333);
+
+	//Clear here to make it more atomic, instead of a different function
+	if (reset_cnt) {
+		SDE_EVT32(vbif->idx, 0x111);
+		SDE_REG_WRITE(c, (VBIF_PERF_CLEARn + 0x4 * 0), 0x1);
+		SDE_REG_WRITE(c, (VBIF_PERF_CLEARn + 0x4 * 1), 0x1);
+		SDE_REG_WRITE(c, (VBIF_PERF_CLEARn + 0x4 * 2), 0x1);
+		SDE_REG_WRITE(c, (VBIF_PERF_CLEARn + 0x4 * 3), 0x1);
+		wmb();
+		SDE_REG_WRITE(c, (VBIF_PERF_CLEARn + 0x4 * 0), 0x0);
+		SDE_REG_WRITE(c, (VBIF_PERF_CLEARn + 0x4 * 1), 0x0);
+		SDE_REG_WRITE(c, (VBIF_PERF_CLEARn + 0x4 * 2), 0x0);
+		SDE_REG_WRITE(c, (VBIF_PERF_CLEARn + 0x4 * 3), 0x0);
+		wmb();
+		SDE_EVT32(vbif->idx, 0x222);
+	}
+}
+
+static u32 sde_hw_get_halt_status(struct sde_hw_vbif *vbif)
+{
+	struct sde_hw_blk_reg_map *c = &vbif->hw;
+	u32 reg_val;
+
+	reg_val = SDE_REG_READ(c, VBIF_XIN_HALT_CTRL1);
+
+	return reg_val;
 }
 
 static void sde_hw_set_limit_conf(struct sde_hw_vbif *vbif,
@@ -199,10 +297,19 @@ static void sde_hw_set_axi_halt(struct sde_hw_vbif *vbif)
 static int sde_hw_get_axi_halt_status(struct sde_hw_vbif *vbif)
 {
 	struct sde_hw_blk_reg_map *c = &vbif->hw;
-	int ctrl = 0;
+	int ctrl = 0, ret = 0;
+	u32 val;
 
-	return read_poll_timeout(sde_reg_read, ctrl, (ctrl & BIT(0)),
-			100, false, 4000, c, VBIF_AXI_HALT_CTRL1);
+	ret = read_poll_timeout(sde_reg_read, ctrl, (ctrl & BIT(0)),
+			100, 4000, false, c, VBIF_AXI_HALT_CTRL1);
+
+	/* check AXI port 0 & 1 status on error */
+	if (ret) {
+		val = SDE_REG_READ(c, VBIF_AXI_HALT_CTRL1);
+		ret = (val & (BIT(4) | BIT(5))) ? 0 : ret;
+	}
+
+	return ret;
 }
 
 static void sde_hw_set_qos_remap(struct sde_hw_vbif *vbif,
@@ -266,6 +373,10 @@ static void _setup_vbif_ops(const struct sde_mdss_cfg *m,
 		ops->set_mem_type = sde_hw_set_mem_type;
 	ops->clear_errors = sde_hw_clear_errors;
 	ops->set_write_gather_en = sde_hw_set_write_gather_en;
+	ops->enable_dbg_counter = sde_hw_enable_dbg_counter;
+	ops->select_dbg_counter = sde_hw_select_dbg_counter;
+	ops->read_dbg_counter = sde_hw_read_dbg_counter;
+	ops->get_halt_status = sde_hw_get_halt_status;
 }
 
 static const struct sde_vbif_cfg *_top_offset(enum sde_vbif vbif,

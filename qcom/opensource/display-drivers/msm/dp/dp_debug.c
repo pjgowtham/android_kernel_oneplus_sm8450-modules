@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -41,6 +41,8 @@ struct dp_debug_private {
 
 	char exe_mode[SZ_32];
 	char reg_dump[SZ_32];
+
+	const char *name;
 
 	struct dp_hpd *hpd;
 	struct dp_link *link;
@@ -398,6 +400,10 @@ static ssize_t dp_debug_read_crc(struct file *file, char __user *user_buff, size
 
 		sde_conn = to_sde_connector(drm_conn);
 		panel = sde_conn->drv_panel;
+		drm_connector_put(drm_conn);
+
+		if (!panel)
+			goto bail;
 	} else {
 		panel = debug->panel;
 	}
@@ -655,14 +661,15 @@ static ssize_t dp_debug_write_mst_con_id(struct file *file,
 
 	mst_port = sde_conn->mst_port;
 	dp_panel = sde_conn->drv_panel;
+	if (!dp_panel)
+		goto out;
 
-	if (debug->dp_debug.sim_mode) {
-		dp_sim_update_port_status(debug->sim_bridge,
-				mst_port->port_num, status);
-	} else {
+	if (debug->dp_debug.sim_mode)
+		dp_sim_update_port_status(debug->sim_bridge, mst_port->port_num, status);
+	else
 		dp_panel->mst_hide = (status == connector_status_disconnected);
-		drm_kms_helper_hotplug_event(connector->dev);
-	}
+
+	drm_kms_helper_hotplug_event(connector->dev);
 
 out:
 	drm_connector_put(connector);
@@ -1879,7 +1886,7 @@ static ssize_t dp_debug_write_dump(struct file *file,
 
 	/* qfprom register dump not supported */
 	if (!strcmp(debug->reg_dump, "qfprom_physical"))
-		strlcpy(debug->reg_dump, "clear", sizeof(debug->reg_dump));
+		strscpy(debug->reg_dump, "clear", sizeof(debug->reg_dump));
 end:
 	return len;
 }
@@ -2064,7 +2071,7 @@ static int dp_debug_init_mst(struct dp_debug_private *debug, struct dentry *dir)
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs create mst_con_id failed, rc=%d\n",
-		       DEBUG_NAME, rc);
+		       debug->name, rc);
 		return rc;
 	}
 
@@ -2073,7 +2080,7 @@ static int dp_debug_init_mst(struct dp_debug_private *debug, struct dentry *dir)
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs create mst_conn_info failed, rc=%d\n",
-		       DEBUG_NAME, rc);
+		       debug->name, rc);
 		return rc;
 	}
 
@@ -2082,7 +2089,7 @@ static int dp_debug_init_mst(struct dp_debug_private *debug, struct dentry *dir)
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DRM_ERROR("[%s] debugfs create mst_con_add failed, rc=%d\n",
-		       DEBUG_NAME, rc);
+		       debug->name, rc);
 		return rc;
 	}
 
@@ -2091,7 +2098,7 @@ static int dp_debug_init_mst(struct dp_debug_private *debug, struct dentry *dir)
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DRM_ERROR("[%s] debugfs create mst_con_remove failed, rc=%d\n",
-		       DEBUG_NAME, rc);
+		       debug->name, rc);
 		return rc;
 	}
 
@@ -2100,7 +2107,7 @@ static int dp_debug_init_mst(struct dp_debug_private *debug, struct dentry *dir)
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs mst_mode failed, rc=%d\n",
-		       DEBUG_NAME, rc);
+		       debug->name, rc);
 		return rc;
 	}
 
@@ -2109,7 +2116,7 @@ static int dp_debug_init_mst(struct dp_debug_private *debug, struct dentry *dir)
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs mst_sideband_mode failed, rc=%d\n",
-		       DEBUG_NAME, rc);
+		       debug->name, rc);
 		return rc;
 	}
 
@@ -2129,7 +2136,7 @@ static int dp_debug_init_link(struct dp_debug_private *debug,
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs max_bw_code failed, rc=%d\n",
-		       DEBUG_NAME, rc);
+		       debug->name, rc);
 		return rc;
 	}
 
@@ -2138,7 +2145,7 @@ static int dp_debug_init_link(struct dp_debug_private *debug,
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs max_pclk_khz failed, rc=%d\n",
-		       DEBUG_NAME, rc);
+		       debug->name, rc);
 		return rc;
 	}
 
@@ -2153,7 +2160,7 @@ static int dp_debug_init_link(struct dp_debug_private *debug,
 	file = debugfs_create_file("mmrm_clk_cb", 0644, dir, debug, &mmrm_clk_cb_fops);
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
-		DP_ERR("[%s] debugfs mmrm_clk_cb failed, rc=%d\n", DEBUG_NAME, rc);
+		DP_ERR("[%s] debugfs mmrm_clk_cb failed, rc=%d\n", debug->name, rc);
 		return rc;
 	}
 
@@ -2183,7 +2190,7 @@ static int dp_debug_init_sink_caps(struct dp_debug_private *debug,
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs create edid_modes failed, rc=%d\n",
-		       DEBUG_NAME, rc);
+		       debug->name, rc);
 		return rc;
 	}
 
@@ -2192,7 +2199,7 @@ static int dp_debug_init_sink_caps(struct dp_debug_private *debug,
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs create edid_modes_mst failed, rc=%d\n",
-		       DEBUG_NAME, rc);
+		       debug->name, rc);
 		return rc;
 	}
 
@@ -2201,7 +2208,7 @@ static int dp_debug_init_sink_caps(struct dp_debug_private *debug,
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs edid failed, rc=%d\n",
-			DEBUG_NAME, rc);
+			debug->name, rc);
 		return rc;
 	}
 
@@ -2210,7 +2217,7 @@ static int dp_debug_init_sink_caps(struct dp_debug_private *debug,
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs dpcd failed, rc=%d\n",
-			DEBUG_NAME, rc);
+			debug->name, rc);
 		return rc;
 	}
 
@@ -2235,7 +2242,7 @@ static int dp_debug_init_status(struct dp_debug_private *debug,
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs create file failed, rc=%d\n",
-		       DEBUG_NAME, rc);
+		       debug->name, rc);
 		return rc;
 	}
 
@@ -2244,7 +2251,7 @@ static int dp_debug_init_status(struct dp_debug_private *debug,
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs connected failed, rc=%d\n",
-			DEBUG_NAME, rc);
+			debug->name, rc);
 		return rc;
 	}
 
@@ -2252,7 +2259,7 @@ static int dp_debug_init_status(struct dp_debug_private *debug,
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs hdr failed, rc=%d\n",
-			DEBUG_NAME, rc);
+			debug->name, rc);
 		return rc;
 	}
 
@@ -2260,7 +2267,7 @@ static int dp_debug_init_status(struct dp_debug_private *debug,
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs hdr_mst failed, rc=%d\n",
-			DEBUG_NAME, rc);
+			debug->name, rc);
 		return rc;
 	}
 
@@ -2268,7 +2275,7 @@ static int dp_debug_init_status(struct dp_debug_private *debug,
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs hdcp failed, rc=%d\n",
-			DEBUG_NAME, rc);
+			debug->name, rc);
 		return rc;
 	}
 
@@ -2284,7 +2291,7 @@ static int dp_debug_init_sim(struct dp_debug_private *debug, struct dentry *dir)
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs hpd failed, rc=%d\n",
-			DEBUG_NAME, rc);
+			debug->name, rc);
 		return rc;
 	}
 
@@ -2292,7 +2299,7 @@ static int dp_debug_init_sim(struct dp_debug_private *debug, struct dentry *dir)
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs sim failed, rc=%d\n",
-			DEBUG_NAME, rc);
+			debug->name, rc);
 		return rc;
 	}
 
@@ -2301,7 +2308,7 @@ static int dp_debug_init_sim(struct dp_debug_private *debug, struct dentry *dir)
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs attention failed, rc=%d\n",
-			DEBUG_NAME, rc);
+			debug->name, rc);
 		return rc;
 	}
 
@@ -2334,7 +2341,7 @@ static int dp_debug_init_tpg(struct dp_debug_private *debug, struct dentry *dir)
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs tpg failed, rc=%d\n",
-		       DEBUG_NAME, rc);
+		       debug->name, rc);
 		return rc;
 	}
 
@@ -2352,7 +2359,7 @@ static int dp_debug_init_reg_dump(struct dp_debug_private *debug,
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs register failed, rc=%d\n",
-		       DEBUG_NAME, rc);
+		       debug->name, rc);
 		return rc;
 	}
 
@@ -2361,7 +2368,7 @@ static int dp_debug_init_reg_dump(struct dp_debug_private *debug,
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		DP_ERR("[%s] debugfs dump failed, rc=%d\n",
-			DEBUG_NAME, rc);
+			debug->name, rc);
 		return rc;
 	}
 
@@ -2399,6 +2406,15 @@ static int dp_debug_init_configs(struct dp_debug_private *debug,
 
 }
 
+static int dp_debug_init_fifo_error(struct dp_debug_private *debug,
+		struct dentry *dir)
+{
+	int rc = 0;
+
+	debugfs_create_bool("fifo_error_enable", 0644, dir, &debug->parser->fifo_error_enable);
+	return rc;
+}
+
 static int dp_debug_init(struct dp_debug *dp_debug)
 {
 	int rc = 0;
@@ -2412,14 +2428,18 @@ static int dp_debug_init(struct dp_debug *dp_debug)
 		return 0;
 	}
 
-	dir = debugfs_create_dir(DEBUG_NAME, NULL);
+	debug->name = of_get_property(debug->dev->of_node, "label", NULL);
+	if (!debug->name)
+		debug->name = DEBUG_NAME;
+
+	dir = debugfs_create_dir(debug->name, NULL);
 	if (IS_ERR_OR_NULL(dir)) {
 		if (!dir)
 			rc = -EINVAL;
 		else
 			rc = PTR_ERR(dir);
 		DP_ERR("[%s] debugfs create dir failed, rc = %d\n",
-		       DEBUG_NAME, rc);
+		       debug->name, rc);
 		goto error;
 	}
 
@@ -2466,6 +2486,10 @@ static int dp_debug_init(struct dp_debug *dp_debug)
 		goto error_remove_dir;
 
 	rc = dp_debug_init_configs(debug, dir);
+	if (rc)
+		goto error_remove_dir;
+
+	rc = dp_debug_init_fifo_error(debug, dir);
 	if (rc)
 		goto error_remove_dir;
 

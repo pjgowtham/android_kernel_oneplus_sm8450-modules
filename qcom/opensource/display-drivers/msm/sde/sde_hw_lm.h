@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2019, 2021, The Linux Foundation. All rights reserved.
  */
 
@@ -39,13 +40,13 @@ struct sde_hw_lm_ops {
 	 * Alpha blending configuration
 	 * for the specified stage
 	 */
-	void (*setup_blend_config)(struct sde_hw_mixer *ctx, uint32_t stage,
-		uint32_t fg_alpha, uint32_t bg_alpha, uint32_t blend_op);
+	void (*setup_blend_config)(struct sde_hw_mixer *ctx, u32 stage,
+		u32 fg_alpha, u32 bg_alpha, u32 blend_op);
 
 	/*
 	 * Alpha color component selection from either fg or bg
 	 */
-	void (*setup_alpha_out)(struct sde_hw_mixer *ctx, uint32_t mixer_op);
+	void (*setup_alpha_out)(struct sde_hw_mixer *ctx, u32 mixer_op);
 
 	/**
 	 * setup_border_color : enable/disable border color
@@ -84,6 +85,33 @@ struct sde_hw_lm_ops {
 	/* setup_noise_layer: enables/disables noise layer */
 	int (*setup_noise_layer)(struct sde_hw_mixer *ctx,
 		struct sde_hw_noise_layer_cfg *cfg);
+
+	/**
+	 * Configure layer mixer to pipe configuration
+	 * @ctx: Pointer to layer mixer context
+	 * @lm:  layer mixer enumeration
+	 * @cfg: blend stage configuration
+	 * @disable_border: if true disable border, else enable border out
+	 */
+	int (*setup_blendstage)(struct sde_hw_mixer *ctx,
+		enum sde_lm lm, struct sde_hw_stage_cfg *cfg,
+		bool disable_border);
+
+	/**
+	 * Clear layer mixer to pipe configuration
+	 * @ctx: Pointer to layer mixer context
+	 */
+	int (*clear_all_blendstages)(struct sde_hw_mixer *ctx);
+
+	/**
+	 * Get all the sspp staged on a layer mixer
+	 * @ctx: Pointer to layer mixer context
+	 * @lm: layer mixer enumeration
+	 * @info: structure to populate connected sspp index info
+	 */
+	int (*get_staged_sspp)(struct sde_hw_mixer *ctx,
+		enum sde_lm lm, struct sde_sspp_index_info *info);
+
 };
 
 struct sde_hw_mixer {

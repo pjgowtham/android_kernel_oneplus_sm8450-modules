@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021 The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -31,8 +31,11 @@
 #include "sde_hw_ds.h"
 #include "sde_color_processing.h"
 #include "sde_encoder.h"
+#include "sde_aiqe_common.h"
 
 #define SDE_CRTC_NAME_SIZE	12
+
+#define DRM_NOISE_ATTN_MAX_10_BIT_ALPHA 65535
 
 /* define the maximum number of in-flight frame events */
 /* Expand it to 2x for handling atleast 2 connectors safely */
@@ -62,6 +65,16 @@ enum sde_crtc_output_capture_point {
 	CAPTURE_MIXER_OUT,
 	CAPTURE_DSPP_OUT,
 	CAPTURE_DEMURA_OUT
+};
+
+/**
+ * enum fence_error_handle_flag: the flag to enable/disable fence error handling in kernel
+ * @FENCE_ERROR_HANDLE_DISABLE : disable fence error handling in kernel
+ * @FENCE_ERROR_HANDLE_ENABLE : enable fence error handling in kernel
+ */
+enum fence_error_handle_flag {
+	FENCE_ERROR_HANDLE_DISABLE,
+	FENCE_ERROR_HANDLE_ENABLE,
 };
 
 /**
@@ -107,6 +120,7 @@ struct sde_crtc_retire_event {
  * @hw_ds:	DS HW driver context
  * @encoder:	Encoder attached to this lm & ctl
  * @mixer_op_mode: mixer blending operation mode
+ * @is_lb_mixer: True for mixers used in cac first pass
  */
 struct sde_crtc_mixer {
 	struct sde_hw_mixer *hw_lm;
@@ -115,6 +129,7 @@ struct sde_crtc_mixer {
 	struct sde_hw_ds *hw_ds;
 	struct drm_encoder *encoder;
 	u32 mixer_op_mode;
+	bool is_lb_mixer;
 };
 
 /**
@@ -353,10 +368,6 @@ enum sde_crtc_hw_fence_flags {
  * @cache_type      : Current static image cache type to use
  * @dspp_blob_info  : blob containing dspp hw capability information
  * @cached_encoder_mask : cached encoder_mask for vblank work
- * @valid_skip_blend_plane: flag to indicate if skip blend plane is valid
- * @skip_blend_plane: enabled plane that has skip blending
- * @skip_blend_plane_w: skip blend plane width
- * @skip_blend_plane_h: skip blend plane height
  * @line_time_in_ns : current mode line time in nano sec is needed for QOS update
  * @frame_data      : Framedata data structure
  * @previous_opr_value : store previous opr values
@@ -365,6 +376,17 @@ enum sde_crtc_hw_fence_flags {
  *                          sde_crtc_hw_fence_flags for available fields.
  * @hwfence_out_fences_skip: number of frames to skip before create a new hw-fence, this can be
  *                   used to slow-down creation of output hw-fences for debugging purposes.
+ * @input_fence_status : input fence status, negative if the fence has been completed with error.
+ * @hanle_fence_error_bw_update: bool to indicate if it is fence error and need to avoid bw vote.
+ * @framedone_event_notify_enabled: flag to indicate if framedone notify is enabled or not
+ * @mdnie_art_event_notify_enabled: flag to indicate if art done notify is enabled or not
+ * @copr_status_event_notify_enabled: flag to indicate if copr status notify is enabled or not
+ * @mdnie_ipc_disabled: flag to indicate if mdnie ipc is disabled or not
+ * @aiqe_top_level: aiqe top level mutex and mask
+ * @ai_scaler_res: struct stores ai scaler enable flag and resolution
+ * @skip_blend_planes: array holding skip blend plane list
+ * @sde_cesta_client: Pointer to sde_cesta client for the encoder.
+ * @mdnie_art_frame_count: number of frames required for mdnie art to converge.
  */
 struct sde_crtc {
 	struct drm_crtc base;
@@ -466,10 +488,6 @@ struct sde_crtc {
 	struct drm_property_blob *dspp_blob_info;
 	u32 cached_encoder_mask;
 
-	bool valid_skip_blend_plane;
-	enum sde_sspp skip_blend_plane;
-	u32 skip_blend_plane_w;
-	u32 skip_blend_plane_h;
 	u32 line_time_in_ns;
 
 	struct sde_frame_data frame_data;
@@ -479,6 +497,20 @@ struct sde_crtc {
 
 	DECLARE_BITMAP(hwfence_features_mask, HW_FENCE_FEATURES_MAX);
 	u32 hwfence_out_fences_skip;
+	int input_fence_status;
+	bool handle_fence_error_bw_update;
+
+	bool framedone_event_notify_enabled;
+	bool mdnie_art_event_notify_enabled;
+	bool copr_status_event_notify_enabled;
+	bool mdnie_ipc_disabled;
+
+	struct sde_aiqe_top_level aiqe_top_level;
+	struct sde_io_res ai_scaler_res;
+	struct sde_cp_skip_blend_plane skip_blend_planes[SB_PLANE_MAX];
+
+	struct sde_cesta_client *cesta_client;
+	u32 mdnie_art_frame_count;
 };
 
 enum sde_crtc_dirty_flags {
@@ -492,13 +524,11 @@ enum sde_crtc_dirty_flags {
 
 /**
  * struct sde_line_insertion_param - sde line insertion parameters
- * @panel_line_insertion_enable: line insertion support status
  * @padding_height: panel height after line padding
  * @padding_active: active lines in panel stacking pattern
  * @padding_dummy: dummy lines in panel stacking pattern
  */
 struct sde_line_insertion_param {
-	bool panel_line_insertion_enable;
 	u32 padding_height;
 	u32 padding_active;
 	u32 padding_dummy;
@@ -520,7 +550,6 @@ struct sde_line_insertion_param {
  * @lm_roi        : Current LM ROI, possibly sub-rectangle of mode.
  *                  Origin top left of CRTC.
  * @user_roi_list : List of user's requested ROIs as from set property
- * @cached_user_roi_list : Copy of user_roi_list from previous PU frame
  * @property_state: Local storage for msm_prop properties
  * @property_values: Current crtc property values
  * @input_fence_timeout_ns : Cached input fence timeout, in ns
@@ -542,6 +571,11 @@ struct sde_line_insertion_param {
  * @cont_splash_populated: State was populated as part of cont. splash
  * @param: sde line insertion parameters
  * @hwfence_in_fences_set: input hw fences are configured for the commit
+ * @is_loopback_mode: boolean variable to indicate if crtc is running in loopback mode
+ * @in_loopback_transition: boolean variable to indicate if crtc is transitioning in or out
+				of loopback mode
+ * @cac_mixer_roi: stores the mixer width and height for loopback mixers in crtc
+ * @num_prim_mixers: number of mixers driving the primary display in loopback usecase
  */
 struct sde_crtc_state {
 	struct drm_crtc_state base;
@@ -557,7 +591,7 @@ struct sde_crtc_state {
 	struct sde_rect crtc_roi;
 	struct sde_rect lm_bounds[MAX_MIXERS_PER_CRTC];
 	struct sde_rect lm_roi[MAX_MIXERS_PER_CRTC];
-	struct msm_roi_list user_roi_list, cached_user_roi_list;
+	struct msm_roi_list user_roi_list;
 
 	struct msm_property_state property_state;
 	struct msm_property_value property_values[CRTC_PROP_COUNT];
@@ -584,6 +618,10 @@ struct sde_crtc_state {
 	bool cont_splash_populated;
 	struct sde_line_insertion_param line_insertion;
 	bool hwfence_in_fences_set;
+	bool is_loopback_mode;
+	bool in_loopback_transition;
+	struct sde_io_res cac_mixer_roi[MAX_MIXERS_PER_CRTC];
+	uint32_t num_prim_mixers;
 };
 
 enum sde_crtc_irq_state {
@@ -1002,6 +1040,30 @@ static inline void sde_crtc_get_ds_io_res(struct drm_crtc_state *state, struct s
 }
 
 /**
+ * sde_crtc_no_frame_in_progress - Return false in frame pending/in progress
+ * @crtc: pointer to drm crtc
+ */
+static inline bool sde_crtc_no_frame_in_progress(struct drm_crtc *crtc)
+{
+	struct sde_crtc *sde_crtc = NULL;
+
+	sde_crtc = to_sde_crtc(crtc);
+	if (sde_crtc && !sde_crtc_frame_pending(crtc) && !sde_crtc->kickoff_in_progress)
+		return true;
+
+	return false;
+}
+
+/**
+ * sde_crtc_get_ai_scaler_io_res - populates the AI scaler src/dst w/h
+ * @state: pointer to drm crtc state
+ */
+static inline void sde_crtc_get_ai_scaler_io_res(struct drm_crtc_state *state)
+{
+	sde_cp_get_ai_scaler_io_res(state);
+}
+
+/**
  * sde_crtc_get_secure_transition - determines the operations to be
  * performed before transitioning to secure state
  * This function should be called after swapping the new state
@@ -1167,14 +1229,6 @@ struct drm_encoder *sde_crtc_get_src_encoder_of_clone(struct drm_crtc *crtc);
  */
 void _sde_crtc_vm_release_notify(struct drm_crtc *crtc);
 
-/*
- * sde_crtc_is_line_insertion_supported - get lineinsertion
- * feature bit value from panel
- * @drm_crtc:    Pointer to drm crtc structure
- * @Return: line insertion support status
- */
-bool sde_crtc_is_line_insertion_supported(struct drm_crtc *crtc);
-
 /**
  * sde_crtc_calc_vpadding_param - calculate vpadding parameters
  * @state: Pointer to DRM crtc state object
@@ -1184,7 +1238,59 @@ bool sde_crtc_is_line_insertion_supported(struct drm_crtc *crtc);
  * @padding_start: Padding start offset
  * @padding_height: Padding height in total
  */
-void sde_crtc_calc_vpadding_param(struct drm_crtc_state *state, u32 crtc_y, u32 crtc_h,
-				  u32 *padding_y, u32 *padding_start, u32 *padding_height);
+int sde_crtc_calc_vpadding_param(struct drm_crtc_state *state, u32 crtc_y, u32 crtc_h,
+				 u32 *padding_y, u32 *padding_start, u32 *padding_height);
 
+/**
+ * sde_crtc_mdnie_art_event_notify - notify art done to userspace
+ * @crtc: Pointer to drm_crtc.
+ */
+void sde_crtc_mdnie_art_event_notify(struct drm_crtc *crtc);
+
+/**
+ * sde_crtc_force_async_mode - force hw flush sync mode to async
+ * @enc:Pointer to drm_encoder
+ * @crtc_state: Pointer to DRM crtc state object
+ */
+void sde_crtc_force_async_mode(struct drm_encoder *enc, struct drm_crtc_state *crtc_state);
+
+/**
+ * sde_get_primary_ctl_in_lb - Returns primary ctl for loopback encoder
+ * @crtc_state: Pointer to DRM crtc state object
+ */
+struct sde_hw_ctl *sde_get_primary_ctl_in_lb(struct drm_crtc_state *crtc_state);
+
+/**
+ * sde_crtc_state_in_lb_mode - Returns true if crtc state is in loopback mode, false otherwise
+ * @state: pointer to crtc state
+ */
+bool sde_crtc_state_in_lb_mode(struct drm_crtc_state *state);
+
+/**
+ * sde_crtc_in_lb_transition - Checks if crtc is transitioning from loopback cac
+ *				to cac disable or vice-versa
+ * @old_state: pointer to old crtc state
+ * @new_state: pointer to new crtc state
+ */
+bool sde_crtc_in_lb_transition(struct drm_crtc_state *old_state,
+			struct drm_crtc_state *new_state);
+
+/**
+ * sde_crtc_is_power_on_frame - checks whether the current commit is a power on commit
+ * @crtc: pointer to crtc
+ */
+static inline bool sde_crtc_is_power_on_frame(struct drm_crtc *crtc)
+{
+	if (!crtc || !crtc->state)
+		return false;
+
+	SDE_EVT32(crtc->state->active_changed, crtc->state->active);
+	return crtc->state->active_changed && crtc->state->active;
+}
+
+/**
+ * sde_crtc_copr_status_event_notify - notify copr status to userspace
+ * @crtc: Pointer to drm_crtc.
+ */
+void sde_crtc_copr_status_event_notify(struct drm_crtc *crtc);
 #endif /* _SDE_CRTC_H_ */

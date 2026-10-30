@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -138,6 +138,14 @@ void dsi_convert_to_drm_mode(const struct dsi_display_mode *dsi_mode,
 				struct drm_display_mode *drm_mode);
 
 /**
+ * dsi_conn_check_cmd_defined - check if a command is defined
+ * @display: Pointer to private display structure
+ * @type: Enum value of DSI command
+ * Returns: True if given command is defined
+ */
+bool dsi_conn_check_cmd_defined(void *display, enum dsi_cmd_set_type type);
+
+/**
  * dsi_conn_prepare_commit - program pre commit time features
  * @display: Pointer to private display structure
  * @params: Parameters for pre commit programming
@@ -188,4 +196,13 @@ int dsi_conn_get_qsync_min_fps(struct drm_connector_state *conn_state);
  * Return: AVR step fps rate or -ve error code.
  */
 int dsi_conn_get_avr_step_fps(struct drm_connector_state *conn_state);
+
+/**
+ * dsi_conn_dcs_cmd_tx() - send command to panel based on enum
+ * @conn_state:         Pointer to sde_connector structure
+ * @cmd:                Enum identifying the command
+ *
+ * Return: Zero or -ve error code.
+ */
+int dsi_conn_dcs_cmd_tx(struct drm_connector_state *conn_state, enum dsi_cmd_set_type cmd);
 #endif /* _DSI_DRM_H_ */

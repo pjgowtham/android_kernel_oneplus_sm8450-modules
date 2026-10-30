@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -229,24 +229,35 @@ struct drm_msm_3d_gamut {
 };
 
 #define PGC_TBL_LEN 512
+#define PGC_TBL_LEN_EXTENDED 128
 #define PGC_8B_ROUND (1 << 0)
+#define PGC_HIGHPREC_EN (1 << 1)
 /**
  * struct drm_msm_pgc_lut - pgc lut feature structure
  * @flags: flags for the featue values can be:
  *         - PGC_8B_ROUND
+ *         - PGC_HIGHPREC_EN
  * @c0: color0 component lut
  * @c1: color1 component lut
  * @c2: color2 component lut
+ * @c0_extended: extended color0 component lut
+ * @c1_extended: extended color1 component lut
+ * @c2_extended: extended color2 component lut
  */
 struct drm_msm_pgc_lut {
 	__u64 flags;
 	__u32 c0[PGC_TBL_LEN];
 	__u32 c1[PGC_TBL_LEN];
 	__u32 c2[PGC_TBL_LEN];
+	__u32 c0_extended[PGC_TBL_LEN_EXTENDED];
+	__u32 c1_extended[PGC_TBL_LEN_EXTENDED];
+	__u32 c2_extended[PGC_TBL_LEN_EXTENDED];
 };
 
 #define IGC_TBL_LEN 256
+#define IGC_TBL_LEN_EXTENDED 128
 #define IGC_DITHER_ENABLE (1 << 0)
+#define IGC_HIGH_PREC_ENABLE (1 << 1)
 /**
  * struct drm_msm_igc_lut - igc lut feature structure
  * @flags: flags for the feature customization, values can be:
@@ -259,6 +270,9 @@ struct drm_msm_pgc_lut {
  * @c0_last: color0 lut_last component
  * @c1_last: color1 lut_last component
  * @c2_last: color2 lut_last component
+ * @c0_extended: extended color0 component lut
+ * @c1_extended: extended color1 component lut
+ * @c2_extended: extended color2 component lut
  */
 struct drm_msm_igc_lut {
 	__u64 flags;
@@ -269,6 +283,9 @@ struct drm_msm_igc_lut {
 	__u32 c0_last;
 	__u32 c1_last;
 	__u32 c2_last;
+	__u32 c0_extended[IGC_TBL_LEN_EXTENDED];
+	__u32 c1_extended[IGC_TBL_LEN_EXTENDED];
+	__u32 c2_extended[IGC_TBL_LEN_EXTENDED];
 };
 #define LAST_LUT 2
 
@@ -646,6 +663,7 @@ struct drm_msm_spr_udc_cfg {
 #define DEMURA_PRECISION_0 (0 << 2)
 #define DEMURA_PRECISION_1 (1 << 2)
 #define DEMURA_PRECISION_2 (2 << 2)
+#define DEMURA_FLAG_3
 
 struct drm_msm_dem_cfg {
 	__u64 flags;
@@ -694,6 +712,18 @@ struct drm_msm_dem_cfg {
 	__u32 c2_depth;
 	__u32 src_id;
 	__u32 cfg0_param2_idx;
+
+	__u32 cfg0_param5_len;
+	__u32 cfg0_param5[CFG0_PARAM_LEN];
+	__u32 cfg0_param6_len;
+	__u32 cfg0_param6[CFG0_PARAM_LEN];
+
+	__u32 cfg0_param4_1_len;
+	__u32 cfg0_param4_1[CFG0_PARAM_LEN];
+	__u32 cfg0_param5_1_len;
+	__u32 cfg0_param5_1[CFG0_PARAM_LEN];
+	__u32 cfg0_param6_1_len;
+	__u32 cfg0_param6_1[CFG0_PARAM_LEN];
 };
 
 struct drm_msm_dem_cfg0_param2 {

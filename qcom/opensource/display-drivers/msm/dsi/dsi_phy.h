@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _DSI_PHY_H_
@@ -61,6 +61,7 @@ enum phy_ulps_return_type {
  * @index:             Instance id.
  * @name:              Name of the PHY instance.
  * @refcount:          Reference count.
+ * @sync_en_refcount:  Reference count for each phy in sync mode.
  * @phy_lock:          Mutex for hardware and object access.
  * @ver_info:          Version specific phy parameters.
  * @hw:                DSI PHY hardware object.
@@ -84,6 +85,7 @@ struct msm_dsi_phy {
 	int index;
 	const char *name;
 	u32 refcount;
+	u32 sync_en_refcount;
 	struct mutex phy_lock;
 
 	const struct dsi_ver_spec_info *ver_info;
@@ -326,11 +328,13 @@ void dsi_phy_drv_unregister(void);
  * dsi_phy_update_phy_timings() - Update dsi phy timings
  * @phy:	DSI PHY handle
  * @config:	DSI Host config parameters
+ * @use_mode_bit_clk:	Boolean to indicate whether reacalculate dsi
+ *			bitclk or use the existing bitclk(for dynamic clk case).
  *
  * Return: error code.
  */
 int dsi_phy_update_phy_timings(struct msm_dsi_phy *phy,
-			       struct dsi_host_config *config);
+		struct dsi_host_config *config, bool use_mode_bit_clk);
 
 /**
  * dsi_phy_config_dynamic_refresh() - Configure dynamic refresh registers
@@ -354,7 +358,7 @@ void dsi_phy_dynamic_refresh_trigger_sel(struct msm_dsi_phy *phy,
  * @phy:	DSI PHY handle
  * @is_master:	Boolean to indicate if for master or slave.
  */
-void dsi_phy_dynamic_refresh_trigger(struct msm_dsi_phy *phy, bool is_master);
+void dsi_phy_dynamic_refresh_trigger(struct msm_dsi_phy *phy, bool is_master, bool prog_dr);
 
 /**
  * dsi_phy_dynamic_refresh_clear() - clear dynamic refresh config

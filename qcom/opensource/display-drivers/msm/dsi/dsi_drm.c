@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -16,6 +16,19 @@
 #include "sde_dbg.h"
 #include "msm_drv.h"
 #include "sde_encoder.h"
+
+#ifdef OPLUS_FEATURE_DISPLAY
+#include "oplus_display_interface.h"
+#endif /* OPLUS_FEATURE_DISPLAY */
+#ifdef OPLUS_FEATURE_DISPLAY_ADFR
+#include "oplus_adfr.h"
+#endif /* OPLUS_FEATURE_DISPLAY_ADFR */
+#ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
+#include "oplus_onscreenfingerprint.h"
+#endif /* OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT */
+#if defined(CONFIG_PXLW_IRIS)
+#include "dsi_iris_api.h"
+#endif
 
 #define to_dsi_bridge(x)     container_of((x), struct dsi_bridge, base)
 #define to_dsi_state(x)      container_of((x), struct dsi_connector_state, base)
@@ -92,6 +105,8 @@ static void msm_parse_mode_priv_info(const struct msm_display_mode *msm_mode,
 		dsi_mode->dsi_mode_flags |= DSI_MODE_FLAG_POMS_TO_CMD;
 	if (msm_is_mode_seamless_dyn_clk(msm_mode))
 		dsi_mode->dsi_mode_flags |= DSI_MODE_FLAG_DYN_CLK;
+	if (msm_is_mode_bpp_switch(msm_mode))
+		dsi_mode->dsi_mode_flags |= DSI_MODE_FLAG_NONDSC_BPP_SWITCH;
 }
 
 void dsi_convert_to_drm_mode(const struct dsi_display_mode *dsi_mode,
@@ -160,6 +175,8 @@ static void dsi_convert_to_msm_mode(const struct dsi_display_mode *dsi_mode,
 		msm_mode->private_flags |= MSM_MODE_FLAG_SEAMLESS_POMS_CMD;
 	if (dsi_mode->dsi_mode_flags & DSI_MODE_FLAG_DYN_CLK)
 		msm_mode->private_flags |= MSM_MODE_FLAG_SEAMLESS_DYN_CLK;
+	if (dsi_mode->dsi_mode_flags & DSI_MODE_FLAG_NONDSC_BPP_SWITCH)
+		msm_mode->private_flags |= MSM_MODE_FLAG_NONDSC_BPP_SWITCH;
 }
 
 static int dsi_bridge_attach(struct drm_bridge *bridge,
@@ -196,6 +213,12 @@ static void dsi_bridge_pre_enable(struct drm_bridge *bridge)
 	if (bridge->encoder->crtc->state->active_changed)
 		atomic_set(&c_bridge->display->panel->esd_recovery_pending, 0);
 
+#ifdef OPLUS_FEATURE_DISPLAY
+	if (oplus_display_ops.bridge_pre_enable) {
+		oplus_display_ops.bridge_pre_enable(c_bridge->display, &c_bridge->dsi_mode);
+	}
+#endif /* OPLUS_FEATURE_DISPLAY */
+
 	/* By this point mode should have been validated through mode_fixup */
 	rc = dsi_display_set_mode(c_bridge->display,
 			&(c_bridge->dsi_mode), 0x0);
@@ -204,6 +227,16 @@ static void dsi_bridge_pre_enable(struct drm_bridge *bridge)
 		       c_bridge->id, rc);
 		return;
 	}
+#ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
+	mutex_lock(&c_bridge->display->display_lock);
+	if (oplus_display_ops.bridge_post_enable) {
+		oplus_display_ops.bridge_post_enable(c_bridge->display, &c_bridge->dsi_mode, false);
+	}
+	mutex_unlock(&c_bridge->display->display_lock);
+	if (oplus_ofp_is_supported() && oplus_ofp_video_mode_30hz_aod_is_enabled()) {
+		oplus_ofp_video_mode_refresh_flag_update(&(c_bridge->dsi_mode));
+	}
+#endif /* OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT */
 
 	if (c_bridge->dsi_mode.dsi_mode_flags &
 		(DSI_MODE_FLAG_SEAMLESS | DSI_MODE_FLAG_VRR |
@@ -266,6 +299,10 @@ static void dsi_bridge_enable(struct drm_bridge *bridge)
 
 	if (display && display->drm_conn) {
 		sde_connector_helper_bridge_enable(display->drm_conn);
+#if defined(CONFIG_PXLW_IRIS)
+		if (iris_is_chip_supported())
+			iris_ioctl_unlock();
+#endif /* CONFIG_PXLW_IRIS */
 		if (display->poms_pending) {
 			display->poms_pending = false;
 			sde_connector_schedule_status_work(display->drm_conn,
@@ -301,6 +338,10 @@ static void dsi_bridge_disable(struct drm_bridge *bridge)
 						&conn_state->msm_mode);
 
 		sde_connector_helper_bridge_disable(display->drm_conn);
+#if defined(CONFIG_PXLW_IRIS)
+		if (iris_is_chip_supported())
+			iris_ioctl_lock();
+#endif /* CONFIG_PXLW_IRIS */
 	}
 
 	rc = dsi_display_pre_disable(c_bridge->display);
@@ -416,6 +457,7 @@ static bool _dsi_bridge_mode_validate_and_fixup(struct drm_bridge *bridge,
 
 	convert_to_dsi_mode(cur_mode, &cur_dsi_mode);
 	msm_parse_mode_priv_info(&old_conn_state->msm_mode, &cur_dsi_mode);
+	cur_dsi_mode.pixel_format_caps = display->panel->host_config.dst_format;
 
 	if (cur_dsi_mode.priv_info) {
 		// in TUI, sometimes msm_mode->private == NULL
@@ -512,7 +554,8 @@ static bool dsi_bridge_mode_fixup(struct drm_bridge *bridge,
 	msm_parse_mode_priv_info(&conn_state->msm_mode, &dsi_mode);
 	new_sub_mode.dsc_mode = sde_connector_get_property(drm_conn_state,
 				CONNECTOR_PROP_DSC_MODE);
-
+	new_sub_mode.pixel_format_mode = sde_connector_get_property(drm_conn_state,
+				CONNECTOR_PROP_BPP_MODE);
 	/*
 	 * retrieve dsi mode from dsi driver's cache since not safe to take
 	 * the drm mode config mutex in all paths
@@ -526,6 +569,7 @@ static bool dsi_bridge_mode_fixup(struct drm_bridge *bridge,
 	dsi_mode.priv_info = panel_dsi_mode->priv_info;
 	dsi_mode.dsi_mode_flags = panel_dsi_mode->dsi_mode_flags;
 	dsi_mode.panel_mode_caps = panel_dsi_mode->panel_mode_caps;
+	dsi_mode.pixel_format_caps = panel_dsi_mode->pixel_format_caps;
 	dsi_mode.timing.dsc_enabled = dsi_mode.priv_info->dsc_enabled;
 	dsi_mode.timing.dsc = &dsi_mode.priv_info->dsc;
 
@@ -553,6 +597,11 @@ static bool dsi_bridge_mode_fixup(struct drm_bridge *bridge,
 		DSI_ERR("[%s] failed to validate dsi bridge mode.\n", display->name);
 		return false;
 	}
+
+#ifdef OPLUS_FEATURE_DISPLAY
+	if (display->is_cont_splash_enabled)
+		dsi_mode.dsi_mode_flags &= ~DSI_MODE_FLAG_DMS;
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 	/* Reject seamless transition when active changed */
 	if (crtc_state->active_changed &&
@@ -645,6 +694,8 @@ int dsi_conn_get_mode_info(struct drm_connector *connector,
 	mode_info->jitter_denom = dsi_mode->priv_info->panel_jitter_denom;
 	mode_info->dfps_maxfps = dsi_drm_get_dfps_maxfps(display);
 	mode_info->panel_mode_caps = dsi_mode->panel_mode_caps;
+	mode_info->bpp = dsi_mode->bpp;
+	mode_info->pixel_format_caps = dsi_mode->pixel_format_caps;
 	mode_info->mdp_transfer_time_us = dsi_mode->priv_info->mdp_transfer_time_us;
 	mode_info->mdp_transfer_time_us_min = dsi_mode->priv_info->mdp_transfer_time_us_min;
 	mode_info->mdp_transfer_time_us_max = dsi_mode->priv_info->mdp_transfer_time_us_max;
@@ -652,12 +703,7 @@ int dsi_conn_get_mode_info(struct drm_connector *connector,
 	mode_info->qsync_min_fps = dsi_mode->timing.qsync_min_fps;
 	mode_info->avr_step_fps = dsi_mode->timing.avr_step_fps;
 	mode_info->wd_jitter = dsi_mode->priv_info->wd_jitter;
-
-	mode_info->vpadding = dsi_display->panel->host_config.vpadding;
-	if (mode_info->vpadding < drm_mode->vdisplay) {
-		mode_info->vpadding = 0;
-		dsi_display->panel->host_config.line_insertion_enable = 0;
-	}
+	mode_info->te_pulse_width_us = dsi_mode->timing.te_pulse_width_us;
 
 	memcpy(&mode_info->topology, &dsi_mode->priv_info->topology,
 			sizeof(struct msm_display_topology));
@@ -677,7 +723,7 @@ int dsi_conn_get_mode_info(struct drm_connector *connector,
 			return rc;
 		}
 	}
-
+	mode_info->freq_step_list = &dsi_mode->priv_info->freq_step_list;
 	mode_info->clk_rate = dsi_mode->timing.clk_rate_hz;
 
 	if (dsi_mode->priv_info->dsc_enabled) {
@@ -753,6 +799,25 @@ int dsi_conn_get_avr_step_fps(struct drm_connector_state *conn_state)
 
 	priv_info = (struct dsi_display_mode_priv_info *)(msm_mode->private);
 	return priv_info->avr_step_fps;
+}
+
+int dsi_conn_dcs_cmd_tx(struct drm_connector_state *conn_state, enum dsi_cmd_set_type cmd)
+{
+	struct drm_connector *drm_conn;
+	struct sde_connector *sde_conn;
+	struct dsi_display *display;
+
+	drm_conn = conn_state->connector;
+	sde_conn = to_sde_connector(drm_conn);
+
+	if (!sde_conn)
+		return -EINVAL;
+
+	display = sde_conn->display;
+	if (!display)
+		return -EINVAL;
+
+	return dsi_display_dcs_cmd_tx(display, cmd);
 }
 
 int dsi_conn_set_info_blob(struct drm_connector *connector,
@@ -873,9 +938,17 @@ int dsi_conn_set_info_blob(struct drm_connector *connector,
 	sde_kms_info_add_keyint(info, "max os brightness", panel->bl_config.brightness_max_level);
 	sde_kms_info_add_keyint(info, "max panel backlight", panel->bl_config.bl_max_level);
 
-	if (panel->spr_info.enable)
+#ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
+	sde_kms_info_add_keyint(info, "exit_aod_cost_frame", panel->oplus_panel.aod_off_frame_cost);
+#endif
+
+	if (panel->spr_info.enable) {
 		sde_kms_info_add_keystr(info, "spr_pack_type",
 			msm_spr_pack_type_str[panel->spr_info.pack_type]);
+
+		sde_kms_info_add_keystr(info, "spr_pack_type_mode",
+			msm_spr_pack_type_mode_str[panel->spr_info.pack_type_mode]);
+	}
 
 	if (mode_info && mode_info->roi_caps.enabled) {
 		sde_kms_info_add_keyint(info, "partial_update_num_roi",
@@ -900,6 +973,11 @@ int dsi_conn_set_info_blob(struct drm_connector *connector,
 	bpp = dsi_ctrl_pixel_format_to_bpp(fmt);
 
 	sde_kms_info_add_keyint(info, "bit_depth", bpp);
+
+	if (dsi_display->panel->ctl_op_sync) {
+		sde_kms_info_add_keystr(info, "dpu_ctl_op_sync", "true");
+		sde_kms_info_add_keystr(info, "has_disp_in_other_core", "true");
+	}
 
 end:
 	return 0;
@@ -932,6 +1010,7 @@ void dsi_conn_set_submode_blob_info(struct drm_connector *conn,
 		struct dsi_display_mode *dsi_mode = &dsi_display->modes[i];
 
 		u32 panel_mode_caps = 0;
+		u32 pixel_format_caps = 0;
 		const char *topo_name = NULL;
 
 		if (!dsi_display_mode_match(&partial_dsi_mode, dsi_mode,
@@ -950,6 +1029,19 @@ void dsi_conn_set_submode_blob_info(struct drm_connector *conn,
 
 		sde_kms_info_add_keyint(info, "panel_mode_capabilities",
 			panel_mode_caps);
+
+		switch (dsi_mode->pixel_format_caps) {
+		case DSI_PIXEL_FORMAT_RGB888:
+			pixel_format_caps = DRM_MODE_FLAG_DSI_24BPP;
+			break;
+		case DSI_PIXEL_FORMAT_RGB101010:
+			pixel_format_caps = DRM_MODE_FLAG_DSI_30BPP;
+			break;
+		default:
+			break;
+		}
+
+		sde_kms_info_add_keyint(info, "bpp_mode", pixel_format_caps);
 
 		sde_kms_info_add_keyint(info, "dsc_mode",
 			dsi_mode->priv_info->dsc_enabled ? MSM_DISPLAY_DSC_MODE_ENABLED :
@@ -1258,6 +1350,26 @@ int dsi_conn_pre_kickoff(struct drm_connector *connector,
 	}
 
 	return dsi_display_pre_kickoff(connector, display, params);
+}
+
+bool dsi_conn_check_cmd_defined(void *display, enum dsi_cmd_set_type type)
+{
+	struct dsi_display *dsi_display = display;
+	struct dsi_panel *panel;
+	u32 count;
+	struct dsi_display_mode *mode;
+
+	if (!dsi_display || !dsi_display->panel)
+		return false;
+
+	panel = dsi_display->panel;
+	if (!panel || !panel->cur_mode)
+		return false;
+
+	mode = panel->cur_mode;
+	count = mode->priv_info->cmd_sets[type].count;
+
+	return count ? true : false;
 }
 
 int dsi_conn_prepare_commit(void *display,

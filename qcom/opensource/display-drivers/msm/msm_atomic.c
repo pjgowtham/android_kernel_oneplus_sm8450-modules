@@ -24,6 +24,7 @@
 #include "msm_gem.h"
 #include "msm_kms.h"
 #include "sde_trace.h"
+#include "sde_dbg.h"
 #include <drm/drm_atomic_uapi.h>
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 19, 0))
 #include <linux/dma-fence-chain.h>
@@ -297,6 +298,7 @@ msm_crtc_set_mode(struct drm_device *dev, struct drm_atomic_state *old_state)
 	struct drm_crtc_state *old_crtc_state;
 	struct drm_connector *connector;
 	struct drm_connector_state *old_conn_state;
+	struct msm_drm_private *priv;
 	int i;
 
 	for_each_old_crtc_in_state(old_state, crtc, old_crtc_state, i) {
@@ -322,6 +324,7 @@ msm_crtc_set_mode(struct drm_device *dev, struct drm_atomic_state *old_state)
 		struct drm_encoder *encoder;
 		struct drm_display_mode *mode, *adjusted_mode;
 		struct drm_bridge *bridge;
+		bool crtc_in_loopback = false;
 
 		if (!connector->state->best_encoder)
 			continue;
@@ -331,6 +334,10 @@ msm_crtc_set_mode(struct drm_device *dev, struct drm_atomic_state *old_state)
 		new_crtc_state = connector->state->crtc->state;
 		mode = &new_crtc_state->mode;
 		adjusted_mode = &new_crtc_state->adjusted_mode;
+		priv = connector->dev->dev_private;
+
+		if (priv && priv->kms && priv->kms->funcs->in_loopback_mode(new_crtc_state))
+			crtc_in_loopback = true;
 
 		if (!new_crtc_state->active)
 			continue;
@@ -338,7 +345,7 @@ msm_crtc_set_mode(struct drm_device *dev, struct drm_atomic_state *old_state)
 		if (!new_crtc_state->mode_changed &&
 				new_crtc_state->connectors_changed) {
 			if (_msm_seamless_for_conn(connector,
-					old_conn_state, false))
+					old_conn_state, false) && !crtc_in_loopback)
 				continue;
 		} else if (!new_crtc_state->mode_changed) {
 			if (!msm_is_private_mode_changed(
@@ -357,8 +364,11 @@ msm_crtc_set_mode(struct drm_device *dev, struct drm_atomic_state *old_state)
 		if (funcs->mode_set)
 			funcs->mode_set(encoder, mode, adjusted_mode);
 
-		bridge = drm_bridge_chain_get_first_bridge(encoder);
-		drm_bridge_chain_mode_set(bridge, mode, adjusted_mode);
+		if (!crtc_in_loopback) {
+			bridge = drm_bridge_chain_get_first_bridge(encoder);
+			drm_bridge_chain_mode_set(bridge, mode, adjusted_mode);
+		}
+
 		SDE_ATRACE_END("msm_set_mode");
 	}
 }
@@ -629,6 +639,7 @@ int msm_atomic_prepare_fb(struct drm_plane *plane,
 	return msm_framebuffer_prepare(new_state->fb, kms->aspace);
 }
 
+extern int dbg_cnt;
 /* The (potentially) asynchronous part of the commit.  At this point
  * nothing can fail short of armageddon.
  */
@@ -638,6 +649,11 @@ static void complete_commit(struct msm_commit *c)
 	struct drm_device *dev = state->dev;
 	struct msm_drm_private *priv = dev->dev_private;
 	struct msm_kms *kms = priv->kms;
+
+	if (dbg_cnt) {
+		SDE_EVT32(dbg_cnt);
+		//SDE_DBG_DUMP(SDE_DBG_BUILT_IN_ALL);
+	}
 
 	drm_atomic_helper_wait_for_fences(dev, state, false);
 

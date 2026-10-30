@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -170,6 +170,16 @@ static int dp_parser_misc(struct dp_parser *parser)
 	if (rc)
 		parser->max_lclk_khz = DP_MAX_LINK_CLK_KHZ;
 
+	for (i = 0; i < MAX_DP_MST_STREAMS; i++) {
+		of_property_read_u32_index(of_node,
+				"qcom,pclk-reg-off", i,
+				&parser->pixel_base_off[i]);
+	}
+
+	parser->display_type = of_get_property(of_node, "qcom,display-type", NULL);
+	if (!parser->display_type)
+		parser->display_type = "unknown";
+
 	return 0;
 }
 
@@ -234,16 +244,20 @@ static int dp_parser_gpio(struct dp_parser *parser)
 	struct device *dev = &parser->pdev->dev;
 	struct device_node *of_node = dev->of_node;
 	struct dss_module_power *mp = &parser->mp[DP_CORE_PM];
-	static const char * const dp_gpios[] = {
+	static const char * const dp_gpios[DP_GPIO_MAX] = {
 		"qcom,aux-en-gpio",
 		"qcom,aux-sel-gpio",
 		"qcom,usbplug-cc-gpio",
+		"qcom,edp-vcc-en-gpio",
+		"qcom,edp-backlight-pwr-gpio",
+		"qcom,edp-pwm-en-gpio",
+		"qcom,edp-backlight-en-gpio",
 	};
 
 	if (of_find_property(of_node, "qcom,dp-gpio-aux-switch", NULL))
 		parser->gpio_aux_switch = true;
 	mp->gpio_config = devm_kzalloc(dev,
-		sizeof(struct dss_gpio) * ARRAY_SIZE(dp_gpios), GFP_KERNEL);
+		sizeof(struct dss_gpio) * DP_GPIO_MAX, GFP_KERNEL);
 	if (!mp->gpio_config)
 		return -ENOMEM;
 
@@ -262,7 +276,7 @@ static int dp_parser_gpio(struct dp_parser *parser)
 			continue;
 		}
 
-		strlcpy(mp->gpio_config[i].gpio_name, dp_gpios[i],
+		strscpy(mp->gpio_config[i].gpio_name, dp_gpios[i],
 			sizeof(mp->gpio_config[i].gpio_name));
 
 		mp->gpio_config[i].value = 0;
@@ -628,14 +642,14 @@ static int dp_parser_clock(struct dp_parser *parser)
 				core_clk_index < core_clk_count) {
 			struct dss_clk *clk =
 				&core_power->clk_config[core_clk_index];
-			strlcpy(clk->clk_name, clk_name, sizeof(clk->clk_name));
+			strscpy(clk->clk_name, clk_name, sizeof(clk->clk_name));
 			clk->type = DSS_CLK_AHB;
 			core_clk_index++;
 		} else if (dp_parser_check_prefix(link_clk, clk_name) &&
 			   link_clk_index < link_clk_count) {
 			struct dss_clk *clk =
 				&link_power->clk_config[link_clk_index];
-			strlcpy(clk->clk_name, clk_name, sizeof(clk->clk_name));
+			strscpy(clk->clk_name, clk_name, sizeof(clk->clk_name));
 			link_clk_index++;
 			clock_mmrm = 0;
 			of_property_read_u32_index(dev->of_node, "clock-mmrm", i, &clock_mmrm);
@@ -651,7 +665,7 @@ static int dp_parser_clock(struct dp_parser *parser)
 			   strm0_clk_index < strm0_clk_count) {
 			struct dss_clk *clk =
 				&strm0_power->clk_config[strm0_clk_index];
-			strlcpy(clk->clk_name, clk_name, sizeof(clk->clk_name));
+			strscpy(clk->clk_name, clk_name, sizeof(clk->clk_name));
 			strm0_clk_index++;
 
 			clk->type = DSS_CLK_PCLK;
@@ -659,7 +673,7 @@ static int dp_parser_clock(struct dp_parser *parser)
 			   strm1_clk_index < strm1_clk_count) {
 			struct dss_clk *clk =
 				&strm1_power->clk_config[strm1_clk_index];
-			strlcpy(clk->clk_name, clk_name, sizeof(clk->clk_name));
+			strscpy(clk->clk_name, clk_name, sizeof(clk->clk_name));
 			strm1_clk_index++;
 
 			clk->type = DSS_CLK_PCLK;
@@ -676,12 +690,33 @@ static int dp_parser_catalog(struct dp_parser *parser)
 {
 	int rc;
 	u32 version;
+	const char *st = NULL;
 	struct device *dev = &parser->pdev->dev;
 
 	rc = of_property_read_u32(dev->of_node, "qcom,phy-version", &version);
 
 	if (!rc)
 		parser->hw_cfg.phy_version = version;
+
+	/* phy-mode */
+	rc = of_property_read_string(dev->of_node, "qcom,phy-mode", &st);
+
+	if (!rc) {
+		if (!strcmp(st, "dp"))
+			parser->hw_cfg.phy_mode = DP_PHY_MODE_DP;
+		else if (!strcmp(st, "minidp"))
+			parser->hw_cfg.phy_mode = DP_PHY_MODE_MINIDP;
+		else if (!strcmp(st, "edp"))
+			parser->hw_cfg.phy_mode = DP_PHY_MODE_EDP;
+		else if (!strcmp(st, "edp-highswing"))
+			parser->hw_cfg.phy_mode = DP_PHY_MODE_EDP_HIGH_SWING;
+		else {
+			parser->hw_cfg.phy_mode = DP_PHY_MODE_UNKNOWN;
+			pr_warn("unknown phy-mode %s\n", st);
+		}
+	} else {
+		parser->hw_cfg.phy_mode = DP_PHY_MODE_UNKNOWN;
+	}
 
 	return 0;
 }
@@ -701,6 +736,12 @@ static int dp_parser_mst(struct dp_parser *parser)
 		of_property_read_u32_index(dev->of_node,
 				"qcom,mst-fixed-topology-ports", i,
 				&parser->mst_fixed_port[i]);
+		of_property_read_string_index(
+				dev->of_node,
+				"qcom,mst-fixed-topology-display-types", i,
+				&parser->mst_fixed_display_type[i]);
+		if (!parser->mst_fixed_display_type[i])
+			parser->mst_fixed_display_type[i] = "unknown";
 	}
 
 	return 0;
@@ -760,8 +801,96 @@ static void dp_parser_widebus(struct dp_parser *parser)
 	parser->has_widebus = of_property_read_bool(dev->of_node,
 			"qcom,widebus-enable");
 
+	parser->has_4ppc_enabled = of_property_read_bool(dev->of_node, "qcom,4ppc-enable");
+
 	DP_DEBUG("widebus parsing successful. widebus:%d\n",
 			parser->has_widebus);
+
+	DP_DEBUG("4ppc enablement : %d\n", parser->has_4ppc_enabled);
+}
+
+static int parse_lt_param(struct device *dev, u8 **ptr, char *property) {
+	int ret = 0, i = 0, j = 0, index = 0;
+	u32 out_val = 0;
+	u32 expected_elems = MAX_SWING_LEVELS * MAX_PRE_EMP_LEVELS;
+	u8 parsed_val = 0;
+
+	ret = of_property_count_u32_elems(dev->of_node, property);
+	if (ret != expected_elems) {
+		return ret;
+	}
+
+	*ptr = devm_kzalloc(dev, sizeof(u8) * expected_elems, GFP_KERNEL);
+	if (!*ptr)
+		return -ENOMEM;
+
+	for (i = 0; i < MAX_SWING_LEVELS; i++) {
+		for (j = 0; j < MAX_PRE_EMP_LEVELS; j++) {
+			index = i * MAX_SWING_LEVELS + j;
+
+			ret = of_property_read_u32_index(dev->of_node, property, index, &out_val);
+			if (ret)
+				return ret;
+
+			parsed_val = out_val & 0xFF;
+
+			((u8 *)*ptr)[index] = parsed_val;
+		}
+	}
+
+	return ret;
+}
+
+static void dp_parser_clear_link_training_params(struct dp_parser *dp_parser)
+{
+	devm_kfree(&dp_parser->pdev->dev, dp_parser->swing_hbr2_3);
+	devm_kfree(&dp_parser->pdev->dev, dp_parser->pre_emp_hbr2_3);
+	devm_kfree(&dp_parser->pdev->dev, dp_parser->swing_hbr_rbr);
+	devm_kfree(&dp_parser->pdev->dev, dp_parser->pre_emp_hbr_rbr);
+
+	dp_parser->swing_hbr2_3 = NULL;
+	dp_parser->pre_emp_hbr2_3 = NULL;
+	dp_parser->swing_hbr_rbr = NULL;
+	dp_parser->pre_emp_hbr_rbr = NULL;
+
+	dp_parser->valid_lt_params = false;
+}
+
+static void dp_parser_link_training_params(struct dp_parser *parser)
+{
+	struct device *dev = &parser->pdev->dev;
+	int ret = 0;
+
+	ret = parse_lt_param(dev, &parser->swing_hbr2_3, "qcom,hbr2-3-voltage-swing");
+	if (ret)
+		goto early_exit;
+
+	ret = parse_lt_param(dev, &parser->pre_emp_hbr2_3, "qcom,hbr2-3-pre-emphasis");
+	if (ret)
+		goto early_exit;
+
+	ret = parse_lt_param(dev, &parser->swing_hbr_rbr, "qcom,hbr-rbr-voltage-swing");
+	if (ret)
+		goto early_exit;
+
+	ret = parse_lt_param(dev, &parser->pre_emp_hbr_rbr, "qcom,hbr-rbr-pre-emphasis");
+	if (ret)
+		goto early_exit;
+
+	parser->valid_lt_params = true;
+
+	DP_DEBUG("link training parameters parsing success\n");
+	goto end;
+
+early_exit:
+	if(ret == -EINVAL)
+		DP_WARN("link training parameters not found - using default values\n");
+	else
+		DP_ERR("link training parameters parsing failure ret: %d\n", ret);
+
+	dp_parser_clear_link_training_params(parser);
+end:
+	return;
 }
 
 static int dp_parser_parse(struct dp_parser *parser)
@@ -818,6 +947,7 @@ static int dp_parser_parse(struct dp_parser *parser)
 	dp_parser_fec(parser);
 	dp_parser_widebus(parser);
 	dp_parser_qos(parser);
+	dp_parser_link_training_params(parser);
 err:
 	return rc;
 }
@@ -925,6 +1055,7 @@ void dp_parser_put(struct dp_parser *parser)
 		dp_parser_put_gpio_data(&parser->pdev->dev, &power[i]);
 	}
 
+	dp_parser_clear_link_training_params(parser);
 	dp_parser_clear_io_buf(parser);
 	devm_kfree(&parser->pdev->dev, parser->io.data);
 	devm_kfree(&parser->pdev->dev, parser);

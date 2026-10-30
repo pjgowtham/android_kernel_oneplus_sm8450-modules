@@ -119,8 +119,6 @@
 #define DP_VCO_RATE_9720MHZDIV1000		9720000UL
 #define DP_VCO_RATE_10800MHZDIV1000		10800000UL
 
-#define DP_PLL_NUM_CLKS				2
-
 #define DP_4NM_C_READY		BIT(0)
 #define DP_4NM_FREQ_DONE	BIT(0)
 #define DP_4NM_PLL_LOCKED	BIT(1)
@@ -129,13 +127,13 @@
 
 static const struct dp_pll_params pll_params_v1[HSCLK_RATE_MAX] = {
 	{0x05, 0x3f, 0x00, 0x04, 0x01, 0x69, 0x00, 0x80, 0x07, 0x6f, 0x08, 0x45, 0x06, 0x36, 0x01,
-		0xe2, 0x18, 0x0f, 0x0e, 0x0f, 0x0c, 0x0c},
-	{0x03, 0x3f, 0x00, 0x08, 0x01, 0x69, 0x00, 0x80, 0x07, 0x0f, 0x0e, 0x45, 0x06, 0x36, 0x01,
-		0xe2, 0x18, 0x0f, 0x0e, 0x0f, 0x0c, 0x0c},
-	{0x01, 0x3f, 0x00, 0x08, 0x02, 0x8c, 0x00, 0x00, 0x0a, 0x1f, 0x1c, 0x5c, 0x08, 0x36, 0x01,
-		0x2e, 0x21, 0x0f, 0x0e, 0x0f, 0x0c, 0x0c},
-	{0x00, 0x3f, 0x00, 0x08, 0x00, 0x69, 0x00, 0x80, 0x07, 0x2f, 0x2a, 0x45, 0x06, 0x36, 0x01,
-		0xe2, 0x18, 0x0f, 0x0e, 0x0f, 0x0c, 0x0c},
+		0xe2, 0x18, 0x0f, 0x0e, 0x1f, 0x0a, 0x11},
+	{0x03, 0x3f, 0x00, 0x08, 0x01, 0x69, 0x00, 0x80, 0x07, 0x0f, 0x0e, 0x13, 0x06, 0x40, 0x01,
+		0xe2, 0x18, 0x0f, 0x0e, 0x1f, 0x0a, 0x11},
+	{0x01, 0x3f, 0x00, 0x08, 0x02, 0x8c, 0x00, 0x00, 0x0a, 0x1f, 0x1c, 0x1a, 0x08, 0x40, 0x01,
+		0x2e, 0x21, 0x0f, 0x0e, 0x1f, 0x0a, 0x11},
+	{0x00, 0x3f, 0x00, 0x08, 0x00, 0x69, 0x00, 0x80, 0x07, 0x2f, 0x2a, 0x13, 0x06, 0x40, 0x01,
+		0xe2, 0x18, 0x0f, 0x0e, 0x1f, 0x0a, 0x11},
 };
 
 static const struct dp_pll_params pll_params_v1_1[HSCLK_RATE_MAX] = {
@@ -241,7 +239,7 @@ static int dp_config_vco_rate_4nm(struct dp_pll *pll,
 		unsigned long rate)
 {
 	int rc = 0;
-	struct dp_pll_db *pdb = (struct dp_pll_db *)pll->priv;
+	struct dp_pll_db *pdb = &pll->pll_db;
 	const struct dp_pll_params *params;
 
 	rc = dp_vco_pll_init_db_4nm(pdb, rate);
@@ -803,37 +801,31 @@ static const struct clk_ops pll_vco_div_clk_ops = {
 	.round_rate = dp_pll_vco_div_clk_round,
 };
 
-static struct dp_pll_vco_clk dp0_phy_pll_clks[DP_PLL_NUM_CLKS] = {
+static struct clk_init_data phy_pll_clks[DP_PLL_NUM_CLKS] = {
 	{
-	.hw.init = &(struct clk_init_data) {
-		.name = "dp0_phy_pll_link_clk",
+		.name = "_phy_pll_link_clk",
 		.ops = &pll_link_clk_ops,
-		},
 	},
 	{
-	.hw.init = &(struct clk_init_data) {
-		.name = "dp0_phy_pll_vco_div_clk",
+		.name = "_phy_pll_vco_div_clk",
 		.ops = &pll_vco_div_clk_ops,
-		},
 	},
 };
 
-static struct dp_pll_vco_clk dp_phy_pll_clks[DP_PLL_NUM_CLKS] = {
-	{
-	.hw.init = &(struct clk_init_data) {
-		.name = "dp_phy_pll_link_clk",
-		.ops = &pll_link_clk_ops,
-		},
-	},
-	{
-	.hw.init = &(struct clk_init_data) {
-		.name = "dp_phy_pll_vco_div_clk",
-		.ops = &pll_vco_div_clk_ops,
-		},
-	},
-};
+static struct dp_pll_vco_clk *dp_pll_get_clks(struct dp_pll *pll)
+{
+	int i;
 
-static struct dp_pll_db dp_pdb;
+	for (i = 0; i < DP_PLL_NUM_CLKS; i++) {
+		snprintf(pll->pll_clks[i].name, DP_PLL_NAME_MAX_SIZE,
+				"%s%s", pll->name, phy_pll_clks[i].name);
+		pll->pll_clks[i].init_data.name = pll->pll_clks[i].name;
+		pll->pll_clks[i].init_data.ops = phy_pll_clks[i].ops;
+		pll->pll_clks[i].hw.init = &pll->pll_clks[i].init_data;
+	}
+
+	return pll->pll_clks;
+}
 
 int dp_pll_clock_register_4nm(struct dp_pll *pll)
 {
@@ -859,22 +851,18 @@ int dp_pll_clock_register_4nm(struct dp_pll *pll)
 	}
 
 	pll->clk_data->clk_num = DP_PLL_NUM_CLKS;
-	pll->priv = &dp_pdb;
-	dp_pdb.pll = pll;
+	pll->pll_db.pll = pll;
 
 	if (pll->revision == DP_PLL_4NM_V1_1)
-		dp_pdb.pll_params = pll_params_v1_1;
+		pll->pll_db.pll_params = pll_params_v1_1;
 	else
-		dp_pdb.pll_params = pll_params_v1;
+		pll->pll_db.pll_params = pll_params_v1;
 
 	pll->pll_cfg = dp_pll_configure;
 	pll->pll_prepare = dp_pll_prepare;
 	pll->pll_unprepare = dp_pll_unprepare;
 
-	if (pll->dp_core_revision >= 0x10040000)
-		pll_clks = dp0_phy_pll_clks;
-	else
-		pll_clks = dp_phy_pll_clks;
+	pll_clks = dp_pll_get_clks(pll);
 
 	rc = dp_pll_clock_register_helper(pll, pll_clks, DP_PLL_NUM_CLKS);
 	if (rc) {

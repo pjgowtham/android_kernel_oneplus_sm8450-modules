@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -34,6 +34,7 @@
 
 struct msm_smmu_client {
 	struct device *dev;
+	struct device *host_dev;
 	const char *compat;
 	struct iommu_domain *domain;
 	const struct dma_map_ops *dma_ops;
@@ -381,7 +382,7 @@ static const struct of_device_id msm_smmu_dt_match[] = {
 };
 MODULE_DEVICE_TABLE(of, msm_smmu_dt_match);
 
-static struct msm_smmu_client *msm_smmu_get_smmu(const char *compat)
+static struct msm_smmu_client *msm_smmu_get_smmu(struct device *dev, const char *compat)
 {
 	struct msm_smmu_client *curr = NULL;
 	bool found = false;
@@ -393,7 +394,8 @@ static struct msm_smmu_client *msm_smmu_get_smmu(const char *compat)
 
 	mutex_lock(&smmu_list_lock);
 	list_for_each_entry(curr, &sde_smmu_list, smmu_list) {
-		if (of_compat_cmp(compat, curr->compat, strlen(compat)) == 0) {
+		if (of_compat_cmp(compat, curr->compat, strlen(compat)) == 0 &&
+				curr->host_dev == dev) {
 			DRM_DEBUG("found msm_smmu_client for %s\n", compat);
 			found = true;
 			break;
@@ -427,7 +429,7 @@ static struct device *msm_smmu_device_add(struct device *dev,
 	}
 	DRM_DEBUG("found domain %d compat: %s\n", domain, compat);
 
-	smmu->client = msm_smmu_get_smmu(compat);
+	smmu->client = msm_smmu_get_smmu(dev, compat);
 	if (IS_ERR_OR_NULL(smmu->client)) {
 		DRM_DEBUG("unable to find domain %d compat: %s\n", domain,
 				compat);
@@ -494,6 +496,24 @@ static int msm_smmu_fault_handler(struct iommu_domain *domain,
  */
 static int msm_smmu_bind(struct device *dev, struct device *master, void *data)
 {
+	struct platform_device *pdev;
+	struct msm_smmu_client *client;
+
+	if (!dev || !master) {
+		DRM_ERROR("invalid param(s), dev %pK, master %pK\n", dev, master);
+		return -EINVAL;
+	}
+
+	pdev = to_platform_device(dev);
+
+	client = platform_get_drvdata(pdev);
+	if (!client) {
+		DRM_ERROR("invalid client\n");
+		return -EINVAL;
+	}
+
+	client->host_dev = master;
+
 	return 0;
 }
 

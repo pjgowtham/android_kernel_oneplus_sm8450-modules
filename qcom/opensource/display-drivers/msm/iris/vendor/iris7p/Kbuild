@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note
+
+PWAROOT=.
+IRIS_KROOT_I7P=$(PWAROOT)/iris/vendor/iris7p
+
+msm_drm-$(CONFIG_DRM_MSM_DSI) += $(IRIS_KROOT_I7P)/dsi_iris_lightup.o

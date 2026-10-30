@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -77,10 +77,20 @@
 #define SDE_INTR_INTF_1_UNDERRUN BIT(26)
 #define SDE_INTR_INTF_2_UNDERRUN BIT(28)
 #define SDE_INTR_INTF_3_UNDERRUN BIT(30)
+#define SDE_INTR_INTF_4_UNDERRUN BIT(20)
+#define SDE_INTR_INTF_5_UNDERRUN BIT(22)
+#define SDE_INTR_INTF_6_UNDERRUN BIT(16)
+#define SDE_INTR_INTF_7_UNDERRUN BIT(18)
+#define SDE_INTR_INTF_8_UNDERRUN BIT(12)
 #define SDE_INTR_INTF_0_VSYNC BIT(25)
 #define SDE_INTR_INTF_1_VSYNC BIT(27)
 #define SDE_INTR_INTF_2_VSYNC BIT(29)
 #define SDE_INTR_INTF_3_VSYNC BIT(31)
+#define SDE_INTR_INTF_4_VSYNC BIT(21)
+#define SDE_INTR_INTF_5_VSYNC BIT(23)
+#define SDE_INTR_INTF_6_VSYNC BIT(17)
+#define SDE_INTR_INTF_7_VSYNC BIT(19)
+#define SDE_INTR_INTF_8_VSYNC BIT(13)
 
 /**
  * Ctl start interrupt status bit definitions
@@ -153,6 +163,7 @@
 #define SDE_INTR_DSICMD_2_OUTOF_STATIC BIT(7)
 #define SDE_INTR_PROG_LINE BIT(8)
 #define SDE_INTR_INTF_WD_TIMER_0_DONE BIT(13)
+#define SDE_INTR_ESYNC_EMSYNC BIT(16)
 
 /**
  * AD4 interrupt status bit definitions
@@ -244,6 +255,17 @@ static struct sde_irq_type sde_irq_intr_map[] = {
 	{ SDE_IRQ_TYPE_PING_PONG_COMP, PINGPONG_3,
 		SDE_INTR_PING_PONG_3_DONE, -1},
 
+	{ SDE_IRQ_TYPE_INTF_UNDER_RUN, INTF_0, SDE_INTR_INTF_0_UNDERRUN, -1},
+	{ SDE_IRQ_TYPE_INTF_VSYNC, INTF_0, SDE_INTR_INTF_0_VSYNC, -1},
+	{ SDE_IRQ_TYPE_INTF_UNDER_RUN, INTF_1, SDE_INTR_INTF_1_UNDERRUN, -1},
+	{ SDE_IRQ_TYPE_INTF_VSYNC, INTF_1, SDE_INTR_INTF_1_VSYNC, -1},
+
+	{ SDE_IRQ_TYPE_INTF_UNDER_RUN, INTF_2, SDE_INTR_INTF_2_UNDERRUN, -1},
+	{ SDE_IRQ_TYPE_INTF_VSYNC, INTF_2, SDE_INTR_INTF_2_VSYNC, -1},
+	{ SDE_IRQ_TYPE_INTF_UNDER_RUN, INTF_3, SDE_INTR_INTF_3_UNDERRUN, -1},
+	{ SDE_IRQ_TYPE_INTF_VSYNC, INTF_3, SDE_INTR_INTF_3_VSYNC, -1},
+
+#if IS_ENABLED(CONFIG_LEGACY_INTR_DEF)
 	{ SDE_IRQ_TYPE_PING_PONG_RD_PTR, PINGPONG_0,
 		SDE_INTR_PING_PONG_0_RD_PTR, -1},
 	{ SDE_IRQ_TYPE_PING_PONG_RD_PTR, PINGPONG_1,
@@ -270,16 +292,18 @@ static struct sde_irq_type sde_irq_intr_map[] = {
 		SDE_INTR_PING_PONG_2_AUTOREFRESH_DONE, -1},
 	{ SDE_IRQ_TYPE_PING_PONG_AUTO_REF, PINGPONG_3,
 		SDE_INTR_PING_PONG_3_AUTOREFRESH_DONE, -1},
-
-	{ SDE_IRQ_TYPE_INTF_UNDER_RUN, INTF_0, SDE_INTR_INTF_0_UNDERRUN, -1},
-	{ SDE_IRQ_TYPE_INTF_VSYNC, INTF_0, SDE_INTR_INTF_0_VSYNC, -1},
-	{ SDE_IRQ_TYPE_INTF_UNDER_RUN, INTF_1, SDE_INTR_INTF_1_UNDERRUN, -1},
-	{ SDE_IRQ_TYPE_INTF_VSYNC, INTF_1, SDE_INTR_INTF_1_VSYNC, -1},
-
-	{ SDE_IRQ_TYPE_INTF_UNDER_RUN, INTF_2, SDE_INTR_INTF_2_UNDERRUN, -1},
-	{ SDE_IRQ_TYPE_INTF_VSYNC, INTF_2, SDE_INTR_INTF_2_VSYNC, -1},
-	{ SDE_IRQ_TYPE_INTF_UNDER_RUN, INTF_3, SDE_INTR_INTF_3_UNDERRUN, -1},
-	{ SDE_IRQ_TYPE_INTF_VSYNC, INTF_3, SDE_INTR_INTF_3_VSYNC, -1},
+#else
+	{ SDE_IRQ_TYPE_INTF_UNDER_RUN, INTF_4, SDE_INTR_INTF_4_UNDERRUN, -1},
+	{ SDE_IRQ_TYPE_INTF_VSYNC, INTF_4, SDE_INTR_INTF_4_VSYNC, -1},
+	{ SDE_IRQ_TYPE_INTF_UNDER_RUN, INTF_5, SDE_INTR_INTF_5_UNDERRUN, -1},
+	{ SDE_IRQ_TYPE_INTF_VSYNC, INTF_5, SDE_INTR_INTF_5_VSYNC, -1},
+	{ SDE_IRQ_TYPE_INTF_UNDER_RUN, INTF_6, SDE_INTR_INTF_6_UNDERRUN, -1},
+	{ SDE_IRQ_TYPE_INTF_VSYNC, INTF_6, SDE_INTR_INTF_6_VSYNC, -1},
+	{ SDE_IRQ_TYPE_INTF_UNDER_RUN, INTF_7, SDE_INTR_INTF_7_UNDERRUN, -1},
+	{ SDE_IRQ_TYPE_INTF_VSYNC, INTF_7, SDE_INTR_INTF_7_VSYNC, -1},
+	{ SDE_IRQ_TYPE_INTF_UNDER_RUN, INTF_8, SDE_INTR_INTF_8_UNDERRUN, -1},
+	{ SDE_IRQ_TYPE_INTF_VSYNC, INTF_8, SDE_INTR_INTF_8_VSYNC, -1},
+#endif /* CONFIG_LEGACY_INTR_DEF */
 };
 
 static struct sde_irq_type sde_irq_intr2_map[] = {
@@ -366,7 +390,8 @@ static struct sde_irq_type sde_irq_intf_map[] = {
 		SDE_INTR_DSICMD_2_OUTOF_STATIC, -1},
 
 	{ SDE_IRQ_TYPE_PROG_LINE, -1, SDE_INTR_PROG_LINE, -1},
-	{ SDE_IRQ_TYPE_WD_TIMER, -1, SDE_INTR_WD_TIMER_0_DONE, -1},
+	{ SDE_IRQ_TYPE_WD_TIMER_1, -1, SDE_INTR_INTF_WD_TIMER_0_DONE, -1},
+	{ SDE_IRQ_TYPE_INTF_ESYNC_EMSYNC, -1, SDE_INTR_ESYNC_EMSYNC, -1},
 };
 
 static struct sde_irq_type sde_irq_ad4_map[] = {
@@ -446,6 +471,10 @@ static void sde_hw_intr_dispatch_irq(struct sde_hw_intr *intr,
 				end_idx > intr->sde_irq_map_size)
 			continue;
 
+		/* Skip the interrupts which are not enabled */
+		 if (!intr->cache_irq_mask[reg_idx])
+			continue;
+
 		/* Read interrupt status */
 		irq_status = SDE_REG_READ(&intr->hw, intr->sde_irq_tbl[reg_idx].status_off);
 
@@ -474,17 +503,11 @@ static void sde_hw_intr_dispatch_irq(struct sde_hw_intr *intr,
 				 reg_idx)) {
 				/*
 				 * Once a match on irq mask, perform a callback
-				 * to the given cbfunc. cbfunc will take care
-				 * the interrupt status clearing. If cbfunc is
-				 * not provided, then the interrupt clearing
-				 * is here.
+				 * to the given cbfunc. This callback is done
+				 * after clearing the interrupt registers.
 				 */
 				if (cbfunc)
 					cbfunc(arg, irq_idx);
-				else
-					intr->ops.clear_intr_status_nolock(
-							intr, irq_idx);
-
 				/*
 				 * When callback finish, clear the irq_status
 				 * with the matching mask. Once irq_status
@@ -847,7 +870,6 @@ static void __setup_intr_ops(struct sde_hw_intr_ops *ops)
 	ops->disable_all_irqs = sde_hw_intr_disable_irqs;
 	ops->get_interrupt_sources = sde_hw_intr_get_interrupt_sources;
 	ops->clear_interrupt_status = sde_hw_intr_clear_interrupt_status;
-	ops->clear_intr_status_nolock = sde_hw_intr_clear_intr_status_nolock;
 	ops->get_interrupt_status = sde_hw_intr_get_interrupt_status;
 	ops->get_intr_status_nolock = sde_hw_intr_get_intr_status_nolock;
 }
@@ -1149,4 +1171,3 @@ exit:
 
 	return intr;
 }
-

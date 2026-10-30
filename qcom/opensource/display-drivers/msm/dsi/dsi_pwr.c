@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
+ * Copyright (c) 2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
@@ -65,6 +66,16 @@ static int dsi_pwr_parse_supply_node(struct dsi_parser_utils *utils,
 		regs->vregs[i].disable_load = tmp;
 
 		/* Optional values */
+		rc = utils->read_u32(node, "qcom,supply-lp2-load", &tmp);
+
+		if (rc) {
+			DSI_DEBUG("lp2-load not specified, rc = %d\n", rc);
+			regs->vregs[i].lp2_load = 0;
+			rc = 0;
+		} else {
+			regs->vregs[i].lp2_load = tmp;
+		}
+
 		rc = utils->read_u32(node, "qcom,supply-off-min-voltage", &tmp);
 		if (rc) {
 			DSI_DEBUG("off-min-voltage not specified\n");
@@ -115,6 +126,35 @@ static int dsi_pwr_parse_supply_node(struct dsi_parser_utils *utils,
 	}
 
 error:
+	return rc;
+}
+
+int dsi_pwr_set_lp2_load(struct dsi_regulator_info *regs, bool enable)
+{
+	int i = 0, rc = 0;
+	struct dsi_vreg *vreg;
+	u32 load;
+
+	if (!regs) {
+		DSI_ERR("Bad params\n");
+		return -EINVAL;
+	}
+
+	for (i = 0; i < regs->count; i++) {
+		vreg = &regs->vregs[i];
+		if (!vreg->lp2_load)
+			continue;
+
+		load = enable ? vreg->lp2_load : vreg->enable_load;
+
+		rc = regulator_set_load(vreg->vreg, load);
+		if (rc < 0) {
+			DSI_ERR("Set lp2 load (%d) failed for %s, rc=%d", load,
+				vreg->vreg_name, rc);
+			return rc;
+		}
+	}
+
 	return rc;
 }
 
@@ -193,7 +233,6 @@ static int dsi_pwr_enable_vregs(struct dsi_regulator_info *regs, bool enable)
 				(void)regulator_set_voltage(regs->vregs[i].vreg,
 						regs->vregs[i].off_min_voltage,
 						regs->vregs[i].max_voltage);
-
 		}
 	}
 

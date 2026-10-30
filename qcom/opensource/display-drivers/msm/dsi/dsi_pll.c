@@ -27,8 +27,8 @@ static int dsi_pll_clock_register(struct platform_device *pdev,
 	case DSI_PLL_4NM:
 		rc = dsi_pll_clock_register_4nm(pdev, pll_res);
 		break;
-	case DSI_PLL_10NM:
-		rc = dsi_pll_clock_register_10nm(pdev, pll_res);
+	case DSI_PLL_3NM:
+		rc = dsi_pll_clock_register_3nm(pdev, pll_res);
 		break;
 	default:
 		rc = -EINVAL;
@@ -37,6 +37,28 @@ static int dsi_pll_clock_register(struct platform_device *pdev,
 
 	if (rc)
 		DSI_PLL_ERR(pll_res, "clock register failed rc=%d\n", rc);
+
+	return rc;
+}
+
+int dsi_pll_program_slave(struct dsi_pll_resource *pll_res, bool skip_op)
+{
+	int rc;
+
+	switch (pll_res->pll_revision) {
+	case DSI_PLL_5NM:
+		rc = dsi_pll_5nm_program_slave(pll_res, skip_op);
+		break;
+	case DSI_PLL_4NM:
+		rc = dsi_pll_4nm_program_slave(pll_res, skip_op);
+		break;
+	default:
+		rc = -EINVAL;
+		break;
+	}
+
+	if (rc)
+		DSI_PLL_ERR(pll_res, "%s failed rc=%d\n", __func__, rc);
 
 	return rc;
 }
@@ -80,7 +102,7 @@ static void dsi_pll_parse_dfps(struct platform_device *pdev,
 
 	pnode = of_parse_phandle(pdev->dev.of_node, "memory-region", 0);
 	if (IS_ERR_OR_NULL(pnode)) {
-		DSI_PLL_INFO(pll_res, "failed to parse memory-region\n");
+		DSI_PLL_INFO(pll_res, "of_parse_phandle failed\n");
 		goto node_err;
 	}
 
@@ -133,7 +155,7 @@ static int dsi_pll_parse_dfps_from_dt(struct platform_device *pdev,
 
 	pnode = of_parse_phandle(pdev->dev.of_node, "pll_codes_region", 0);
 	if (IS_ERR_OR_NULL(pnode)) {
-		DSI_PLL_INFO(pll_res, "failed to parse pll_codes_region\n");
+		DSI_PLL_ERR(pll_res, "of_parse_phandle failed\n");
 		pnode = NULL;
 		rc = -EINVAL;
 		goto err;
@@ -217,7 +239,7 @@ static int dsi_pll_parse_dfps_from_dt(struct platform_device *pdev,
 	code_entry = (struct pll_codes_entry *)&pll_codes_info->pll_code_data;
 
 	for (i = 0; i < header.num_entries; i++) {
-		if (code_entry[i].device_id == DISPLAY_PLL_CODEID_DSI0) {
+		if (code_entry[i].device_id == pll_res->index) {
 			codes_dfps = &pll_res->dfps->codes_dfps[vco_rate_cnt];
 			codes_dfps->is_valid = 1;
 			codes_dfps->clk_rate = code_entry[i].vco_rate;
@@ -250,6 +272,9 @@ int dsi_pll_init(struct platform_device *pdev, struct dsi_pll_resource **pll)
 	int rc = 0;
 	const char *label;
 	struct dsi_pll_resource *pll_res = NULL;
+#ifdef OPLUS_FEATURE_DISPLAY
+	bool ssc_disable = false;
+#endif
 
 	if (!pdev->dev.of_node) {
 		pr_err("Invalid DSI PHY node\n");
@@ -271,13 +296,12 @@ int dsi_pll_init(struct platform_device *pdev, struct dsi_pll_resource **pll)
 
 	DSI_PLL_INFO(pll_res, "DSI pll label = %s\n", label);
 
-
-	if (!strcmp(label, "dsi_pll_4nm"))
+	if (!strcmp(label, "dsi_pll_3nm"))
+		pll_res->pll_revision = DSI_PLL_3NM;
+	else if (!strcmp(label, "dsi_pll_4nm"))
 		pll_res->pll_revision = DSI_PLL_4NM;
 	else if (!strcmp(label, "dsi_pll_5nm"))
 		pll_res->pll_revision = DSI_PLL_5NM;
-	else if (!strcmp(label, "dsi_pll_10nm"))
-		pll_res->pll_revision = DSI_PLL_10NM;
 	else
 		return -ENOTSUPP;
 
@@ -290,6 +314,16 @@ int dsi_pll_init(struct platform_device *pdev, struct dsi_pll_resource **pll)
 
 	pll_res->ssc_en = of_property_read_bool(pdev->dev.of_node,
 						"qcom,dsi-pll-ssc-en");
+
+#ifdef OPLUS_FEATURE_DISPLAY
+	ssc_disable = of_property_read_bool(pdev->dev.of_node,
+						"oplus,dsi-pll-ssc-disalbed");
+
+	if (ssc_disable) {
+		pll_res->ssc_en = false;
+		DSI_PLL_INFO(pll_res, "PLL SSC disalbed\n");
+	}
+#endif
 
 	if (pll_res->ssc_en) {
 		DSI_PLL_INFO(pll_res, "PLL SSC enabled\n");
@@ -356,7 +390,7 @@ int dsi_pll_init(struct platform_device *pdev, struct dsi_pll_resource **pll)
 
 void dsi_pll_parse_dfps_data(struct platform_device *pdev, struct dsi_pll_resource *pll_res)
 {
-	if (!(pll_res->index) && !(pll_res->in_trusted_vm)) {
+	if (!(pll_res->in_trusted_vm)) {
 		if (dsi_pll_parse_dfps_from_dt(pdev, pll_res))
 			dsi_pll_parse_dfps(pdev, pll_res);
 	}

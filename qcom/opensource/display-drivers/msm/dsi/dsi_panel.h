@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -22,6 +22,9 @@
 #include "dsi_pwr.h"
 #include "dsi_parser.h"
 #include "msm_drv.h"
+#ifdef OPLUS_FEATURE_DISPLAY
+#include "oplus_panel.h"
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 #define MAX_BL_LEVEL 4096
 #define MAX_BL_SCALE_LEVEL 1024
@@ -89,6 +92,13 @@ struct dsi_dfps_capabilities {
 	u32 *dfps_list;
 	u32 dfps_list_len;
 	bool dfps_support;
+	u32 *dfps_hfp_list;
+	u32 *dfps_hbp_list;
+	u32 *dfps_hpw_list;
+	u32 *dfps_vbp_list;
+	u32 *dfps_vfp_list;
+	u32 *dfps_vpw_list;
+
 };
 
 struct dsi_qsync_capabilities {
@@ -96,12 +106,21 @@ struct dsi_qsync_capabilities {
 	u32 qsync_min_fps;
 	u32 *qsync_min_fps_list;
 	int qsync_min_fps_list_len;
+	bool hwfence_sw_override_always;
 };
 
 struct dsi_avr_capabilities {
 	u32 avr_step_fps;
 	u32 *avr_step_fps_list;
 	u32 avr_step_fps_list_len;
+};
+
+struct dsi_esync_capabilities {
+	bool esync_support;
+	u32 milli_skew;
+	u32 hsync_milli_pulse_width;
+	u32 emsync_milli_pulse_width;
+	u32 emsync_fps;
 };
 
 struct dsi_dyn_clk_caps {
@@ -113,6 +132,7 @@ struct dsi_dyn_clk_caps {
 struct dsi_pinctrl_info {
 	struct pinctrl *pinctrl;
 	struct pinctrl_state *active;
+	struct pinctrl_state *active_with_esync;
 	struct pinctrl_state *suspend;
 	struct pinctrl_state *pwm_pin;
 };
@@ -130,12 +150,13 @@ struct dsi_backlight_config {
 	u32 bl_min_level;
 	u32 bl_max_level;
 	u32 brightness_max_level;
-	u32 brightness_default_level;
+
 	/* current brightness value */
 	u32 brightness;
 	u32 bl_level;
 	u32 bl_scale;
 	u32 bl_scale_sv;
+	u32 bl_dcs_subtype;
 	bool bl_inverted_dbv;
 	/* digital dimming backlight LUT */
 	struct drm_msm_dimming_bl_lut *dimming_bl_lut;
@@ -178,6 +199,9 @@ enum esd_check_status_mode {
 	ESD_MODE_PANEL_TE,
 	ESD_MODE_SW_SIM_SUCCESS,
 	ESD_MODE_SW_SIM_FAILURE,
+#ifdef OPLUS_FEATURE_DISPLAY
+	ESD_MODE_PANEL_ERROR_FLAG,
+#endif /* OPLUS_FEATURE_DISPLAY */
 	ESD_MODE_MAX
 };
 
@@ -192,11 +216,15 @@ struct drm_panel_esd_config {
 	u8 *return_buf;
 	u8 *status_buf;
 	u32 groups;
+#ifdef OPLUS_FEATURE_DISPLAY
+	struct oplus_drm_panel_esd_config oplus_esd_cfg;
+#endif /* OPLUS_FEATURE_DISPLAY */
 };
 
 struct dsi_panel_spr_info {
 	bool enable;
 	enum msm_display_spr_pack_type pack_type;
+	enum msm_display_spr_pack_type_mode pack_type_mode;
 };
 
 struct dsi_panel;
@@ -257,10 +285,20 @@ struct dsi_panel {
 	bool reset_gpio_always_on;
 	atomic_t esd_recovery_pending;
 
+#ifdef OPLUS_FEATURE_DISPLAY
+	struct oplus_panel oplus_panel;
+#endif /* OPLUS_FEATURE_DISPLAY */
+
+	bool skip_panel_off;
 	bool panel_initialized;
 	bool te_using_watchdog_timer;
+	bool disable_cesta_hw_sleep;
 	struct dsi_qsync_capabilities qsync_caps;
 	struct dsi_avr_capabilities avr_caps;
+	struct dsi_esync_capabilities esync_caps;
+	struct msm_vrr_capabilities vrr_caps;
+
+	bool event_notification_disabled;
 
 	char dce_pps_cmd[DSI_CMD_PPS_SIZE];
 	enum dsi_dms_mode dms_mode;
@@ -271,11 +309,19 @@ struct dsi_panel {
 	u32 dsc_count;
 	u32 lm_count;
 
+	bool ctl_op_sync;
+
 	int panel_test_gpio;
 	int power_mode;
+	bool powered;
 	enum dsi_panel_physical_type panel_type;
 
 	struct dsi_panel_ops panel_ops;
+#if defined(CONFIG_PXLW_IRIS)
+	bool is_secondary;
+	int hbm_mode;
+	u32 qsync_mode;
+#endif /* CONFIG_PXLW_IRIS */
 };
 
 static inline bool dsi_panel_ulps_feature_enabled(struct dsi_panel *panel)
@@ -312,6 +358,9 @@ struct dsi_panel *dsi_panel_get(struct device *parent,
 
 void dsi_panel_put(struct dsi_panel *panel);
 
+void dsi_panel_get_fps_switch_cmd(struct dsi_panel *panel,
+			struct dsi_display_mode *mode, u32 refresh_rate);
+
 int dsi_panel_drv_init(struct dsi_panel *panel, struct mipi_dsi_host *host);
 
 int dsi_panel_drv_deinit(struct dsi_panel *panel);
@@ -343,6 +392,16 @@ int dsi_panel_set_lp1(struct dsi_panel *panel);
 
 int dsi_panel_set_lp2(struct dsi_panel *panel);
 
+/**
+ * dsi_panel_set_lp2_load() -	Add or remove LP2 load on DSI pannel supplies
+ * @panel:			DSI panel handle.
+ * @enable:			Boolean to control whether to add or remove
+ * the LP2 load.
+ *
+ * Return: error code.
+ */
+int dsi_panel_set_lp2_load(struct dsi_panel *panel, bool enable);
+
 int dsi_panel_set_nolp(struct dsi_panel *panel);
 
 int dsi_panel_prepare(struct dsi_panel *panel);
@@ -370,6 +429,8 @@ int dsi_panel_send_qsync_off_dcs(struct dsi_panel *panel,
 
 int dsi_panel_send_roi_dcs(struct dsi_panel *panel, int ctrl_idx,
 		struct dsi_rect *roi);
+
+int dsi_panel_dcs_cmd_tx(struct dsi_panel *panel, enum dsi_cmd_set_type cmd);
 
 int dsi_panel_switch_video_mode_out(struct dsi_panel *panel);
 
@@ -412,4 +473,20 @@ int dsi_panel_create_cmd_packets(const char *data, u32 length, u32 count,
 void dsi_panel_destroy_cmd_packets(struct dsi_panel_cmd_set *set);
 
 void dsi_panel_dealloc_cmd_packets(struct dsi_panel_cmd_set *set);
+
+#ifdef OPLUS_FEATURE_DISPLAY
+int dsi_panel_tx_cmd_set(struct dsi_panel *panel,
+		enum dsi_cmd_set_type type, bool do_peripheral_flush);
+int dsi_panel_parse_cmd_sets_sub(struct dsi_panel_cmd_set *cmd,
+		enum dsi_cmd_set_type type, struct dsi_parser_utils *utils);
+int dsi_panel_set_pinctrl_state(struct dsi_panel *panel, bool enable);
+int dsi_panel_reset(struct dsi_panel *panel);
+#endif /* OPLUS_FEATURE_DISPLAY */
+
+int dsi_panel_send_cmd(struct dsi_panel *panel,
+		struct msm_display_conn_params *params, enum dsi_cmd_set_type type,
+		bool last_command);
+
+int dsi_panel_parse_freq_step_table(struct dsi_display_mode *mode,
+				struct dsi_parser_utils *utils);
 #endif /* _DSI_PANEL_H_ */

@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note
+
+PWAROOT=.
+IRIS_KROOT=$(PWAROOT)/iris/vendor/common
+
+ifeq ($(CONFIG_ARCH_LAHAINA), y)
+msm_drm-$(CONFIG_DRM_MSM_DSI) += $(IRIS_KROOT)/dsi_iris_cmpt_8350.o
+endif
+
+ifeq ($(CONFIG_ARCH_WAIPIO), y)
+msm_drm-$(CONFIG_DRM_MSM_DSI) += $(IRIS_KROOT)/dsi_iris_cmpt_8450.o
+endif
+
+ifeq ($(CONFIG_ARCH_KALAMA), y)
+msm_drm-$(CONFIG_DRM_MSM_DSI) += $(IRIS_KROOT)/dsi_iris_cmpt_8550.o
+endif
+
+ifeq ($(CONFIG_ARCH_PINEAPPLE), y)
+msm_drm-$(CONFIG_DRM_MSM_DSI) += $(IRIS_KROOT)/dsi_iris_cmpt_8650.o
+endif
+
+ifeq ($(CONFIG_ARCH_SUN), y)
+msm_drm-$(CONFIG_DRM_MSM_DSI) += $(IRIS_KROOT)/dsi_iris_cmpt_8750.o
+endif
+
+msm_drm-$(CONFIG_DRM_MSM_DSI) += $(IRIS_KROOT)/dsi_iris_lightup.o \
+				$(IRIS_KROOT)/dsi_iris_cmpt_fpga.o \
+				$(IRIS_KROOT)/dsi_iris_lp.o \
+				$(IRIS_KROOT)/dsi_iris_memc.o \
+				$(IRIS_KROOT)/dsi_iris_dbg.o \
+				$(IRIS_KROOT)/msm_iris_extended.o \
+				$(IRIS_KROOT)/sde_iris_extended.o \
+				$(IRIS_KROOT)/dsi_iris_extended.o \
+				$(IRIS_KROOT)/dsi_iris_dual.o
+
+ccflags-y += -DCONFIG_PXLW_IRIS
+ccflags-y += -DPXLW_IRIS_DUAL
+#ccflags-y += -DCONFIG_PXLW_SOFT_IRIS

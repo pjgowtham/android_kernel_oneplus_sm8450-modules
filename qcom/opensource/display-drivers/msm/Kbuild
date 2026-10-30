@@ -17,31 +17,15 @@ ifeq ($(CONFIG_ARCH_NEO), y)
 	LINUX_INC +=	-include $(DISPLAY_ROOT)/config/gki_neodispconf.h
 endif
 
-ifeq ($(CONFIG_ARCH_BLAIR), y)
-	include $(DISPLAY_ROOT)/config/gki_blairdisp.conf
-	LINUX_INC +=	-include $(DISPLAY_ROOT)/config/gki_blairdispconf.h
-endif
-
 ifeq ($(CONFIG_ARCH_PARROT), y)
-ifeq ($(CONFIG_ARCH_QTI_VM), y)
-	include $(DISPLAY_ROOT)/config/gki_parrotdisptui.conf
-        LINUX_INC += -include $(DISPLAY_ROOT)/config/gki_parrotdisptuiconf.h
-else
 	include $(DISPLAY_ROOT)/config/gki_parrotdisp.conf
 	LINUX_INC +=	-include $(DISPLAY_ROOT)/config/gki_parrotdispconf.h
 endif
-endif
 
-ifeq ($(CONFIG_ARCH_RAVELIN), y)
-ifeq ($(CONFIG_ARCH_QTI_VM), y)
-    include $(DISPLAY_ROOT)/config/gki_ravelindisptui.conf
-    LINUX_INC += -include $(DISPLAY_ROOT)/config/gki_ravelindisptuiconf.h
-else
-	include $(DISPLAY_ROOT)/config/gki_ravelindisp.conf
-	LINUX_INC +=	-include $(DISPLAY_ROOT)/config/gki_ravelindispconf.h
+ifeq ($(CONFIG_ARCH_NIOBE), y)
+	include $(DISPLAY_ROOT)/config/gki_niobedisp.conf
+	LINUX_INC +=	-include $(DISPLAY_ROOT)/config/gki_niobedispconf.h
 endif
-endif
-
 
 ifeq ($(CONFIG_ARCH_PINEAPPLE), y)
 ifeq ($(CONFIG_ARCH_QTI_VM), y)
@@ -51,6 +35,21 @@ else
 	include $(DISPLAY_ROOT)/config/gki_pineappledisp.conf
 	LINUX_INC += -include $(DISPLAY_ROOT)/config/gki_pineappledispconf.h
 endif
+endif
+
+ifeq ($(CONFIG_ARCH_SUN), y)
+ifeq ($(CONFIG_ARCH_QTI_VM), y)
+    include $(DISPLAY_ROOT)/config/gki_sundisptui.conf
+    LINUX_INC += -include $(DISPLAY_ROOT)/config/gki_sundisptuiconf.h
+else
+	include $(DISPLAY_ROOT)/config/gki_sundisp.conf
+	LINUX_INC += -include $(DISPLAY_ROOT)/config/gki_sundispconf.h
+endif
+endif
+
+ifeq ($(CONFIG_ARCH_MONACO), y)
+	include $(DISPLAY_ROOT)/config/gki_monacodisp.conf
+	LINUX_INC += -include $(DISPLAY_ROOT)/config/gki_monacodispconf.h
 endif
 
 ifeq ($(CONFIG_ARCH_KALAMA), y)
@@ -82,12 +81,14 @@ LINUX_INC +=	-I$(DISPLAY_ROOT) \
 	-I$(DISPLAY_ROOT)/msm/dsi \
 	-I$(DISPLAY_ROOT)/msm/sde \
 	-I$(DISPLAY_ROOT)/../mm-drivers/hw_fence/include \
-	-I$(DISPLAY_ROOT)/../mm-drivers/msm_ext_display/include \
-	-I$(DISPLAY_ROOT)/../mm-drivers/sync_fence/include \
-	-I$(DISPLAY_ROOT)/../securemsm-kernel \
-	-I$(DISPLAY_ROOT)/../synx-kernel/include/uapi/synx/media \
-	-I$(DISPLAY_ROOT)/../synx-kernel/msm/synx \
 	-I$(DISPLAY_ROOT)/include/uapi/display \
+
+ifeq (${CONFIG_PXLW_IRIS},y)
+PWATOP=$(DISPLAY_ROOT)/msm/iris
+LINUX_INC +=	-I$(PWATOP)/core/include \
+	-I$(PWATOP)/core \
+	-I$(PWATOP)/vendor
+endif
 
 CDEFINES +=	-DANI_LITTLE_BYTE_ENDIAN \
 	-DANI_LITTLE_BIT_ENDIAN \
@@ -106,6 +107,9 @@ ccflags-y += $(LINUX_INC)
 ifeq ($(call cc-option-yn, -Wmaybe-uninitialized),y)
 EXTRA_CFLAGS += -Wmaybe-uninitialized
 endif
+
+KBUILD_EXTRA_SYMBOLS +=$(OUT)/obj/vendor/qcom/opensource/display-drivers/hdcp/Module.symvers
+KBUILD_EXTRA_SYMBOLS +=$(OUT)/obj/vendor/qcom/opensource/display-drivers/msm/Module.symvers
 
 ifeq ($(call cc-option-yn, -Wheader-guard),y)
 EXTRA_CFLAGS += -Wheader-guard
@@ -160,6 +164,7 @@ msm_drm-$(CONFIG_DRM_MSM_DP) += dp/dp_altmode.o \
 				dp/dp_catalog.o \
 				dp/dp_catalog_v420.o \
 				dp/dp_catalog_v200.o \
+				dp/dp_catalog_v500.o \
 				dp/dp_aux.o \
 				dp/dp_panel.o \
 				dp/dp_link.o \
@@ -177,7 +182,8 @@ msm_drm-$(CONFIG_DRM_MSM_DP) += dp/dp_altmode.o \
 				dp/dp_drm.o \
 				dp/dp_pll.o \
 				dp/dp_pll_5nm.o \
-				dp/dp_pll_4nm.o
+				dp/dp_pll_4nm.o \
+				dp/dp_pll_3nm.o
 
 msm_drm-$(CONFIG_DRM_MSM_DP_MST) += dp/dp_mst_drm.o
 
@@ -233,7 +239,12 @@ msm_drm-$(CONFIG_DRM_MSM_SDE) += sde/sde_crtc.o \
 				 sde_dsc_helper.o \
 				 sde_vdc_helper.o \
 				 sde/sde_hw_dnsc_blur.o \
-				 sde/sde_hw_rc.o
+				 sde/sde_hw_rc.o \
+				 sde/sde_color_proc_property_helper.o \
+				 sde/sde_color_processing_aiqe.o \
+				 sde/sde_hw_color_proc_aiqe_v1.o \
+				 sde/sde_aiqe_common.o \
+				 sde/sde_loopback.o
 
 msm_drm-$(CONFIG_DRM_SDE_WB) += sde/sde_wb.o \
 				sde/sde_encoder_phys_wb.o
@@ -242,28 +253,38 @@ msm_drm-$(CONFIG_DRM_SDE_RSC) += sde_rsc.o \
 				 sde_rsc_hw.o \
 				 sde_rsc_hw_v3.o
 
+msm_drm-$(CONFIG_DRM_SDE_CESTA) += sde_cesta.o \
+				 sde_cesta_hw.o
+
 msm_drm-$(CONFIG_DRM_MSM_DSI) += dsi/dsi_phy.o \
 				 dsi/dsi_pwr.o \
 				 dsi/dsi_phy.o \
 				 dsi/dsi_phy_hw_v3_0.o \
 				 dsi/dsi_phy_hw_v4_0.o \
 				 dsi/dsi_phy_hw_v5_0.o \
+				 dsi/dsi_phy_hw_v7_2.o \
 				 dsi/dsi_phy_timing_calc.o \
 				 dsi/dsi_phy_timing_v3_0.o \
 				 dsi/dsi_phy_timing_v4_0.o \
 				 dsi/dsi_pll.o \
 				 dsi/dsi_pll_5nm.o \
 				 dsi/dsi_pll_4nm.o \
-				 dsi/dsi_pll_10nm.o \
+				 dsi/dsi_pll_3nm.o \
 				 dsi/dsi_ctrl_hw_cmn.o \
 				 dsi/dsi_ctrl_hw_2_2.o \
 				 dsi/dsi_ctrl.o \
 				 dsi/dsi_catalog.o \
 				 dsi/dsi_drm.o \
 				 dsi/dsi_display.o \
+				 dsi/dsi_display_manager.o \
 				 dsi/dsi_panel.o \
 				 dsi/dsi_clk_manager.o \
 				 dsi/dsi_display_test.o
+
+ifeq (${CONFIG_PXLW_IRIS},y)
+include $(PWATOP)/core/Kbuild
+include $(PWATOP)/vendor/Kbuild
+endif
 
 msm_drm-$(CONFIG_DSI_PARSER) += dsi/dsi_parser.o
 
@@ -278,3 +299,4 @@ msm_drm-$(CONFIG_DRM_MSM) += msm_atomic.o \
 			     msm_smmu.o \
 			     msm_prop.o
 
+CDEFINES += -DBUILD_TIMESTAMP=\"$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')\"

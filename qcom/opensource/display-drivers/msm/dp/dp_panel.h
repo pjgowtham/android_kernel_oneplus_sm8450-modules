@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -64,6 +64,8 @@ struct dp_panel_info {
 	bool widebus_en;
 	struct msm_compression_info comp_info;
 	s64 dsc_overhead_fp;
+	u32 pbn_no_overhead;
+	u32 pbn;
 };
 
 struct dp_display_mode {
@@ -107,6 +109,7 @@ struct dp_audio;
 struct dp_panel {
 	/* dpcd raw data */
 	u8 dpcd[DP_RECEIVER_CAP_SIZE + DP_RECEIVER_EXT_CAP_SIZE + 1];
+	u8 lttpr_common_caps[DP_LTTPR_COMMON_CAP_SIZE];
 	u8 ds_ports[DP_MAX_DOWNSTREAM_PORTS];
 	u8 dsc_dpcd[DP_RECEIVER_DSC_CAP_SIZE + 1];
 	u8 fec_dpcd;
@@ -155,6 +158,7 @@ struct dp_panel {
 	bool dsc_continuous_pps;
 	bool mst_state;
 	bool pclk_on;
+	u32 pclk_factor;
 
 	/* override debug option */
 	bool mst_hide;
@@ -192,7 +196,7 @@ struct dp_panel {
 	int (*read_sink_status)(struct dp_panel *dp_panel, u8 *sts, u32 size);
 	int (*update_edid)(struct dp_panel *dp_panel, struct edid *edid);
 	bool (*read_mst_cap)(struct dp_panel *dp_panel);
-	void (*convert_to_dp_mode)(struct dp_panel *dp_panel,
+	int (*convert_to_dp_mode)(struct dp_panel *dp_panel,
 		const struct drm_display_mode *drm_mode,
 		struct dp_display_mode *dp_mode);
 	void (*update_pps)(struct dp_panel *dp_panel, char *pps_cmd);
@@ -200,6 +204,7 @@ struct dp_panel {
 	int (*get_src_crc)(struct dp_panel *dp_panel, u16 *crc);
 	int (*get_sink_crc)(struct dp_panel *dp_panel, u16 *crc);
 	bool (*get_panel_on)(struct dp_panel *dp_panel);
+	void (*set_lttpr_mode)(struct dp_panel *dp_panel, bool is_transparent);
 };
 
 struct dp_tu_calc_input {

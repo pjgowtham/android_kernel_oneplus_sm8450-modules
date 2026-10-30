@@ -17,10 +17,11 @@ def _register_module_to_map(module_map, name, path, config_option, srcs, config_
             nested_config = config_src
 
             for nested_src, nest_name in nested_config.items():
-                if nested_src == True:
-                    processed_config_srcs[config_src_name] = {True: nest_name}
-                else:
-                    processed_config_srcs[nested_src] = {True: nest_name}
+                if nested_src == "True":
+                    for nest_src in nest_name:
+                        final_srcs = nest_name[nest_src]
+                        processed_config_srcs[nest_src] = final_srcs
+
     for config_deps_name in config_deps:
         config_dep = config_deps[config_deps_name]
         if type(config_dep) == "list":
@@ -75,12 +76,12 @@ def display_module_entry(hdrs = []):
 
 def define_target_variant_modules(target, variant, registry, modules, config_options = []):
     kernel_build = "{}_{}".format(target, variant)
-    kernel_build_label = "//vendor/qcom/kernel:{}".format(kernel_build)
+    kernel_build_label = "//msm-kernel:{}".format(kernel_build)
     modules = [registry.get(module_name) for module_name in modules]
     options = _get_kernel_build_options(modules, config_options)
     build_print = lambda message : print("{}: {}".format(kernel_build, message))
     formatter = lambda s : s.replace("%b", kernel_build).replace("%t", target)
-    headers = ["//vendor/qcom/kernel:all_headers"] + registry.hdrs
+    headers = ["//msm-kernel:all_headers"] + registry.hdrs
     all_module_rules = []
 
     for module in modules:

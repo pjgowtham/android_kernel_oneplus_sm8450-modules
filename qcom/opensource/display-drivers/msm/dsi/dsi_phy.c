@@ -88,6 +88,14 @@ static const struct dsi_ver_spec_info dsi_phy_v5_2 = {
 	.timing_cfg_count = 14,
 };
 
+static const struct dsi_ver_spec_info dsi_phy_v7_2 = {
+	.version = DSI_PHY_VERSION_7_2,
+	.lane_cfg_count = 4,
+	.strength_cfg_count = 2,
+	.regulator_cfg_count = 0,
+	.timing_cfg_count = 14,
+};
+
 static const struct of_device_id msm_dsi_phy_of_match[] = {
 	{ .compatible = "qcom,dsi-phy-v3.0",
 	  .data = &dsi_phy_v3_0,},
@@ -103,6 +111,8 @@ static const struct of_device_id msm_dsi_phy_of_match[] = {
 	  .data = &dsi_phy_v4_3_2,},
 	{ .compatible = "qcom,dsi-phy-v5.2",
 	  .data = &dsi_phy_v5_2,},
+	{ .compatible = "qcom,dsi-phy-v7.2",
+	  .data = &dsi_phy_v7_2,},
 	{}
 };
 
@@ -632,6 +642,9 @@ struct msm_dsi_phy *dsi_phy_get(struct device_node *of_node)
 	} else {
 		phy->refcount++;
 	}
+
+	phy->sync_en_refcount = 0;
+
 	mutex_unlock(&phy->phy_lock);
 	return phy;
 }
@@ -1034,8 +1047,9 @@ int dsi_phy_enable(struct msm_dsi_phy *phy,
 	phy->cfg.bit_clk_rate_hz = config->bit_clk_rate_hz;
 
 	/**
-	 * If PHY timing parameters are not present in panel dtsi file,
-	 * then calculate them in the driver
+	 * If PHY timing parameters have not yet been updated either through the panel
+	 * dtsi or through a previous call to calculate_timing_params, they need to be
+	 * updated before enabling PHY.
 	 */
 	if (!phy->cfg.is_phy_timing_present)
 		rc = phy->hw.ops.calculate_timing_params(&phy->hw,
@@ -1059,9 +1073,8 @@ error:
 	return rc;
 }
 
-/* update dsi phy timings for dynamic clk switch use case */
 int dsi_phy_update_phy_timings(struct msm_dsi_phy *phy,
-			       struct dsi_host_config *config)
+		struct dsi_host_config *config, bool use_mode_bit_clk)
 {
 	int rc = 0;
 
@@ -1073,9 +1086,11 @@ int dsi_phy_update_phy_timings(struct msm_dsi_phy *phy,
 	memcpy(&phy->mode, &config->video_timing, sizeof(phy->mode));
 	rc = phy->hw.ops.calculate_timing_params(&phy->hw, &phy->mode,
 						 &config->common_config,
-						 &phy->cfg.timing, true);
+						 &phy->cfg.timing, use_mode_bit_clk);
 	if (rc)
 		DSI_PHY_ERR(phy, "failed to calculate phy timings %d\n", rc);
+	else
+		phy->cfg.is_phy_timing_present = true;
 
 	return rc;
 }
@@ -1357,7 +1372,7 @@ void dsi_phy_dynamic_refresh_trigger_sel(struct msm_dsi_phy *phy,
  * @phy:	DSI PHY handle
  * @is_master:	Boolean to indicate if for master or slave.
  */
-void dsi_phy_dynamic_refresh_trigger(struct msm_dsi_phy *phy, bool is_master)
+void dsi_phy_dynamic_refresh_trigger(struct msm_dsi_phy *phy, bool is_master, bool prog_dr)
 {
 	u32 off;
 
@@ -1369,11 +1384,15 @@ void dsi_phy_dynamic_refresh_trigger(struct msm_dsi_phy *phy, bool is_master)
 	 * program PLL_SWI_INTF_SEL and SW_TRIGGER bit only for
 	 * master and program SYNC_MODE bit only for slave.
 	 */
-	if (is_master)
+	if (is_master) {
 		off = BIT(DYN_REFRESH_INTF_SEL) | BIT(DYN_REFRESH_SWI_CTRL) |
 			BIT(DYN_REFRESH_SW_TRIGGER);
-	else
+
+		if (prog_dr)
+			off |= BIT(DYN_REFRESH_PROG_DR);
+	} else {
 		off = BIT(DYN_REFRESH_SYNC_MODE) | BIT(DYN_REFRESH_SWI_CTRL);
+	}
 
 	if (phy->hw.ops.dyn_refresh_ops.dyn_refresh_helper)
 		phy->hw.ops.dyn_refresh_ops.dyn_refresh_helper(&phy->hw, off);

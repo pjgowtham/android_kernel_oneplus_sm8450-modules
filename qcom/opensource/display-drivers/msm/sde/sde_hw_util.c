@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 #define pr_fmt(fmt)	"[drm:%s:%d] " fmt, __func__, __LINE__
@@ -41,9 +41,13 @@ static u32 sde_hw_util_log_mask = SDE_DBG_MASK_NONE;
 #define QSEED3_CLK_CTRL0                   0x54
 #define QSEED3_CLK_CTRL1                   0x58
 #define QSEED3_CLK_STATUS                  0x5C
+#define QSEED3_ASYM_PHASE_STEP_H           0x68
+#define QSEED3_ASYM_PHASE_STEP_V           0x6C
 #define QSEED3_MISR_CTRL                   0x70
 #define QSEED3_MISR_SIGNATURE_0            0x74
 #define QSEED3_MISR_SIGNATURE_1            0x78
+#define QSEED3_FOV_RE_PHASE_STEP2_V        0x88
+#define QSEED3_FOV_RE_ASYM_PHASE_STEP_V    0x8C
 #define QSEED3_PHASE_INIT_Y_H              0x90
 #define QSEED3_PHASE_INIT_Y_V              0x94
 #define QSEED3_PHASE_INIT_UV_H             0x98
@@ -68,8 +72,110 @@ static u32 sde_hw_util_log_mask = SDE_DBG_MASK_NONE;
 
 #define QSEED5_DEFAULT_DE_LPF_BLEND 0x3FF00000
 
+/* SDE CAC SCALER */
+#define QSEED3_CAC_RE_PRELOAD              0xA0
+#define QSEED3_CAC_RE_PHASE_INIT_Y_V       0xA4
+#define QSEED3_CAC_RE_PHASE_INIT_UV_V      0xA8
+#define QSEED3_CAC_LE_PHASE_INIT2_Y_H      0xAC
+#define QSEED3_CAC_LE_PHASE_INIT2_Y_V      0xB0
+#define QSEED3_CAC_LE_PHASE_INIT2_UV_H     0xB4
+#define QSEED3_CAC_LE_PHASE_INIT2_UV_V     0xB8
+#define QSEED3_CAC_RE_PHASE_INIT2_Y_V      0xBC
+#define QSEED3_CAC_RE_PHASE_INIT2_UV_V     0xC0
+#define QSEED3_CAC_LE_Y                    0xC4
+#define QSEED3_CAC_LE_UV                   0xC8
+#define QSEED3_CAC_RE_Y                    0xCC
+#define QSEED3_CAC_RE_UV                   0xD0
+#define QSEED3_DST_UV_SIZE                 0xD4
+#define QSEED3_DST_LE_OFFSET               0xD8
+#define QSEED3_DST_RE_OFFSET               0xDC
+#define QTIMER_DISABLE 0x1
+#define QTIMER_ENABLE 0x2
+#define QTMR_V1_CNTFRQ 0x10
+#define QTMR_V1_CNTP_CTL 0x2c
+#define QTMR_V1_CNTP_TVAL 0x28
+
 typedef void (*scaler_lut_type)(struct sde_hw_blk_reg_map *,
 		struct sde_hw_scaler3_cfg *, u32);
+
+static irqreturn_t sde_qtimer_irq_cb(int irq, void *arg)
+{
+	struct drm_device *dev = arg;
+	struct msm_drm_private *priv = dev->dev_private;
+	struct sde_kms *sde_kms = to_sde_kms(priv->kms);
+
+	SDE_EVT32(0);
+	if (sde_kms->sde_qtimer.qtimer_cb)
+		sde_qtimer_start(&sde_kms->sde_qtimer);
+
+	return IRQ_HANDLED;
+}
+
+void msm_sde_qtimer_install(struct device *dev)
+{
+	int ret, count, irq;
+	struct platform_device *pdev = to_platform_device(dev);
+	struct drm_device *ddev = platform_get_drvdata(pdev);
+	struct msm_drm_private *priv = ddev->dev_private;
+	struct sde_kms *sde_kms = to_sde_kms(priv->kms);
+	struct resource *qtimer_res;
+	unsigned long qtimer_reg_size;
+
+	if (!pdev) {
+		pr_err("pdev is NULL\n");
+		return;
+	}
+
+	count = of_property_count_strings(pdev->dev.of_node, "interrupt-names");
+	if (count <= 1) {
+		pr_debug("Qtimer not defined\n");
+		return;
+	}
+
+	irq = platform_get_irq(pdev, 1);
+	if (irq < 0) {
+		pr_debug("Fail to get Qtimer irq\n");
+		return;
+	}
+
+	qtimer_res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "qtimer_reg");
+	qtimer_reg_size = resource_size(qtimer_res);
+	sde_kms->sde_qtimer.qtimer_cb = sde_qtimer_irq_cb;
+
+	ret = request_irq(irq, sde_kms->sde_qtimer.qtimer_cb,
+	__IRQF_TIMER | IRQF_NO_THREAD, ddev->driver->name, ddev);
+	enable_irq_wake(irq);
+	sde_kms->sde_qtimer.qtimer_mmio = ioremap(qtimer_res->start, qtimer_reg_size);
+}
+
+void sde_qtimer_start(struct sde_qtimer *sde_qtimer)
+{
+	unsigned long q_cycles, q_freq;
+
+	q_freq = readl_relaxed(sde_qtimer->qtimer_mmio+QTMR_V1_CNTFRQ);
+
+	q_cycles = (q_freq * sde_qtimer->time_in_ns) / NSEC_PER_SEC;
+
+	/* write 0x2 to QTMR_V1_CNTP_CTL to enable qtimer */
+	writel_relaxed(QTIMER_ENABLE, sde_qtimer->qtimer_mmio+QTMR_V1_CNTP_CTL);
+
+	/*
+	 * Write q_cycles(tcxo) to QTMR_V1_CNTP_TVAL to invoke callback
+	 * function at the interval of sde_qtimer->time_in_ns.
+	 */
+	writel_relaxed(q_cycles, sde_qtimer->qtimer_mmio+QTMR_V1_CNTP_TVAL);
+
+	/* write 0x1 to QTMR_V1_CNTP_CTL to disable qtimer */
+	writel_relaxed(QTIMER_DISABLE, sde_qtimer->qtimer_mmio+QTMR_V1_CNTP_CTL);
+	SDE_EVT32(q_cycles>>32, q_cycles);
+
+}
+
+void sde_qtimer_stop(struct sde_qtimer *sde_qtimer)
+{
+	writel_relaxed(0x2, sde_qtimer->qtimer_mmio+0x2c);
+	SDE_EVT32(0);
+}
 
 void sde_reg_write(struct sde_hw_blk_reg_map *c,
 		u32 reg_off,
@@ -354,6 +460,100 @@ static inline scaler_lut_type get_scaler_lut(
 		lut_ptr = _sde_hw_setup_scaler3_lut;
 
 	return lut_ptr;
+}
+
+void sde_hw_setup_scaler_cac(struct sde_hw_blk_reg_map *c,
+		u32 sspp_blk_off, struct sde_hw_cac_cfg *cac_cfg)
+{
+	u32 phase_step_y_h, phase_step_y_v, phase_step_uv_h, phase_step_uv_v;
+	u32 preload_re, thresh_le_y, thresh_le_uv;
+	u32 dst_uv, dst_le_off, opmode;
+
+	phase_step_y_h = SDE_REG_READ(c, QSEED3_PHASE_STEP_Y_H +
+						sspp_blk_off);
+	phase_step_y_v = SDE_REG_READ(c, QSEED3_PHASE_STEP_Y_V +
+						sspp_blk_off);
+	phase_step_uv_h = SDE_REG_READ(c, QSEED3_PHASE_STEP_UV_H +
+						sspp_blk_off);
+	phase_step_uv_v = SDE_REG_READ(c, QSEED3_PHASE_STEP_UV_V +
+						sspp_blk_off);
+	opmode = SDE_REG_READ(c, QSEED3_OP_MODE + sspp_blk_off);
+
+	opmode |= (cac_cfg->cac_mode << 1);
+	opmode |= (cac_cfg->uv_filter_cfg & 0x3) << 24;
+	opmode |= (cac_cfg->fov_mode & 0x3) << 20;
+
+	phase_step_y_h |= (cac_cfg->cac_le_inc_skip_x[0] << 29) |
+			(cac_cfg->cac_phase_inc_first_x[0] << 28);
+
+	phase_step_y_v |= (cac_cfg->cac_le_inc_skip_y[0] << 29) |
+			(cac_cfg->cac_phase_inc_first_y[0] << 28) |
+			(cac_cfg->cac_re_inc_skip_y[0] << 30);
+
+	phase_step_uv_h |= (cac_cfg->cac_le_inc_skip_x[1] << 29) |
+			(cac_cfg->cac_phase_inc_first_x[1] << 28);
+
+	phase_step_uv_v |= (cac_cfg->cac_le_inc_skip_y[1] << 29) |
+			(cac_cfg->cac_phase_inc_first_y[1] << 28) |
+			(cac_cfg->cac_re_inc_skip_y[1] << 30);
+
+	preload_re = ((cac_cfg->cac_re_preload_y[1] & 0x7F) << 24) |
+			((cac_cfg->cac_re_preload_y[0] & 0x7F) << 8);
+
+	thresh_le_y = ((cac_cfg->cac_le_thr_y[0] & 0xFFFF) << 16) |
+			(cac_cfg->cac_le_thr_x[0] & 0xFFFF);
+
+	thresh_le_uv = ((cac_cfg->cac_le_thr_y[1] & 0xFFFF) << 16) |
+			(cac_cfg->cac_le_thr_x[1] & 0xFFFF);
+
+	dst_uv = ((cac_cfg->cac_dst_uv_h & 0xFFFF) << 16) |
+			(cac_cfg->cac_dst_uv_w & 0xFFFF);
+
+	dst_le_off = ((cac_cfg->cac_le_dst_v_offset & 0xFFFF) << 16) |
+			(cac_cfg->cac_le_dst_h_offset & 0xFFFF);
+
+	SDE_REG_WRITE(c, QSEED3_CAC_RE_PRELOAD + sspp_blk_off, preload_re);
+	SDE_REG_WRITE(c, QSEED3_CAC_RE_PHASE_INIT_Y_V + sspp_blk_off,
+			(cac_cfg->cac_re_phase_init_y[0] & 0x1FFFFF));
+	SDE_REG_WRITE(c, QSEED3_CAC_RE_PHASE_INIT_UV_V + sspp_blk_off,
+			(cac_cfg->cac_re_phase_init_y[1] & 0x1FFFFF));
+	SDE_REG_WRITE(c, QSEED3_CAC_LE_PHASE_INIT2_Y_H + sspp_blk_off,
+			cac_cfg->cac_le_phase_init2_x[0]);
+	SDE_REG_WRITE(c, QSEED3_CAC_LE_PHASE_INIT2_UV_H + sspp_blk_off,
+			cac_cfg->cac_le_phase_init2_x[1]);
+	SDE_REG_WRITE(c, QSEED3_CAC_LE_PHASE_INIT2_Y_V + sspp_blk_off,
+			cac_cfg->cac_le_phase_init2_y[0]);
+	SDE_REG_WRITE(c, QSEED3_CAC_LE_PHASE_INIT2_UV_V + sspp_blk_off,
+			cac_cfg->cac_le_phase_init2_y[1]);
+	SDE_REG_WRITE(c, QSEED3_CAC_RE_PHASE_INIT2_Y_V + sspp_blk_off,
+			cac_cfg->cac_re_phase_init2_y[0]);
+	SDE_REG_WRITE(c, QSEED3_CAC_RE_PHASE_INIT2_UV_V + sspp_blk_off,
+			cac_cfg->cac_re_phase_init2_y[1]);
+	SDE_REG_WRITE(c, QSEED3_CAC_LE_Y + sspp_blk_off, thresh_le_y);
+	SDE_REG_WRITE(c, QSEED3_CAC_LE_UV + sspp_blk_off, thresh_le_uv);
+	SDE_REG_WRITE(c, QSEED3_CAC_RE_Y + sspp_blk_off,
+			((cac_cfg->cac_re_thr_y[0] & 0xFFFF) << 16));
+	SDE_REG_WRITE(c, QSEED3_CAC_RE_UV + sspp_blk_off,
+			((cac_cfg->cac_re_thr_y[1] & 0xFFFF) << 16));
+	SDE_REG_WRITE(c, QSEED3_DST_UV_SIZE + sspp_blk_off, dst_uv);
+	SDE_REG_WRITE(c, QSEED3_DST_LE_OFFSET + sspp_blk_off, dst_le_off);
+	SDE_REG_WRITE(c, QSEED3_DST_RE_OFFSET + sspp_blk_off,
+			((cac_cfg->cac_re_dst_v_offset & 0xFFFF) << 16));
+	SDE_REG_WRITE(c, QSEED3_PHASE_STEP_Y_H + sspp_blk_off, phase_step_y_h);
+	SDE_REG_WRITE(c, QSEED3_PHASE_STEP_Y_V + sspp_blk_off, phase_step_y_v);
+	SDE_REG_WRITE(c, QSEED3_PHASE_STEP_UV_H + sspp_blk_off,
+				phase_step_uv_h);
+	SDE_REG_WRITE(c, QSEED3_PHASE_STEP_UV_V + sspp_blk_off,
+				phase_step_uv_v);
+	SDE_REG_WRITE(c, QSEED3_OP_MODE + sspp_blk_off, opmode);
+	SDE_REG_WRITE(c, QSEED3_ASYM_PHASE_STEP_H + sspp_blk_off,
+				(cac_cfg->cac_asym_phase_step_h & 0xFFFFFF));
+	SDE_REG_WRITE(c, QSEED3_ASYM_PHASE_STEP_V + sspp_blk_off,
+				(cac_cfg->cac_asym_phase_step_v & 0xFFFFFF));
+	SDE_REG_WRITE(c, QSEED3_FOV_RE_PHASE_STEP2_V + sspp_blk_off,
+				(cac_cfg->cac_re_phase_step_v & 0xFFFFFF));
+	SDE_REG_WRITE(c, QSEED3_FOV_RE_ASYM_PHASE_STEP_V + sspp_blk_off,
+				(cac_cfg->cac_re_asym_phase_step_v & 0xFFFFFF));
 }
 
 void sde_hw_setup_scaler3(struct sde_hw_blk_reg_map *c,

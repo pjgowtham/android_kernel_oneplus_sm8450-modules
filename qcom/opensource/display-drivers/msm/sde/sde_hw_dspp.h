@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -8,6 +8,7 @@
 #define _SDE_HW_DSPP_H
 
 #include <drm/msm_drm_pp.h>
+#include <drm/msm_drm_aiqe.h>
 #include "msm_drv.h"
 
 struct sde_hw_dspp;
@@ -161,6 +162,14 @@ struct sde_hw_dspp_ops {
 			u32 *resp_in, u32 *resp_out);
 
 	/**
+	 * validate_ltm_roi -  Validate LTM roi configuration
+	 * @ctx: Pointer to dspp context.
+	 * @cfg: Pointer to configuration.
+	 * Return: 0 on success, non-zero otherwise.
+	 */
+	int (*validate_ltm_roi)(struct sde_hw_dspp *ctx, void *cfg);
+
+	/**
 	 * setup_ltm_init - setup LTM INIT
 	 * @ctx: Pointer to dspp context
 	 * @cfg: Pointer to configuration
@@ -304,9 +313,10 @@ struct sde_hw_dspp_ops {
 	/**
 	 * setup_demura_backlight_cfg - function to program demura backlight
 	 * @ctx: Pointer to dspp context
-	 * @status: Pointer to configuration.
+	 * @hw_cfg: Pointer to configuration
 	 */
-	void (*setup_demura_backlight_cfg)(struct sde_hw_dspp *ctx, u64 val);
+	void (*setup_demura_backlight_cfg)(struct sde_hw_dspp *ctx,
+					   struct sde_hw_cp_cfg *hw_cfg);
 
 	/**
 	 * demura_read_plane_status - Query demura plane status
@@ -326,6 +336,96 @@ struct sde_hw_dspp_ops {
 	 * @cfg: Pointer to configuration
 	 */
 	void (*setup_demura_cfg0_param2)(struct sde_hw_dspp *ctx, void *cfg);
+	/**
+	 * setup_mdnie - function to configure mdnie params
+	 * @ctx: Pointer to dspp context
+	 * @cfg: Pointer to configuration
+	 * @aiqe_top: Pointer to aiqe top level structure
+	 */
+	void (*setup_mdnie)(struct sde_hw_dspp *ctx, void *cfg, void *aiqe_top);
+	/**
+	 * setup_mdnie_art - function to configure mdnie_art params
+	 * @ctx: Pointer to dspp context
+	 * @cfg: Pointer to configuration
+	 * @aiqe_top: Pointer to aiqe top level structure
+	 */
+	void (*setup_mdnie_art)(struct sde_hw_dspp *ctx, void *cfg, void *aiqe_top);
+
+	/**
+	 * setup_aiqe_ssrc_config - function to set SSRC configuration
+	 * @ctx: Pointer to dspp context
+	 * @cfg: Pointer to configuration
+	 * @mdnie_top: Pointer to top level mdnie structure
+	 */
+	void (*setup_aiqe_ssrc_config)(struct sde_hw_dspp *ctx, void *cfg, void *mdnie_top);
+
+	/**
+	 * setup_aiqe_ssrc_data - function to set SSRC data
+	 * @ctx: Pointer to dspp context
+	 * @cfg: Pointer to configuration
+	 * @mdnie_top: Pointer to top level mdnie structure
+	 */
+	void (*setup_aiqe_ssrc_data)(struct sde_hw_dspp *ctx, void *cfg, void *mdnie_top);
+
+	/**
+	 * validate_aiqe_ssrc_data - validate SSRC data payload
+	 * @ctx: Pointer to dspp context
+	 * @cfg: Pointer to configuration
+	 * @mdnie_top: Pointer to top level mdnie structure
+	 */
+	int (*validate_aiqe_ssrc_data)(struct sde_hw_dspp *ctx, void *cfg, void *mdnie_top);
+
+	/**
+	 * setup_copr - function to configure copr params
+	 * @ctx: Pointer to dspp context
+	 * @cfg: Pointer to configuration
+	 * @aiqe_top: Pointer to aiqe top level structure
+	 */
+	void (*setup_copr)(struct sde_hw_dspp *ctx, void *cfg, void *aiqe_top);
+	/**
+	 * read_mdnie_art_done - function to read mdnie art done
+	 * @ctx: Pointer to dspp context
+	 * @art_done: Pointer to art done value
+	 */
+	int (*read_mdnie_art_done)(struct sde_hw_dspp *ctx,  u32 *art_done);
+	/**
+	 * read_copr_status - function to read copr status
+	 * @ctx: Pointer to dspp context
+	 * @copr_status: Pointer to copr_status struct.
+	 */
+	int (*read_copr_status)(struct sde_hw_dspp *ctx, struct drm_msm_copr_status *copr_status);
+	/**
+	 * reset_mdnie_art - function to reset art param after art done
+	 * @ctx: Pointer to dspp context
+	 */
+	void (*reset_mdnie_art)(struct sde_hw_dspp *ctx);
+	/**
+	 * setup_mdnie_psr - function to enable mdnie psr flag
+	 * @ctx: Pointer to dspp context
+	 */
+	void (*setup_mdnie_psr)(struct sde_hw_dspp *ctx);
+
+	/**
+	 * check_ai_scaler - function to check ai scaler cfg
+	 * @ctx: Pointer to dspp context
+	 * @status: Pointer to configuration.
+	 */
+	int (*check_ai_scaler)(struct sde_hw_dspp *ctx, void *cfg);
+
+	/**
+	 * setup_ai_scaler - function to program ai scaler cfg
+	 * @ctx: Pointer to dspp context
+	 * @status: Pointer to configuration.
+	 */
+	int (*setup_ai_scaler)(struct sde_hw_dspp *ctx, void *cfg);
+
+	/**
+	 * setup_aiqe_abc - function to configure aiqe abc params
+	 * @ctx: Pointer to dspp context
+	 * @cfg: Pointer to configuration
+	 * @aiqe_top: Pointer to aiqe top level structure
+	 */
+	void (*setup_aiqe_abc)(struct sde_hw_dspp *ctx, void *cfg, void *aiqe_top);
 };
 
 /**
@@ -350,6 +450,8 @@ struct sde_hw_rc_state {
  * @ltm_checksum_support: flag to check if checksum present
  * @spr_cfg_18_default: Default SPR cfg 18 HW details. Needed for PU handling
  * @rc_state: Structure for RC state
+ * @dpu_idx: dpu index
+ * @sde_kms: pointer to sde_kms
  */
 struct sde_hw_dspp {
 	struct sde_hw_blk_reg_map hw;
@@ -369,6 +471,8 @@ struct sde_hw_dspp {
 
 	/* rc state */
 	struct sde_hw_rc_state rc_state;
+	u32 dpu_idx;
+	struct sde_kms *sde_kms;
 };
 
 /**
@@ -386,11 +490,14 @@ static inline struct sde_hw_dspp *to_sde_hw_dspp(struct sde_hw_blk_reg_map *hw)
  * should be called once before accessing every dspp.
  * @idx:  DSPP index for which driver object is required
  * @addr: Mapped register io address of MDP
+ * @m :   pointer to mdss catalog data
+ * @sde_kms: pointer to sde_kms
  * @Return: pointer to structure or ERR_PTR
  */
 struct sde_hw_blk_reg_map *sde_hw_dspp_init(enum sde_dspp idx,
 			void __iomem *addr,
-			struct sde_mdss_cfg *m);
+			struct sde_mdss_cfg *m,
+			struct sde_kms *sde_kms);
 
 /**
  * sde_hw_dspp_destroy(): Destroys DSPP driver context

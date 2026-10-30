@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2022, 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -40,6 +40,7 @@
 #define WB_CLK_STATUS			0x17C
 #define WB_LINE_COUNT			0x184
 #define WB_PROG_LINE_COUNT		0x188
+#define WB_FRAME_COUNT			0x198
 #define WB_CSC_BASE			0x260
 #define WB_DST_ADDR_SW_STATUS		0x2B0
 #define WB_CDP_CNTL			0x2B4
@@ -102,29 +103,21 @@ static void _sde_hw_cwb_ctrl_init(struct sde_mdss_cfg *m,
 static void _sde_hw_dcwb_ctrl_init(struct sde_mdss_cfg *m,
 		void __iomem *addr, struct sde_hw_wb *hw_wb)
 {
-	int i, j, dcwb_count, blk_count;
+	int i, j;
 	u32 blk_off;
 	char name[64] = {0};
 
-	if (!hw_wb || !m->dcwb_count)
+	if (!hw_wb)
 		return;
 
-	dcwb_count = (m->dcwb_count < MAX_CWB_BLOCKSIZE) ? m->dcwb_count :
-		(m->dcwb_count / MAX_CWB_BLOCKSIZE);
-
-	if (dcwb_count == m->dcwb_count)
-		blk_count = m->dcwb_count;
-	else
-		blk_count = MAX_CWB_BLOCKSIZE;
-
-	for (j = 0; j < dcwb_count; j++) {
+	for (j = 0; j < (m->dcwb_count / MAX_CWB_BLOCKSIZE); j++) {
 		hw_wb->dcwb_hw[j].base_off = addr;
 		hw_wb->dcwb_hw[j].blk_off = m->cwb_blk_off[j];
 		hw_wb->dcwb_hw[j].length = 0x20;
 		hw_wb->dcwb_hw[j].hw_rev = m->hw_rev;
 		hw_wb->dcwb_hw[j].log_mask = SDE_DBG_MASK_WB;
 
-		for (i = 0; i < blk_count; i++) {
+		for (i = 0; i < MAX_CWB_BLOCKSIZE; i++) {
 			snprintf(name, sizeof(name), "dcwb%d", i);
 			blk_off = hw_wb->dcwb_hw[j].blk_off + (m->cwb_blk_stride * i);
 
@@ -615,6 +608,15 @@ static void sde_hw_wb_clear_ubwc_error(struct sde_hw_wb *ctx)
 	return SDE_REG_WRITE(c, WB_UBWC_ERROR_STATUS, BIT(31));
 }
 
+static u32 sde_hw_wb_get_frame_count(struct sde_hw_wb *ctx)
+{
+	struct sde_hw_blk_reg_map *c;
+
+	c = &ctx->hw;
+
+	return SDE_REG_READ(c, WB_FRAME_COUNT) & 0xFFFF;
+}
+
 static void _setup_wb_ops(struct sde_hw_wb_ops *ops,
 	unsigned long features)
 {
@@ -652,6 +654,9 @@ static void _setup_wb_ops(struct sde_hw_wb_ops *ops,
 		ops->get_line_count = sde_hw_wb_get_line_count;
 		ops->set_prog_line_count = sde_hw_wb_set_prog_line_count;
 	}
+
+	if (test_bit(SDE_WB_FRAME_COUNT, &features))
+		ops->get_frame_count = sde_hw_wb_get_frame_count;
 }
 
 struct sde_hw_blk_reg_map *sde_hw_wb_init(enum sde_wb idx,

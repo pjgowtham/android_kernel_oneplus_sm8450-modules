@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -50,6 +50,9 @@ enum sde_format_flags {
 	SDE_FORMAT_FLAG_COMPRESSED_BIT,
 	SDE_FORMAT_FLAG_ALPHA_SWAP_BIT,
 	SDE_FORMAT_FLAG_FP16_BIT,
+	SDE_FORMAT_FLAG_LOSSY_8_5_BIT,
+	SDE_FORMAT_FLAG_LOSSY_2_1_BIT,
+	SDE_FORMAT_FLAG_CAC_BIT,
 	SDE_FORMAT_FLAG_BIT_MAX,
 };
 
@@ -58,6 +61,9 @@ enum sde_format_flags {
 #define SDE_FORMAT_FLAG_COMPRESSED	BIT(SDE_FORMAT_FLAG_COMPRESSED_BIT)
 #define SDE_FORMAT_FLAG_ALPHA_SWAP	BIT(SDE_FORMAT_FLAG_ALPHA_SWAP_BIT)
 #define SDE_FORMAT_FLAG_FP16		BIT(SDE_FORMAT_FLAG_FP16_BIT)
+#define SDE_FORMAT_FLAG_LOSSY_8_5	BIT(SDE_FORMAT_FLAG_LOSSY_8_5_BIT)
+#define SDE_FORMAT_FLAG_LOSSY_2_1	BIT(SDE_FORMAT_FLAG_LOSSY_2_1_BIT)
+#define SDE_FORMAT_FLAG_CAC		BIT(SDE_FORMAT_FLAG_CAC_BIT)
 #define SDE_FORMAT_IS_YUV(X)		\
 	(test_bit(SDE_FORMAT_FLAG_YUV_BIT, (X)->flag))
 #define SDE_FORMAT_IS_DX(X)		\
@@ -69,10 +75,20 @@ enum sde_format_flags {
 #define SDE_FORMAT_IS_UBWC(X) \
 	(((X)->fetch_mode == SDE_FETCH_UBWC) && \
 			test_bit(SDE_FORMAT_FLAG_COMPRESSED_BIT, (X)->flag))
+#define SDE_FORMAT_IS_UBWC_LOSSY_8_5(X) \
+	(((X)->fetch_mode == SDE_FETCH_UBWC) && \
+			test_bit(SDE_FORMAT_FLAG_COMPRESSED_BIT, (X)->flag) && \
+			test_bit(SDE_FORMAT_FLAG_LOSSY_8_5_BIT, (X)->flag))
+#define SDE_FORMAT_IS_UBWC_LOSSY_2_1(X) \
+	(((X)->fetch_mode == SDE_FETCH_UBWC) && \
+			test_bit(SDE_FORMAT_FLAG_COMPRESSED_BIT, (X)->flag) && \
+			test_bit(SDE_FORMAT_FLAG_LOSSY_2_1_BIT, (X)->flag))
 #define SDE_FORMAT_IS_ALPHA_SWAPPED(X) \
 	(test_bit(SDE_FORMAT_FLAG_ALPHA_SWAP_BIT, (X)->flag))
 #define SDE_FORMAT_IS_FP16(X) \
 	(test_bit(SDE_FORMAT_FLAG_FP16_BIT, (X)->flag))
+#define SDE_FORMAT_IS_CAC_FETCH(X) \
+	(test_bit(SDE_FORMAT_FLAG_CAC_BIT, (X)->flag))
 
 #define MDP_TICK_COUNT                    16
 #define XO_CLK_RATE                       19200
@@ -146,7 +162,11 @@ enum sde_sspp {
 	SSPP_VIG1,
 	SSPP_VIG2,
 	SSPP_VIG3,
-	SSPP_VIG_MAX = SSPP_VIG3,
+	SSPP_VIG4,
+	SSPP_VIG5,
+	SSPP_VIG6,
+	SSPP_VIG7,
+	SSPP_VIG_MAX = SSPP_VIG7,
 	SSPP_DMA0,
 	SSPP_DMA1,
 	SSPP_DMA2,
@@ -160,6 +180,12 @@ enum sde_sspp {
 #define SDE_SSPP_VALID(x) ((x) > SSPP_NONE && (x) < SSPP_MAX)
 #define SDE_SSPP_VALID_VIG(x) ((x) >= SSPP_VIG0 && (x) <= SSPP_VIG_MAX)
 #define SDE_SSPP_VALID_DMA(x) ((x) >= SSPP_DMA0 && (x) <= SSPP_DMA_MAX)
+
+enum sde_dpu {
+	DPU_0,
+	DPU_1,
+	DPU_MAX
+};
 
 enum sde_sspp_type {
 	SSPP_TYPE_VIG,
@@ -180,11 +206,12 @@ enum sde_lm {
 	LM_3,
 	LM_4,
 	LM_5,
+	LM_6,
+	LM_7,
 	LM_DCWB_DUMMY_0,
 	LM_DCWB_DUMMY_1,
 	LM_DCWB_DUMMY_2,
 	LM_DCWB_DUMMY_3,
-	LM_6,
 	LM_MAX
 };
 
@@ -255,6 +282,11 @@ enum sde_ctl {
 	CTL_MAX
 };
 
+enum sde_ctl_hyp {
+	CTL_HYP_0 = 1,
+	CTL_HYP_MAX
+};
+
 enum sde_cdm {
 	CDM_0 = 1,
 	CDM_1,
@@ -273,6 +305,8 @@ enum sde_pingpong {
 	PINGPONG_3,
 	PINGPONG_4,
 	PINGPONG_5,
+	PINGPONG_6,
+	PINGPONG_7,
 	PINGPONG_CWB_0,
 	PINGPONG_CWB_1,
 	PINGPONG_CWB_2,
@@ -289,6 +323,8 @@ enum sde_dsc {
 	DSC_3,
 	DSC_4,
 	DSC_5,
+	DSC_6,
+	DSC_7,
 	DSC_MAX
 };
 
@@ -307,6 +343,8 @@ enum sde_intf {
 	INTF_4,
 	INTF_5,
 	INTF_6,
+	INTF_7,
+	INTF_8,
 	INTF_MAX
 };
 
@@ -321,6 +359,7 @@ enum sde_intf_type {
 
 	/* virtual interfaces */
 	INTF_WB = 0x100,
+	INTF_LB = 0x101,
 };
 
 enum sde_intf_mode {
@@ -397,6 +436,7 @@ enum sde_merge_3d {
 	MERGE_3D_0 = 1,
 	MERGE_3D_1,
 	MERGE_3D_2,
+	MERGE_3D_3,
 	MERGE_3D_CWB_0,
 	MERGE_3D_CWB_1,
 	MERGE_3D_MAX
@@ -657,6 +697,30 @@ struct sde_mdss_color {
 #define SDE_DBG_MASK_DNSC_BLUR  (1 << 18)
 
 /**
+ * struct sde_cp_skip_blend_plane: skip blend plane payload
+ * @valid: True when skip blend plane is active
+ * @plane: hw plane being used
+ * @plane_w: width of layer
+ * @plane_h: height of layer
+ */
+struct sde_cp_skip_blend_plane {
+	bool valid;
+	enum sde_sspp plane;
+	u32 plane_w;
+	u32 plane_h;
+};
+/**
+ * enum skip_blend_plane_type: skip blend rect type.
+ * SB_PLANE_REAL - Rect0 or real plane
+ * SB_PLANE_VIRT - Rect1 or virtual plane
+ */
+enum skip_blend_plane_type {
+	SB_PLANE_REAL,
+	SB_PLANE_VIRT,
+	SB_PLANE_MAX
+};
+
+/**
  * struct sde_hw_cp_cfg: hardware dspp/lm feature payload.
  * @payload: Feature specific payload.
  * @len: Length of the payload.
@@ -671,11 +735,11 @@ struct sde_mdss_color {
  *			using LUTDMA
  * @panel_height: height of display panel in pixels.
  * @panel_width: width of display panel in pixels.
- * @valid_skip_blend_plane: true if skip plane params are valid
- * @skip_blend_plane: plane which has been skipped staging into layer mixer
- * @skip_blend_plane_w: skip plane width
- * @skip_blend_plane_h: skip plane height
+ * @skip_planes: array of skip blend planes with crtc
  * @num_ds_enabled: Number of destination scalers enabled
+ * @is_crtc_enabled: true if crtc is enabled
+ * @overfetch_lines_on_top: extra lines to over fetch on top
+ * @overfetch_lines_on_top: extra lines to over fetch on bottom
  */
 struct sde_hw_cp_cfg {
 	void *payload;
@@ -690,11 +754,11 @@ struct sde_hw_cp_cfg {
 	bool broadcast_disabled;
 	u32 panel_height;
 	u32 panel_width;
-	bool valid_skip_blend_plane;
-	enum sde_sspp skip_blend_plane;
-	u32 skip_blend_plane_w;
-	u32 skip_blend_plane_h;
+	struct sde_cp_skip_blend_plane skip_planes[SB_PLANE_MAX];
 	u32 num_ds_enabled;
+	bool is_crtc_enabled;
+	u32 overfetch_lines_on_top;
+	u32 overfetch_lines_on_bottom;
 };
 
 /**
@@ -740,6 +804,36 @@ struct sde_sspp_index_info {
 	DECLARE_BITMAP(pipes, SSPP_MAX);
 	DECLARE_BITMAP(virt_pipes, SSPP_MAX);
 	bool bordercolor;
+};
+
+/**
+ * SDE_SSPP_RECT_SOLO - multirect disabled
+ * SDE_SSPP_RECT_0 - rect0 of a multirect pipe
+ * SDE_SSPP_RECT_1 - rect1 of a multirect pipe
+ * SDE_SSPP_RECT_MAX - max enum of multirect pipe
+ *
+ * Note: HW supports multirect with either RECT0 or
+ * RECT1. Considering no benefit of such configs over
+ * SOLO mode and to keep the plane management simple,
+ * we dont support single rect multirect configs.
+ */
+enum sde_sspp_multirect_index {
+	SDE_SSPP_RECT_SOLO = 0,
+	SDE_SSPP_RECT_0,
+	SDE_SSPP_RECT_1,
+	SDE_SSPP_RECT_MAX,
+};
+
+/**
+ * struct sde_hw_stage_cfg - blending stage cfg
+ * @stage : SSPP_ID at each stage
+ * @multirect_index: index of the rectangle of SSPP.
+ * @layout: indicates if its the left or right layout.
+ */
+struct sde_hw_stage_cfg {
+	enum sde_sspp stage[SDE_STAGE_MAX][PIPES_PER_STAGE];
+	enum sde_sspp_multirect_index multirect_index[SDE_STAGE_MAX][PIPES_PER_STAGE];
+	u32 layout[SDE_STAGE_MAX][PIPES_PER_STAGE];
 };
 
 /**
@@ -815,6 +909,7 @@ struct sde_splash_data {
  * @rd_ptr_irq:	The read pointer line at which interrupt has to be generated
  * @wr_ptr_irq:	The write pointer line at which interrupt has to be generated
  * @hw_vsync_mode:	Sync with external frame sync input
+ * @detect_ctrl:	Tearing Detection Control is set to default configuration
  */
 struct sde_hw_tear_check {
 	u32 vsync_count;
@@ -826,6 +921,7 @@ struct sde_hw_tear_check {
 	u32 rd_ptr_irq;
 	u32 wr_ptr_irq;
 	u8 hw_vsync_mode;
+	u32 detect_ctrl;
 };
 
 /**

@@ -1,0 +1,7 @@
+cc_library_headers {
+    name: "pwiris_kernel_headers",
+    vendor: true,
+    export_include_dirs: [
+        "include",
+    ],
+}

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/of.h>
@@ -10,6 +10,7 @@
 #include <linux/pm_runtime.h>
 #include "dsi_clk.h"
 #include "dsi_defs.h"
+#include "sde_dbg.h"
 
 struct dsi_core_clks {
 	struct dsi_core_clk_info clks;
@@ -21,6 +22,16 @@ struct dsi_link_clks {
 	struct link_clk_freq freq;
 };
 
+struct dsi_esync_clk {
+	struct dsi_esync_clk_info clks;
+	u64 freq;
+};
+
+struct dsi_osc_clk {
+	struct dsi_osc_clk_info clks;
+	u64 freq;
+};
+
 struct dsi_clk_mngr {
 	char name[MAX_STRING_LEN];
 	struct mutex clk_mutex;
@@ -30,9 +41,13 @@ struct dsi_clk_mngr {
 	u32 master_ndx;
 	struct dsi_core_clks core_clks[MAX_DSI_CTRL];
 	struct dsi_link_clks link_clks[MAX_DSI_CTRL];
+	struct dsi_esync_clk esync_clks[MAX_DSI_CTRL];
+	struct dsi_osc_clk osc_clk;
 	u32 ctrl_index[MAX_DSI_CTRL];
 	u32 core_clk_state;
 	u32 link_clk_state;
+	u32 esync_clk_state;
+	u32 osc_clk_state;
 
 	phy_configure_cb phy_config_cb;
 	pll_toggle_cb phy_pll_toggle_cb;
@@ -50,8 +65,12 @@ struct dsi_clk_client_info {
 	char name[MAX_STRING_LEN];
 	u32 core_refcount;
 	u32 link_refcount;
+	u32 esync_refcount;
+	u32 osc_refcount;
 	u32 core_clk_state;
 	u32 link_clk_state;
+	u32 esync_clk_state;
+	u32 osc_clk_state;
 	struct list_head list;
 	struct dsi_clk_mngr *mngr;
 };
@@ -102,6 +121,37 @@ int dsi_clk_set_link_frequencies(void *client, struct link_clk_freq freq,
 
 	memcpy(&mngr->link_clks[clk_mngr_index].freq, &freq,
 		sizeof(struct link_clk_freq));
+
+	return rc;
+}
+
+/**
+ * dsi_clk_set_esync_frequency() - set frequency for esync clk
+ * @client:     DSI clock client pointer.
+ * @freq:       Value of esync clock frequency.
+ * @index:      Index of the DSI controller.
+ *
+ * return: error code in case of failure or 0 for success.
+ */
+int dsi_clk_set_esync_frequency(void *client, u64 freq, u32 index)
+{
+	int rc = 0, clk_mngr_index = 0;
+	struct dsi_clk_client_info *c = client;
+	struct dsi_clk_mngr *mngr;
+
+	if (!client) {
+		DSI_ERR("invalid params\n");
+		return -EINVAL;
+	}
+
+	mngr = c->mngr;
+	rc = _get_clk_mngr_index(mngr, index, &clk_mngr_index);
+	if (rc) {
+		DSI_ERR("failed to map control index %d\n", index);
+		return -EINVAL;
+	}
+
+	mngr->esync_clks[clk_mngr_index].freq = freq;
 
 	return rc;
 }
@@ -858,6 +908,109 @@ error:
 	return rc;
 }
 
+static int dsi_clk_esync_clk_enable(struct dsi_clk_mngr *mngr, int index)
+{
+	struct dsi_esync_clk *esync_clk = &mngr->esync_clks[index];
+	int rc;
+
+	if (IS_ERR_OR_NULL(esync_clk->clks.clk)) {
+		DSI_WARN("esync clock enable attempt with null clock handle\n");
+		return -EINVAL;
+	}
+
+	if (!mngr->is_cont_splash_enabled) {
+		rc = clk_set_rate(esync_clk->clks.clk, esync_clk->freq);
+		if (rc) {
+			DSI_ERR("failed to set rate for esync clk, freq = %llu, rc = %d\n",
+				esync_clk->freq, rc);
+			return rc;
+		}
+	}
+
+	rc = clk_prepare_enable(esync_clk->clks.clk);
+	if (rc) {
+		DSI_ERR("failed to enable esync_clk, rc=%d\n", rc);
+		return rc;
+	}
+
+	return 0;
+}
+
+static void dsi_clk_esync_clk_disable(struct dsi_clk_mngr *mngr, int index)
+{
+	struct dsi_esync_clk *esync_clk = &mngr->esync_clks[index];
+
+	if (IS_ERR_OR_NULL(esync_clk->clks.clk)) {
+		DSI_WARN("esync clock disable attempt with null clock handle\n");
+		return;
+	}
+
+	clk_disable_unprepare(esync_clk->clks.clk);
+}
+
+static int dsi_clk_update_esync_clk_state(struct dsi_clk_mngr *mngr, bool enable)
+{
+	int rc = 0;
+	int i;
+
+	if (!mngr)
+		return -EINVAL;
+
+	/* master needs to be enabled first and disabled last */
+
+	if (enable) {
+		rc = dsi_clk_esync_clk_enable(mngr, mngr->master_ndx);
+		if (rc)
+			goto exit;
+
+		for (i = 0; i < mngr->dsi_ctrl_count; i++) {
+			if (i == mngr->master_ndx)
+				continue;
+
+			rc = dsi_clk_esync_clk_enable(mngr, i);
+			if (rc)
+				goto exit;
+		}
+	} else {
+		for (i = 0; i < mngr->dsi_ctrl_count; i++) {
+			if (i == mngr->master_ndx)
+				continue;
+
+			dsi_clk_esync_clk_disable(mngr, i);
+		}
+
+		dsi_clk_esync_clk_disable(mngr, mngr->master_ndx);
+	}
+
+exit:
+	return rc;
+}
+
+static int dsi_clk_update_osc_clk_state(struct dsi_clk_mngr *mngr, bool enable)
+{
+	struct dsi_osc_clk *osc_clk = &mngr->osc_clk;
+	int rc = 0;
+
+	if (enable) {
+		rc = clk_set_rate(osc_clk->clks.clk, osc_clk->freq);
+		if (rc) {
+			DSI_ERR("failed to set osc_clk rate, rc=%d\n", rc);
+			goto exit;
+		}
+
+		rc = clk_prepare_enable(osc_clk->clks.clk);
+		if (rc) {
+			DSI_ERR("failed to enable osc_clk, rc=%d\n", rc);
+			goto exit;
+		}
+	} else {
+		clk_disable_unprepare(osc_clk->clks.clk);
+	}
+
+exit:
+	return rc;
+}
+
 static int dsi_update_core_clks(struct dsi_clk_mngr *mngr,
 		struct dsi_core_clks *c_clks)
 {
@@ -895,7 +1048,9 @@ error:
 
 static int dsi_update_clk_state(struct dsi_clk_mngr *mngr,
 	struct dsi_core_clks *c_clks, u32 c_state,
-	struct dsi_link_clks *l_clks, u32 l_state)
+	struct dsi_link_clks *l_clks, u32 l_state,
+	struct dsi_esync_clk *e_clks, u32 e_state,
+	struct dsi_osc_clk *o_clk, u32 o_state)
 {
 	int rc = 0;
 	bool l_c_on = false;
@@ -903,8 +1058,12 @@ static int dsi_update_clk_state(struct dsi_clk_mngr *mngr,
 	if (!mngr)
 		return -EINVAL;
 
-	DSI_DEBUG("c_state = %d, l_state = %d\n",
-		 c_clks ? c_state : -1, l_clks ? l_state : -1);
+	DSI_DEBUG("c_state = %d, l_state = %d, e_state = %d, o_state = %d\n",
+		 c_clks ? c_state : -1,
+		 l_clks ? l_state : -1,
+		 e_clks ? e_state : -1,
+		 o_clk ? o_state : -1);
+
 	/*
 	 * Below is the sequence to toggle DSI clocks:
 	 *	1. For ON sequence, Core clocks before link clocks
@@ -1009,6 +1168,26 @@ static int dsi_update_clk_state(struct dsi_clk_mngr *mngr,
 		mngr->link_clk_state = l_state;
 	}
 
+	/*
+	 * Esync clock does not need to be turned on or off in
+	 * any particular sequence relative to the others
+	 */
+	if (e_clks) {
+		rc = dsi_clk_update_esync_clk_state(mngr, e_state == DSI_CLK_ON);
+		if (rc)
+			goto error;
+
+		mngr->esync_clk_state = e_state;
+	}
+
+	if (o_clk) {
+		rc = dsi_clk_update_osc_clk_state(mngr, o_state == DSI_CLK_ON);
+		if (rc)
+			goto error;
+
+		mngr->osc_clk_state = o_state;
+	}
+
 	if (c_clks && (c_state != DSI_CLK_ON)) {
 		/*
 		 * When going to OFF state from EARLY GATE state, Core clocks
@@ -1073,10 +1252,16 @@ static int dsi_recheck_clk_state(struct dsi_clk_mngr *mngr)
 	struct dsi_clk_client_info *c;
 	u32 new_core_clk_state = DSI_CLK_OFF;
 	u32 new_link_clk_state = DSI_CLK_OFF;
+	u32 new_esync_clk_state = DSI_CLK_OFF;
+	u32 new_osc_clk_state = DSI_CLK_OFF;
 	u32 old_c_clk_state = DSI_CLK_OFF;
 	u32 old_l_clk_state = DSI_CLK_OFF;
+	u32 old_e_clk_state = DSI_CLK_OFF;
+	u32 old_o_clk_state = DSI_CLK_OFF;
 	struct dsi_core_clks *c_clks = NULL;
 	struct dsi_link_clks *l_clks = NULL;
+	struct dsi_esync_clk *e_clks = NULL;
+	struct dsi_osc_clk *o_clk = NULL;
 
 	/*
 	 * Conditions to maintain DSI manager clock state based on
@@ -1107,23 +1292,55 @@ static int dsi_recheck_clk_state(struct dsi_clk_mngr *mngr)
 		}
 	}
 
+	list_for_each(pos, &mngr->client_list) {
+		c = list_entry(pos, struct dsi_clk_client_info, list);
+		if (c->esync_clk_state == DSI_CLK_ON) {
+			new_esync_clk_state = DSI_CLK_ON;
+			break;
+		} else if (c->esync_clk_state == DSI_CLK_EARLY_GATE) {
+			new_esync_clk_state = DSI_CLK_EARLY_GATE;
+		}
+	}
+
+	list_for_each(pos, &mngr->client_list) {
+		c = list_entry(pos, struct dsi_clk_client_info, list);
+		if (c->osc_clk_state == DSI_CLK_ON) {
+			new_osc_clk_state = DSI_CLK_ON;
+			break;
+		} else if (c->osc_clk_state == DSI_CLK_EARLY_GATE) {
+			new_osc_clk_state = DSI_CLK_EARLY_GATE;
+		}
+	}
+
 	if (new_core_clk_state != mngr->core_clk_state)
 		c_clks = mngr->core_clks;
 
 	if (new_link_clk_state != mngr->link_clk_state)
 		l_clks = mngr->link_clks;
 
+	if (new_esync_clk_state != mngr->esync_clk_state)
+		e_clks = mngr->esync_clks;
+
+	if (new_osc_clk_state != mngr->osc_clk_state)
+		o_clk = &mngr->osc_clk;
+
 	old_c_clk_state = mngr->core_clk_state;
 	old_l_clk_state = mngr->link_clk_state;
+	old_e_clk_state = mngr->esync_clk_state;
+	old_o_clk_state = mngr->osc_clk_state;
 
-	DSI_DEBUG("c_clk_state (%d -> %d)\n", old_c_clk_state,
-			new_core_clk_state);
-	DSI_DEBUG("l_clk_state (%d -> %d)\n", old_l_clk_state,
-			new_link_clk_state);
+	DSI_DEBUG("c_clk_state (%d -> %d), l_clk_state (%d -> %d)\n",
+			old_c_clk_state, new_core_clk_state,
+			old_l_clk_state, new_link_clk_state);
+	DSI_DEBUG("e_clk_state (%d -> %d), o_clk_state (%d -> %d)\n",
+			old_e_clk_state, new_esync_clk_state,
+			old_o_clk_state, new_osc_clk_state);
 
-	if (c_clks || l_clks) {
+	if (c_clks || l_clks || e_clks || o_clk) {
 		rc = dsi_update_clk_state(mngr, c_clks, new_core_clk_state,
-					  l_clks, new_link_clk_state);
+					  l_clks, new_link_clk_state,
+					  e_clks, new_esync_clk_state,
+					  o_clk, new_osc_clk_state);
 		if (rc) {
 			DSI_ERR("failed to update clock state, rc = %d\n", rc);
 			goto error;
@@ -1135,14 +1352,14 @@ error:
 }
 
 int dsi_clk_req_state(void *client, enum dsi_clk_type clk,
-	enum dsi_clk_state state)
+	enum dsi_clk_state state, bool take_lock)
 {
 	int rc = 0;
 	struct dsi_clk_client_info *c = client;
 	struct dsi_clk_mngr *mngr;
 	bool changed = false;
 
-	if (!client || !clk || clk > (DSI_CORE_CLK | DSI_LINK_CLK) ||
+	if (!client || !clk || clk >= DSI_CLKS_MAX ||
 	    state > DSI_CLK_EARLY_GATE) {
 		DSI_ERR("Invalid params, client = %pK, clk = 0x%x, state = %d\n",
 		       client, clk, state);
@@ -1150,7 +1367,9 @@ int dsi_clk_req_state(void *client, enum dsi_clk_type clk,
 	}
 
 	mngr = c->mngr;
-	mutex_lock(&mngr->clk_mutex);
+
+	if (take_lock)
+		mutex_lock(&mngr->clk_mutex);
 
 	DSI_DEBUG("[%s]%s: CLK=%d, new_state=%d, core=%d, linkl=%d\n",
 	       mngr->name, c->name, clk, state, c->core_clk_state,
@@ -1176,6 +1395,20 @@ int dsi_clk_req_state(void *client, enum dsi_clk_type clk,
 			c->link_refcount++;
 			if (c->link_clk_state != DSI_CLK_ON) {
 				c->link_clk_state = DSI_CLK_ON;
+				changed = true;
+			}
+		}
+		if (clk & DSI_ESYNC_CLK) {
+			c->esync_refcount++;
+			if (c->esync_clk_state != DSI_CLK_ON) {
+				c->esync_clk_state = DSI_CLK_ON;
+				changed = true;
+			}
+		}
+		if (clk & DSI_OSC_CLK) {
+			c->osc_refcount++;
+			if (c->osc_clk_state != DSI_CLK_ON) {
+				c->osc_clk_state = DSI_CLK_ON;
 				changed = true;
 			}
 		}
@@ -1219,18 +1452,63 @@ int dsi_clk_req_state(void *client, enum dsi_clk_type clk,
 				}
 			}
 		}
+		if (clk & DSI_ESYNC_CLK) {
+			if (c->esync_refcount == 0) {
+				if ((c->esync_clk_state ==
+				    DSI_CLK_EARLY_GATE) &&
+				    (state == DSI_CLK_OFF)) {
+					changed = true;
+					c->esync_clk_state = DSI_CLK_OFF;
+				} else {
+					DSI_WARN("Esync refcount is zero for %s\n",
+							c->name);
+				}
+			} else {
+				c->esync_refcount--;
+				if (c->esync_refcount == 0) {
+					c->esync_clk_state = state;
+					changed = true;
+				}
+			}
+		}
+		if (clk & DSI_OSC_CLK) {
+			if (c->osc_refcount == 0) {
+				if ((c->osc_clk_state ==
+				    DSI_CLK_EARLY_GATE) &&
+				    (state == DSI_CLK_OFF)) {
+					changed = true;
+					c->osc_clk_state = DSI_CLK_OFF;
+				} else {
+					DSI_WARN("Osc refcount is zero for %s\n",
+							c->name);
+				}
+			} else {
+				c->osc_refcount--;
+				if (c->osc_refcount == 0) {
+					c->osc_clk_state = state;
+					changed = true;
+				}
+			}
+		}
 	}
-	DSI_DEBUG("[%s]%s: change=%d, Core (ref=%d, state=%d), Link (ref=%d, state=%d)\n",
-		 mngr->name, c->name, changed, c->core_refcount,
-		 c->core_clk_state, c->link_refcount, c->link_clk_state);
 
+	DSI_DEBUG("[%s]%s: changed=%d", mngr->name, c->name, changed);
+	DSI_DEBUG("Core  (ref=%d, state=%d), Link (ref=%d, state=%d)",
+			c->core_refcount, c->core_clk_state,
+			c->link_refcount, c->link_clk_state);
+	DSI_DEBUG("Esync (ref=%d, state=%d), Osc  (ref=%d, state=%d)",
+			c->esync_refcount, c->esync_clk_state,
+			c->osc_refcount, c->osc_clk_state);
+
+	SDE_EVT32(client, c->core_refcount, c->link_refcount, changed);
 	if (changed) {
 		rc = dsi_recheck_clk_state(mngr);
 		if (rc)
 			DSI_ERR("Failed to adjust clock state rc = %d\n", rc);
 	}
 
-	mutex_unlock(&mngr->clk_mutex);
+	if (take_lock)
+		mutex_unlock(&mngr->clk_mutex);
 	return rc;
 }
 
@@ -1298,19 +1576,64 @@ int dsi_display_clk_ctrl(void *handle,
 {
 	int rc = 0;
 
-	if ((!handle) || (clk_type > DSI_ALL_CLKS) ||
+	if ((!handle) || (clk_type >= DSI_CLKS_MAX) ||
 			(clk_state > DSI_CLK_EARLY_GATE)) {
 		DSI_ERR("Invalid arg\n");
 		return -EINVAL;
 	}
 
 	mutex_lock(&dsi_mngr_clk_mutex);
-	rc = dsi_clk_req_state(handle, clk_type, clk_state);
+	rc = dsi_clk_req_state(handle, clk_type, clk_state, true);
 	if (rc)
 		DSI_ERR("failed set clk state, rc = %d\n", rc);
 	mutex_unlock(&dsi_mngr_clk_mutex);
 
 	return rc;
+}
+
+int dsi_display_clk_ctrl_nolock(void *handle,
+	u32 clk_type, u32 clk_state)
+{
+	int rc = 0;
+
+	if ((!handle) || (clk_type >= DSI_CLKS_MAX) ||
+			(clk_state > DSI_CLK_EARLY_GATE)) {
+		DSI_ERR("Invalid arg\n");
+		return -EINVAL;
+	}
+
+	rc = dsi_clk_req_state(handle, clk_type, clk_state, false);
+	if (rc)
+		DSI_ERR("failed set clk state, rc = %d\n", rc);
+
+	return rc;
+}
+
+int dsi_display_clk_mngr_get_clk_rate(void *handle, u32 idx,
+		enum dsi_clk_type clk_type, u64 *clk_rate)
+{
+	struct dsi_clk_client_info *client = handle;
+	struct dsi_clk_mngr *mngr;
+
+	if (!client) {
+		DSI_ERR("invalid client\n");
+		return -EINVAL;
+	}
+
+	mngr = client->mngr;
+	if (!mngr) {
+		DSI_ERR("invalid manager\n");
+		return -EINVAL;
+	}
+
+	if (clk_type == DSI_ESYNC_CLK) {
+		*clk_rate = clk_get_rate(mngr->esync_clks[idx].clks.clk);
+	} else {
+		DSI_ERR("getting clock rate not supported for clk_type %d", clk_type);
+		return -EINVAL;
+	}
+
+	return 0;
 }
 
 void *dsi_register_clk_handle(void *clk_mngr, char *client)
@@ -1332,7 +1655,7 @@ void *dsi_register_clk_handle(void *clk_mngr, char *client)
 		goto error;
 	}
 
-	strlcpy(c->name, client, MAX_STRING_LEN);
+	strscpy(c->name, client, MAX_STRING_LEN);
 	c->mngr = mngr;
 
 	list_add(&c->list, &mngr->client_list);
@@ -1453,8 +1776,12 @@ void *dsi_display_clk_mngr_register(struct dsi_clk_info *info)
 			sizeof(struct dsi_link_hs_clk_info));
 		memcpy(&mngr->link_clks[i].lp_clks, &info->l_lp_clks[i],
 			sizeof(struct dsi_link_lp_clk_info));
+		memcpy(&mngr->esync_clks[i].clks, &info->e_clks[i],
+			sizeof(struct dsi_esync_clk_info));
 		mngr->ctrl_index[i] = info->ctrl_index[i];
 	}
+	memcpy(&mngr->osc_clk.clks, &info->o_clk,
+		sizeof(struct dsi_osc_clk_info));
 
 	INIT_LIST_HEAD(&mngr->client_list);
 	mngr->pre_clkon_cb = info->pre_clkon_cb;

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm:%s:%d]: " fmt, __func__, __LINE__
 
 #include <linux/clk.h>
+#include <linux/clk/qcom.h>
 #include <linux/kernel.h>
 #include <linux/of.h>
 #include <linux/string.h>
@@ -14,13 +15,20 @@
 #include <linux/slab.h>
 #include <linux/mutex.h>
 #include <linux/of_platform.h>
+#include <linux/pm_wakeup.h>
 
 #include <linux/sde_io_util.h>
 #include <linux/sde_rsc.h>
+#include <linux/version.h>
+#if IS_ENABLED(CONFIG_QTI_HW_FENCE)
+#include <synx_api.h>
+#endif /* CONFIG_QTI_HW_FENCE */
+#include <linux/soc/qcom/msm_mmrm.h>
 
 #include "sde_power_handle.h"
 #include "sde_trace.h"
 #include "sde_dbg.h"
+#include "sde_cesta.h"
 
 #define KBPS2BPS(x) ((x) * 1000ULL)
 
@@ -33,6 +41,7 @@ static const char *data_bus_name[SDE_POWER_HANDLE_DBUS_ID_MAX] = {
 	[SDE_POWER_HANDLE_DBUS_ID_MNOC] = "qcom,sde-data-bus",
 	[SDE_POWER_HANDLE_DBUS_ID_LLCC] = "qcom,sde-llcc-bus",
 	[SDE_POWER_HANDLE_DBUS_ID_EBI] = "qcom,sde-ebi-bus",
+	[SDE_POWER_HANDLE_DBUS_ID_DDR_RT] = "qcom,sde-ddr-rt",
 };
 
 const char *sde_power_handle_get_dbus_name(u32 bus_id)
@@ -60,11 +69,11 @@ static int sde_power_event_trigger_locked(struct sde_power_handle *phandle,
 	return ret;
 }
 
-static inline void sde_power_rsc_client_init(struct sde_power_handle *phandle)
+static inline void sde_power_rsc_client_init(struct sde_power_handle *phandle, int dev_idx)
 {
 	/* creates the rsc client */
 	if (!phandle->rsc_client_init) {
-		phandle->rsc_client = sde_rsc_client_create(SDE_RSC_INDEX,
+		phandle->rsc_client = sde_rsc_client_create(dev_idx,
 				"sde_power_handle", SDE_RSC_CLK_CLIENT, 0);
 		if (IS_ERR_OR_NULL(phandle->rsc_client)) {
 			pr_debug("sde rsc client create failed :%ld\n",
@@ -139,7 +148,7 @@ static int sde_power_parse_dt_supply(struct platform_device *pdev,
 			goto error;
 		}
 
-		strlcpy(mp->vreg_config[i].vreg_name, st,
+		strscpy(mp->vreg_config[i].vreg_name, st,
 					sizeof(mp->vreg_config[i].vreg_name));
 
 		rc = of_property_read_u32(supply_node,
@@ -242,6 +251,7 @@ static int sde_power_parse_dt_clock(struct platform_device *pdev,
 	u32 clock_mmrm = 0;
 	u32 clock_max_rate = 0;
 	int num_clk = 0;
+	bool is_mmrm_supported = false;
 
 	if (!pdev || !mp) {
 		pr_err("invalid input param pdev:%pK mp:%pK\n", pdev, mp);
@@ -264,11 +274,13 @@ static int sde_power_parse_dt_clock(struct platform_device *pdev,
 		mp->num_clk = 0;
 		goto clk_err;
 	}
+	is_mmrm_supported = mmrm_client_check_scaling_supported(MMRM_CLIENT_CLOCK,
+				MMRM_CLIENT_DOMAIN_DISPLAY);
 
 	for (i = 0; i < num_clk; i++) {
 		of_property_read_string_index(pdev->dev.of_node, "clock-names",
 							i, &clock_name);
-		strlcpy(mp->clk_config[i].clk_name, clock_name,
+		strscpy(mp->clk_config[i].clk_name, clock_name,
 				sizeof(mp->clk_config[i].clk_name));
 
 		of_property_read_u32_index(pdev->dev.of_node, "clock-rate",
@@ -283,12 +295,12 @@ static int sde_power_parse_dt_clock(struct platform_device *pdev,
 		clock_mmrm = 0;
 		of_property_read_u32_index(pdev->dev.of_node, "clock-mmrm",
 							i, &clock_mmrm);
-		if (clock_mmrm) {
+		if (clock_mmrm && is_mmrm_supported) {
 			mp->clk_config[i].type = DSS_CLK_MMRM;
 			mp->clk_config[i].mmrm.clk_id = clock_mmrm;
 		}
-		pr_debug("clk[%d] mmrm:%d rate:%d name:%s dev:%s\n",
-			i, clock_mmrm, clock_rate, clock_name,
+		pr_debug("clk[%d] clock-mmrm:%d mmrm status:%d rate:%d name:%s dev:%s\n",
+			i, clock_mmrm, is_mmrm_supported, clock_rate, clock_name,
 			pdev->name ? pdev->name : "<unknown>");
 
 		clock_max_rate = 0;
@@ -487,12 +499,10 @@ static int sde_power_bus_parse(struct platform_device *pdev,
 
 	ib_quota_count = of_property_count_u32_elems(pdev->dev.of_node, "qcom,sde-ib-bw-vote");
 	if (ib_quota_count > 0) {
-		if (ib_quota_count != SDE_POWER_HANDLE_DBUS_ID_MAX) {
-			pr_err("wrong size for qcom,sde-ib-bw-vote\n");
-			return -EINVAL;
-		}
+		if (ib_quota_count != SDE_POWER_HANDLE_DBUS_ID_MAX)
+			pr_debug("size mismatch in qcom,sde-ib-bw-vote entry\n");
 
-		for (i = 0; i < SDE_POWER_HANDLE_DBUS_ID_MAX; ++i) {
+		for (i = 0; i < ib_quota_count; ++i) {
 			of_property_read_u32_index(pdev->dev.of_node,
 				"qcom,sde-ib-bw-vote", i, &ib_quota[i]);
 			phandle->ib_quota[i] = ib_quota[i]*1000;
@@ -668,6 +678,41 @@ u64 sde_power_mmrm_get_requested_clk(struct sde_power_handle *phandle,
 	return rate;
 }
 
+static int _set_power_vote(bool state)
+{
+#if IS_ENABLED(CONFIG_QTI_HW_FENCE)
+	return synx_enable_resources(SYNX_CLIENT_HW_FENCE_DPU0_CTL0, SYNX_RESOURCE_SOCCP,
+		state);
+#else
+	return -EINVAL;
+#endif
+}
+
+static int sde_power_parse_dt_hwfence_soccp(struct platform_device *pdev,
+	struct sde_power_handle *phandle)
+{
+	struct device_node *of_node = NULL;
+	u32 rc, hw_fence_rev, soccp_ph;
+
+	if (!pdev || !phandle) {
+		pr_err("invalid input param pdev:%pK phandle:%pK\n", pdev, phandle);
+		return -EINVAL;
+	}
+
+	of_node = pdev->dev.of_node;
+	rc = of_property_read_u32(pdev->dev.of_node, "qcom,hw-fence-sw-version", &hw_fence_rev);
+	if (rc || !hw_fence_rev)
+		return 0; /* hw-fence is disabled */
+
+	rc = of_property_read_u32(pdev->dev.of_node, "qcom,sde-soccp-controller", &soccp_ph);
+	if (rc || !soccp_ph)
+		return 0; /* target does not have soccp */
+
+	phandle->hw_fence_enable = true;
+
+	return rc;
+}
+
 int sde_power_resource_init(struct platform_device *pdev,
 	struct sde_power_handle *phandle)
 {
@@ -684,6 +729,8 @@ int sde_power_resource_init(struct platform_device *pdev,
 
 	/* event init must happen before mmrm register */
 	INIT_LIST_HEAD(&phandle->event_list);
+
+	mutex_init(&phandle->phandle_lock);
 
 	rc = sde_power_parse_dt_clock(pdev, mp);
 	if (rc) {
@@ -730,10 +777,14 @@ int sde_power_resource_init(struct platform_device *pdev,
 		goto bus_err;
 	}
 
+	rc = sde_power_parse_dt_hwfence_soccp(pdev, phandle);
+	if (rc) {
+		pr_debug("soccp power vote parsing failed rc:%d\n", rc);
+		rc = 0;
+	}
+
 	phandle->rsc_client = NULL;
 	phandle->rsc_client_init = false;
-
-	mutex_init(&phandle->phandle_lock);
 
 	return rc;
 
@@ -746,12 +797,16 @@ clkmmrm_err:
 clkget_err:
 	msm_dss_get_vreg(&pdev->dev, mp->vreg_config, mp->num_vreg, 0);
 vreg_err:
-	if (mp->vreg_config)
+	if (mp->vreg_config) {
 		devm_kfree(&pdev->dev, mp->vreg_config);
+		mp->vreg_config = NULL;
+	}
 	mp->num_vreg = 0;
 parse_vreg_err:
-	if (mp->clk_config)
+	if (mp->clk_config) {
 		devm_kfree(&pdev->dev, mp->clk_config);
+		mp->clk_config = NULL;
+	}
 	mp->num_clk = 0;
 end:
 	return rc;
@@ -801,7 +856,7 @@ void sde_power_resource_deinit(struct platform_device *pdev,
 		sde_rsc_client_destroy(phandle->rsc_client);
 }
 
-static void sde_power_mmrm_reserve(struct sde_power_handle *phandle)
+void sde_power_mmrm_reserve(struct sde_power_handle *phandle)
 {
 	int i;
 	struct dss_module_power *mp = &phandle->mp;
@@ -850,7 +905,7 @@ int sde_power_scale_reg_bus(struct sde_power_handle *phandle,
 	return rc;
 }
 
-int sde_power_resource_enable(struct sde_power_handle *phandle, bool enable)
+int sde_power_resource_enable(struct sde_power_handle *phandle, bool enable, int dev_idx)
 {
 	int rc = 0, i = 0;
 	struct dss_module_power *mp;
@@ -869,7 +924,7 @@ int sde_power_resource_enable(struct sde_power_handle *phandle, bool enable)
 	SDE_ATRACE_BEGIN("sde_power_resource_enable");
 
 	/* RSC client init */
-	sde_power_rsc_client_init(phandle);
+	sde_power_rsc_client_init(phandle, dev_idx);
 
 	if (enable) {
 		sde_power_event_trigger_locked(phandle,
@@ -884,15 +939,22 @@ int sde_power_resource_enable(struct sde_power_handle *phandle, bool enable)
 				if (rc) {
 					pr_err("failed to set data bus vote id=%d rc=%d\n",
 							i, rc);
-					goto vreg_err;
+					goto bus_err;
 				}
 			}
 		}
+
 		rc = msm_dss_enable_vreg(mp->vreg_config, mp->num_vreg,
 				enable);
 		if (rc) {
 			pr_err("failed to enable vregs rc=%d\n", rc);
-			goto vreg_err;
+			goto bus_err;
+		}
+
+		rc = sde_cesta_resource_enable(SDE_CESTA_INDEX);
+		if (rc) {
+			pr_err("failed to enable sde cesta\n");
+			goto cesta_err;
 		}
 
 		rc = sde_power_scale_reg_bus(phandle, VOTE_INDEX_LOW, true);
@@ -914,6 +976,16 @@ int sde_power_resource_enable(struct sde_power_handle *phandle, bool enable)
 			goto clk_err;
 		}
 
+		if (phandle->hw_fence_enable) {
+			rc = _set_power_vote(enable);
+			if (rc) {
+				pr_debug("soccp power vote failed, state:%s rc:%d\n",
+						enable ? "enable" : "disable", rc);
+				phandle->hw_fence_enable = false;
+				rc = 0;
+			}
+		}
+
 		sde_power_event_trigger_locked(phandle,
 				SDE_POWER_EVENT_POST_ENABLE);
 
@@ -921,13 +993,25 @@ int sde_power_resource_enable(struct sde_power_handle *phandle, bool enable)
 		sde_power_event_trigger_locked(phandle,
 				SDE_POWER_EVENT_PRE_DISABLE);
 
+		if (phandle->hw_fence_enable) {
+			rc = _set_power_vote(enable);
+			if (rc) {
+				pr_debug("soccp power vote failed, state:%s rc:%d\n",
+						enable ? "enable" : "disable", rc);
+				rc = 0;
+			}
+		}
+
 		SDE_EVT32_VERBOSE(enable, SDE_EVTLOG_FUNC_CASE2);
 		sde_power_rsc_update(phandle, false);
 
 		sde_power_mmrm_reserve(phandle);
+
 		msm_dss_enable_clk(mp->clk_config, mp->num_clk, enable);
 
 		sde_power_scale_reg_bus(phandle, VOTE_INDEX_DISABLE, true);
+
+		sde_cesta_resource_disable(SDE_CESTA_INDEX);
 
 		msm_dss_enable_vreg(mp->vreg_config, mp->num_vreg, enable);
 
@@ -952,13 +1036,16 @@ clk_err:
 rsc_err:
 	sde_power_scale_reg_bus(phandle, VOTE_INDEX_DISABLE, true);
 reg_bus_hdl_err:
+	sde_cesta_resource_disable(SDE_CESTA_INDEX);
+cesta_err:
 	msm_dss_enable_vreg(mp->vreg_config, mp->num_vreg, 0);
-vreg_err:
+bus_err:
 	for (i-- ; i >= 0 && phandle->data_bus_handle[i].data_paths_cnt > 0; i--)
 		_sde_power_data_bus_set_quota(
 			&phandle->data_bus_handle[i],
 			SDE_POWER_HANDLE_DISABLE_BUS_AB_QUOTA,
 			SDE_POWER_HANDLE_DISABLE_BUS_IB_QUOTA);
+
 	SDE_ATRACE_END("sde_power_resource_enable");
 	mutex_unlock(&phandle->phandle_lock);
 	return rc;
@@ -976,7 +1063,7 @@ int sde_power_clk_reserve_rate(struct sde_power_handle *phandle, char *clock_nam
 
 	mutex_lock(&phandle->phandle_lock);
 	phandle->mmrm_reserve.clk_rate = rate;
-	strlcpy(phandle->mmrm_reserve.clk_name, clock_name,
+	strscpy(phandle->mmrm_reserve.clk_name, clock_name,
 			sizeof(phandle->mmrm_reserve.clk_name));
 	mutex_unlock(&phandle->phandle_lock);
 
@@ -1105,6 +1192,30 @@ struct clk *sde_power_clk_get_clk(struct sde_power_handle *phandle,
 	return clk;
 }
 
+void sde_power_set_clk_retention(struct sde_power_handle *phandle,
+		char *clock_name, bool enable)
+{
+	struct clk *clk = NULL;
+
+	if (!phandle) {
+		pr_err("invalid input power handle\n");
+		return;
+	}
+
+	if (!clock_name) {
+		pr_err("invalid clock\n");
+		return;
+	}
+
+	clk = sde_power_clk_get_clk(phandle, clock_name);
+	if (!clk) {
+		pr_err("invalid clock handle\n");
+		return;
+	}
+
+	qcom_clk_set_flags(clk, enable ? CLKFLAG_RETAIN_MEM : CLKFLAG_NORETAIN_MEM);
+}
+
 struct sde_power_event *sde_power_handle_register_event(
 		struct sde_power_handle *phandle,
 		u32 event_type, void (*cb_fnc)(u32 event_type, void *usr),
@@ -1127,7 +1238,7 @@ struct sde_power_event *sde_power_handle_register_event(
 	event->event_type = event_type;
 	event->cb_fnc = cb_fnc;
 	event->usr = usr;
-	strlcpy(event->client_name, client_name, MAX_CLIENT_NAME_LEN);
+	strscpy(event->client_name, client_name, MAX_CLIENT_NAME_LEN);
 	event->active = true;
 
 	mutex_lock(&phandle->phandle_lock);
@@ -1152,4 +1263,28 @@ void sde_power_handle_unregister_event(
 		mutex_unlock(&phandle->phandle_lock);
 		kfree(event);
 	}
+}
+
+int sde_power_wakelock_ctrl(struct sde_power_handle *phandle, bool enable)
+{
+	if (!phandle || !phandle->dev) {
+		pr_err("invalid phandle or device");
+		return -EINVAL;
+	}
+
+	if (!phandle->dev->power.can_wakeup || !phandle->dev->power.wakeup) {
+		pr_err("device cannot wakeup");
+		return -EINVAL;
+	}
+
+	if (enable && atomic_inc_return(&phandle->wakelock_count) == 1) {
+		pm_stay_awake(phandle->dev);
+		SDE_EVT32(SDE_EVTLOG_FUNC_CASE1);
+	} else if (!enable &&
+		atomic_dec_return(&phandle->wakelock_count) == 0) {
+		pm_relax(phandle->dev);
+		SDE_EVT32(SDE_EVTLOG_FUNC_CASE2);
+	}
+
+	return 0;
 }

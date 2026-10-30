@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -12,6 +12,13 @@
 #include <linux/list.h>
 #include <soc/qcom/minidump.h>
 #include <drm/drm_print.h>
+
+#ifdef OPLUS_FEATURE_DISPLAY
+#include <soc/oplus/system/oplus_project.h>
+extern unsigned int is_project(int project);
+#define OPLUS_DP_CONTROL_GPIO 186
+#define SM8750_AP_GPIO_OFFSET 512
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 /* select an uncommon hex value for the limiter */
 #define SDE_EVTLOG_DATA_LIMITER	(0xC0DEBEEF)
@@ -43,6 +50,7 @@
 #define SDE_DBG_LUTDMA		BIT(3)
 #define SDE_DBG_VBIF_RT		BIT(4)
 #define SDE_DBG_DSI		BIT(5)
+#define SDE_DBG_SWFUSE		BIT(6)
 
 /* flags to enable the HW block debugbus dumping */
 #define SDE_DBG_SDE_DBGBUS	BIT(12)
@@ -124,7 +132,11 @@ enum sde_dbg_dump_context {
  * sysfs node or panic. This prevents kernel log from evtlog message
  * flood.
  */
-#define SDE_EVTLOG_PRINT_ENTRY	256
+#ifndef OPLUS_FEATURE_DISPLAY
+#define SDE_EVTLOG_PRINT_ENTRY  256
+#else
+#define SDE_EVTLOG_PRINT_ENTRY  2048
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 /*
  * evtlog keeps this number of entries in memory for debug purpose. This
@@ -165,7 +177,7 @@ struct sde_dbg_evtlog_log {
 struct sde_dbg_evtlog {
 	struct sde_dbg_evtlog_log logs[SDE_EVTLOG_ENTRY];
 	u32 first;
-	u32 last;
+	atomic_t last;
 	u32 last_dump;
 	atomic_t curr;
 	u32 next;
@@ -205,7 +217,7 @@ struct sde_dbg_reglog_log {
 struct sde_dbg_reglog {
 	struct sde_dbg_reglog_log logs[SDE_REGLOG_ENTRY];
 	u32 first;
-	u32 last;
+	atomic64_t last;
 	u32 last_dump;
 	atomic64_t curr;
 	u32 next;
@@ -551,5 +563,9 @@ void sde_rsc_debug_dump(u32 mux_sel);
  *	otherwise reset the dump mode to default mode.
  */
 void sde_dbg_update_dump_mode(bool enable_coredump);
+
+#ifdef OPLUS_FEATURE_DISPLAY
+void oplus_sde_evtlog_dump_all(void);
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 #endif /* SDE_DBG_H_ */

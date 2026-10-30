@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/delay.h>
 #include <linux/iopoll.h>
 
 #include "dsi_catalog.h"
+#include "dsi_ctrl.h"
 #include "dsi_ctrl_hw.h"
 #include "dsi_ctrl_reg.h"
 #include "dsi_hw.h"
@@ -16,6 +17,10 @@
 #include "sde_dbg.h"
 #include "sde_dsc_helper.h"
 #include "sde_vdc_helper.h"
+#if defined(CONFIG_PXLW_IRIS)
+#include "dsi_ctrl.h"
+bool iris_is_chip_supported(void);
+#endif
 
 #define MMSS_MISC_CLAMP_REG_OFF           0x0014
 #define DSI_CTRL_DYNAMIC_FORCE_ON         (0x23F|BIT(8)|BIT(9)|BIT(11)|BIT(21))
@@ -23,6 +28,7 @@
 #define DSI_CTRL_VIDEO_MISR_ENABLE        BIT(16)
 #define DSI_CTRL_DMA_LINK_SEL             (BIT(12)|BIT(13))
 #define DSI_CTRL_MDP0_LINK_SEL            (BIT(20)|BIT(22))
+#define DSI_VBIF_CTRL_PRIORITY            0x07
 
 static bool dsi_dsc_compression_enabled(struct dsi_mode_info *mode)
 {
@@ -520,12 +526,22 @@ void dsi_ctrl_hw_cmn_set_video_timing(struct dsi_ctrl_hw *ctrl,
 	reg = ((vpos_end & 0xFFFF) << 16) | (vpos_start & 0xFFFF);
 	DSI_W32(ctrl, DSI_VIDEO_MODE_VSYNC_VPOS, reg);
 
-	/* TODO: HS TIMER value? */
-	DSI_W32(ctrl, DSI_HS_TIMER_CTRL, 0x3FD08);
+	/*
+	* TODO: HS TIMER value?
+	* Setting HS TIMER value assuming maximum
+	* HS transmission time required will be 40ms
+	*/
+	DSI_W32(ctrl, DSI_HS_TIMER_CTRL, 0x4BB80);
 	DSI_W32(ctrl, DSI_MISR_VIDEO_CTRL, 0x10100);
 	DSI_W32(ctrl, DSI_DSI_TIMING_FLUSH, 0x1);
 	DSI_CTRL_HW_DBG(ctrl, "ctrl video parameters updated\n");
 	SDE_EVT32(v_total, h_total);
+
+	if (mode->esync_enabled) {
+		/* Skip extended VFP blanking lines over DSI lanes */
+		DSI_W32(ctrl, DSI_VIDEO_MODE_CTRL5, v_total+1);
+		DSI_W32(ctrl, DSI_VIDEO_MODE_CTRL4, 1);
+	}
 }
 
 /**
@@ -637,6 +653,15 @@ void dsi_ctrl_hw_cmn_setup_cmd_stream(struct dsi_ctrl_hw *ctrl,
 
 		DSI_CTRL_HW_DBG(ctrl, "reg_ctrl 0x%x reg_ctrl2 0x%x\n",
 				reg_ctrl, reg_ctrl2);
+#if defined(CONFIG_PXLW_IRIS)
+	} else {
+		if (iris_is_chip_supported() && ctrl->widebus_support) {
+			/* fixed for dynamic switching from dsc panel timing into raw timing */
+			reg = DSI_R32(ctrl, DSI_COMMAND_MODE_MDP_CTRL2);
+			reg &= ~BIT(20);
+			DSI_W32(ctrl, DSI_COMMAND_MODE_MDP_CTRL2, reg);
+		}
+#endif /* CONFIG_PXLW_IRIS */
 	}
 
 	/* HS Timer value */
@@ -852,14 +877,15 @@ void dsi_ctrl_hw_cmn_cmd_engine_en(struct dsi_ctrl_hw *ctrl, bool on)
  * set, caller should make a separate call to trigger_command_dma() to
  * transmit the command.
  */
-void dsi_ctrl_hw_cmn_kickoff_command(struct dsi_ctrl_hw *ctrl,
+void dsi_ctrl_hw_cmn_kickoff_command(struct dsi_ctrl_hw *ctrl_hw,
 				    struct dsi_ctrl_cmd_dma_info *cmd,
 				    u32 flags)
 {
 	u32 reg = 0;
+	struct dsi_ctrl *ctrl = container_of(ctrl_hw, struct dsi_ctrl, hw);
 
 	/*Set BROADCAST_EN and EMBEDDED_MODE */
-	reg = DSI_R32(ctrl, DSI_COMMAND_MODE_DMA_CTRL);
+	reg = DSI_R32(ctrl_hw, DSI_COMMAND_MODE_DMA_CTRL);
 	if (cmd->en_broadcast)
 		reg |= BIT(31);
 	else
@@ -878,23 +904,41 @@ void dsi_ctrl_hw_cmn_kickoff_command(struct dsi_ctrl_hw *ctrl,
 	reg |= BIT(28);/* Select embedded mode */
 	reg &= ~BIT(24);/* packet type */
 	reg &= ~BIT(29);/* WC_SEL to 0 */
-	DSI_W32(ctrl, DSI_COMMAND_MODE_DMA_CTRL, reg);
+	DSI_W32(ctrl_hw, DSI_COMMAND_MODE_DMA_CTRL, reg);
 
-	reg = DSI_R32(ctrl, DSI_DMA_FIFO_CTRL);
+	reg = DSI_R32(ctrl_hw, DSI_COMMAND_MODE_DMA_CTRL_1);
+	if (flags & DSI_CTRL_CMD_MULTI_DMA_BURST)
+		reg |= BIT(1);
+	else
+		reg &= ~BIT(1);
+	DSI_W32(ctrl_hw, DSI_COMMAND_MODE_DMA_CTRL_1, reg);
+
+	reg = DSI_R32(ctrl_hw, DSI_DMA_FIFO_CTRL);
 	reg |= BIT(20);/* Disable write watermark*/
 	reg |= BIT(16);/* Disable read watermark */
+#if defined(CONFIG_PXLW_IRIS)
+	/* set DMA FIFO read watermark to 15/16 full */
+	if (iris_is_chip_supported())
+		reg = 0x33;
+#endif /* CONFIG_PXLW_IRIS */
 
-	DSI_W32(ctrl, DSI_DMA_FIFO_CTRL, reg);
-	DSI_W32(ctrl, DSI_DMA_CMD_OFFSET, cmd->offset);
-	DSI_W32(ctrl, DSI_DMA_CMD_LENGTH, (cmd->length & 0xFFFFFF));
+	DSI_W32(ctrl_hw, DSI_DMA_FIFO_CTRL, reg);
+	DSI_W32(ctrl_hw, DSI_DMA_CMD_OFFSET, cmd->offset);
+	DSI_W32(ctrl_hw, DSI_DMA_CMD_LENGTH, (cmd->length & 0xFFFFFF));
+
+	if (ctrl->version >= DSI_CTRL_VERSION_2_8) {
+		reg = DSI_R32(ctrl_hw, DSI_VBIF_CTRL);
+		reg |= (DSI_VBIF_CTRL_PRIORITY & 0x7);
+		DSI_W32(ctrl_hw, DSI_VBIF_CTRL, reg);
+	}
 
 	/* wait for writes to complete before kick off */
 	wmb();
 
 	if (!(flags & DSI_CTRL_HW_CMD_WAIT_FOR_TRIGGER))
-		DSI_W32(ctrl, DSI_CMD_MODE_DMA_SW_TRIGGER, 0x1);
+		DSI_W32(ctrl_hw, DSI_CMD_MODE_DMA_SW_TRIGGER, 0x1);
 
-	SDE_EVT32(ctrl->index, cmd->length, flags);
+	SDE_EVT32(ctrl_hw->index, cmd->length, flags);
 }
 
 /**
@@ -955,6 +999,13 @@ void dsi_ctrl_hw_cmn_kickoff_fifo_command(struct dsi_ctrl_hw *ctrl,
 	reg |= BIT(28);
 
 	DSI_W32(ctrl, DSI_COMMAND_MODE_DMA_CTRL, reg);
+
+	reg = DSI_R32(ctrl, DSI_COMMAND_MODE_DMA_CTRL_1);
+	if (flags & DSI_CTRL_CMD_MULTI_DMA_BURST)
+		reg |= BIT(1);
+	else
+		reg &= ~BIT(1);
+	DSI_W32(ctrl, DSI_COMMAND_MODE_DMA_CTRL_1, reg);
 
 	DSI_W32(ctrl, DSI_DMA_CMD_LENGTH, (cmd->size & 0xFFFFFFFF));
 	/* Finish writes before command trigger */
@@ -1044,6 +1095,24 @@ u32 dsi_ctrl_hw_cmn_get_cmd_read_data(struct dsi_ctrl_hw *ctrl,
 	if (!read_cnt) {
 		DSI_CTRL_HW_ERR(ctrl, "Panel detected error, no data read\n");
 		return 0;
+	}
+
+	/*
+	 * Large read_cnt value can lead to negative repeated_bytes value
+	 * and array out of bounds access of read buffer.
+	 * Avoid this by resetting read_cnt to expected value when panel
+	 * sends more bytes than expected.
+	 */
+	if (rx_byte == 4 && read_cnt > 4) {
+		DSI_CTRL_HW_INFO(ctrl,
+			"Expected %u bytes for short read but received %u bytes\n",
+			rx_byte, read_cnt);
+		read_cnt = rx_byte;
+	} else if (rx_byte == 16 && read_cnt > (pkt_size + 6)) {
+		DSI_CTRL_HW_INFO(ctrl,
+			"Expected %u bytes for long read but received %u bytes\n",
+			pkt_size + 6, read_cnt);
+		read_cnt = pkt_size + 6;
 	}
 
 	if (read_cnt > 16) {
@@ -1177,11 +1246,12 @@ void dsi_ctrl_hw_cmn_clear_interrupt_status(struct dsi_ctrl_hw *ctrl, u32 ints)
 		reg |= BIT(30);
 
 	/*
-	 * Do not clear error status.
-	 * It will be cleared as part of
-	 * error handler function.
+	 * Do not clear error status. It will be cleared as part of error handler function.
+	 * Do not clear dynamic refresh done status. It will be cleared as part of
+	 * wait4dynamic_refresh_done() function.
 	 */
-	reg &= ~BIT(24);
+	reg &= ~(BIT(24) | BIT(28));
+
 	DSI_W32(ctrl, DSI_INT_CTRL, reg);
 
 	DSI_CTRL_HW_DBG(ctrl, "Clear interrupts, ints = 0x%x, INT_CTRL=0x%x\n",
@@ -1747,11 +1817,10 @@ int dsi_ctrl_hw_cmn_ctrl_reset(struct dsi_ctrl_hw *ctrl,
 void dsi_ctrl_hw_cmn_mask_error_intr(struct dsi_ctrl_hw *ctrl, u32 idx, bool en)
 {
 	u32 reg = 0;
-	u32 fifo_status = 0, timeout_status = 0, pll_unlock_status = 0;
+	u32 fifo_status = 0, timeout_status = 0;
 	u32 overflow_clear = BIT(10) | BIT(18) | BIT(22) | BIT(26) | BIT(30);
 	u32 underflow_clear = BIT(19) | BIT(23) | BIT(27) | BIT(31);
 	u32 lp_rx_clear = BIT(4);
-	u32 pll_unlock_clear = BIT(16);
 
 	reg = DSI_R32(ctrl, DSI_ERR_INT_MASK0);
 
@@ -1796,11 +1865,8 @@ void dsi_ctrl_hw_cmn_mask_error_intr(struct dsi_ctrl_hw *ctrl, u32 idx, bool en)
 	if (idx & BIT(DSI_PLL_UNLOCK_ERR)) {
 		if (en)
 			reg |= BIT(28);
-		else {
+		else
 			reg &= ~BIT(28);
-			pll_unlock_status = DSI_R32(ctrl, DSI_CLK_STATUS);
-			DSI_W32(ctrl, DSI_CLK_STATUS, pll_unlock_status | pll_unlock_clear);
-		}
 	}
 
 	DSI_W32(ctrl, DSI_ERR_INT_MASK0, reg);
@@ -1921,7 +1987,8 @@ bool dsi_ctrl_hw_cmn_vid_engine_busy(struct dsi_ctrl_hw *ctrl)
 }
 
 void dsi_ctrl_hw_cmn_init_cmddma_trig_ctrl(struct dsi_ctrl_hw *ctrl,
-					   struct dsi_host_common_cfg *cfg)
+					   struct dsi_host_common_cfg *cfg,
+					   bool do_peripheral_flush)
 {
 	u32 reg;
 	const u8 trigger_map[DSI_TRIGGER_MAX] = {
@@ -1930,7 +1997,14 @@ void dsi_ctrl_hw_cmn_init_cmddma_trig_ctrl(struct dsi_ctrl_hw *ctrl,
 	/* Initialize the default trigger used for Command Mode DMA path. */
 	reg = DSI_R32(ctrl, DSI_TRIG_CTRL);
 	reg &= ~BIT(16); /* Reset DMA_TRG_MUX */
-	reg &= ~(0xF); /* Reset DMA_TRIGGER_SEL */
-	reg |= (trigger_map[cfg->dma_cmd_trigger] & 0xF);
+	reg &= ~(0xF | (0b111 << 17)); /* Reset DMA_TRIGGER_SEL */
+	if (do_peripheral_flush) {
+		reg |= BIT(17); /* COMMAND_MODE_DMA_TRIGGER_SEL to periph flush from MDP */
+	} else if (cfg->force_dma_cmd_trigger) {
+		reg |= (trigger_map[cfg->force_dma_cmd_trigger] & 0xF);
+		SDE_EVT32(cfg->force_dma_cmd_trigger);
+	} else {
+		reg |= (trigger_map[cfg->dma_cmd_trigger] & 0xF);
+	}
 	DSI_W32(ctrl, DSI_TRIG_CTRL, reg);
 }

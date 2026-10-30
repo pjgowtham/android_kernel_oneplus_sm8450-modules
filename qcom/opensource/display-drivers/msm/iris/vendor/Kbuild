@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note
+
+ifeq ($(CONFIG_PXLW_IRIS),y)
+
+$(warning The vendor module of pixelworks iris will be added to the kernel)
+
+
+ccflags-y += -I$(PWATOP)/vendor/common/
+include $(PWATOP)/vendor/common/Kbuild
+ccflags-y += -I$(PWATOP)/vendor/iris7p/
+include $(PWATOP)/vendor/iris7p/Kbuild
+ccflags-y += -I$(PWATOP)/vendor/iris8/
+include $(PWATOP)/vendor/iris8/Kbuild
+
+endif
