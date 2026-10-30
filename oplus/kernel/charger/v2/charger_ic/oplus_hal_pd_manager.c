@@ -600,7 +600,7 @@ static int oplus_discover_id(struct tcpc_device *tcpc_dev)
 	ret = tcpm_dpm_vdm_discover_id(tcpc_dev, NULL);
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)) && !IS_ENABLED(CONFIG_OPLUS_PD_EXT_SUPPORT)
 	if (ret == TCP_DPM_RET_NOT_SUPPORT ||
-	    ret == TCP_DPM_RET_DENIED_WRONG_ROLE ||
+	    ret == TCP_DPM_RET_DENIED_WRONG_DATA_ROLE ||
 	    ret == TCPM_ERROR_PUT_EVENT) {
 #else
 	if (ret == TCP_DPM_RET_NOT_SUPPORT ||
@@ -622,7 +622,7 @@ static int oplus_discover_svid(struct tcpc_device *tcpc_dev)
 	/* Note: the WC065A11JCH not support the cmd of discover_svid. */
 	ret = tcpm_dpm_vdm_discover_svid(tcpc_dev, NULL);
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)) && !IS_ENABLED(CONFIG_OPLUS_PD_EXT_SUPPORT)
-	if (ret == TCP_DPM_RET_DENIED_WRONG_ROLE ||
+	if (ret == TCP_DPM_RET_DENIED_WRONG_DATA_ROLE ||
 	    ret == TCPM_ERROR_PUT_EVENT) {
 #else
 	if (ret == TCPM_ERROR_PUT_EVENT) {
