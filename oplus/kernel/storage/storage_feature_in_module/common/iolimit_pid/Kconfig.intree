@@ -1,0 +1,9 @@
+config OPLUS_FEATURE_IOLIMIT_PID
+    tristate "IO limit control by PID"
+    default n
+    help
+      Provide IO bandwidth limit control by PID using procfs interface.
+      This allows limiting write bandwidth for specific processes by PID
+      instead of using cgroup. Interfaces:
+      /proc/iolimit/write_bytes_limit - set/get global default limit
+      /proc/iolimit/procs - add/remove PID limits
