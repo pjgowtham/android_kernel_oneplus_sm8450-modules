@@ -7,6 +7,14 @@ include \
 	$(WLAN_PLATFORM_ROOT)/icnss2/parrot_gki_defconfig
 endif
 
+ifeq ($(CONFIG_ARCH_WAIPIO), y)
+include \
+	$(WLAN_PLATFORM_ROOT)/cnss2/waipio_gki_defconfig \
+	$(WLAN_PLATFORM_ROOT)/cnss_genl/waipio_gki_defconfig \
+	$(WLAN_PLATFORM_ROOT)/cnss_prealloc/waipio_gki_defconfig \
+	$(WLAN_PLATFORM_ROOT)/cnss_utils/waipio_gki_defconfig
+endif
+
 ifeq ($(CONFIG_CNSS_OUT_OF_TREE),y)
 KBUILD_CPPFLAGS += -DCONFIG_CNSS_OUT_OF_TREE
 endif

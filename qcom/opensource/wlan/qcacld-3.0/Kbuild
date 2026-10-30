@@ -63,6 +63,16 @@ include \
 	$(WLAN_PLATFORM_ROOT)/cnss_utils/parrot_gki_defconfig
 endif
 
+ifeq ($(CONFIG_ARCH_WAIPIO), y)
+CONFIG_QCA_CLD_WLAN_PROFILE=waipio_gki_$(WLAN_PROFILE)
+
+include \
+	$(WLAN_PLATFORM_ROOT)/cnss2/waipio_gki_defconfig \
+	$(WLAN_PLATFORM_ROOT)/cnss_genl/waipio_gki_defconfig \
+	$(WLAN_PLATFORM_ROOT)/cnss_prealloc/waipio_gki_defconfig \
+	$(WLAN_PLATFORM_ROOT)/cnss_utils/waipio_gki_defconfig
+endif
+
 include $(WLAN_ROOT)/configs/$(CONFIG_QCA_CLD_WLAN_PROFILE)_defconfig
 
 # add configurations in WLAN_CFG_OVERRIDE

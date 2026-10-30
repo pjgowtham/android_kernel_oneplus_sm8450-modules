@@ -4,6 +4,10 @@ ifeq ($(CONFIG_ARCH_PARROT), y)
 include $(WLAN_PLATFORM_ROOT)/cnss_utils/parrot_gki_defconfig
 endif
 
+ifeq ($(CONFIG_ARCH_WAIPIO), y)
+include $(WLAN_PLATFORM_ROOT)/cnss_utils/waipio_gki_defconfig
+endif
+
 ccflags-y += -Wmissing-prototypes
 
 ifeq ($(CONFIG_CNSS_OUT_OF_TREE),y)
