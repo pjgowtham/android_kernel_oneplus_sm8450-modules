@@ -3966,7 +3966,7 @@ static fw_update_state syna_tcm_fw_update(void *chip_data,
 				memcpy(tcm_info->g_fw_buf, fw->data, fw->size);
 				tcm_info->g_fw_sta = true;
 			} else {
-				TPD_INFO("fw->size:%d is less than %d\n", fw->size, FW_BUF_SIZE);
+				TPD_INFO("fw->size:%zu is less than %d\n", fw->size, FW_BUF_SIZE);
 				return FW_UPDATE_FATAL;
 			}
 		}
@@ -7372,8 +7372,12 @@ static void init_chip_dts(struct device *dev, void *chip_data)
 	}
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
+static int syna_tcm_probe(struct i2c_client *client)
+#else
 static int syna_tcm_probe(struct i2c_client *client,
 			  const struct i2c_device_id *id)
+#endif
 {
 	int retval = 0;
 	struct syna_tcm_data *tcm_info = NULL;
@@ -7697,6 +7701,13 @@ static const struct dev_pm_ops syna_pm_ops = {
 	.resume = syna_i2c_resume,
 };
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static void syna_tcm_i2c_remove(struct i2c_client *client)
+{
+	syna_tcm_remove(client);
+}
+#endif
+
 static const struct i2c_device_id syna_tmc_id[] = {
 	{ TPD_DEVICE, 0 },
 	{ }
@@ -7710,7 +7721,11 @@ static struct of_device_id syna_match_table[] = {
 
 static struct i2c_driver syna_i2c_driver = {
 	.probe      = syna_tcm_probe,
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	.remove     = syna_tcm_i2c_remove,
+#else
 	.remove     = syna_tcm_remove,
+#endif
 	.id_table   = syna_tmc_id,
 	.shutdown   = syna_tcm_tp_shutdown,
 	.driver     = {
