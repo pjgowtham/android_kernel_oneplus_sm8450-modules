@@ -134,6 +134,7 @@ struct dp_pll {
 
 	bool ssc_en;
 	bool bonding_en;
+	bool in_dp_node;
 
 	void *priv;
 	struct dp_pll_db pll_db;

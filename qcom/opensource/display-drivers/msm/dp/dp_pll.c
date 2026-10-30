@@ -123,6 +123,67 @@ int dp_pll_clock_register_helper(struct dp_pll *pll, struct dp_pll_vco_clk *clks
 	return rc;
 }
 
+static struct dp_pll *dp_pll_get_from_dp_node(struct dp_pll_in *in)
+{
+	int rc = 0;
+	struct dp_pll *pll;
+	const char *label = NULL;
+	struct platform_device *pdev = in->pdev;
+
+	pll = kzalloc(sizeof(*pll), GFP_KERNEL);
+	if (!pll)
+		return ERR_PTR(-ENOMEM);
+	pll->pdev = pdev;
+	pll->parser = in->parser;
+	pll->aux = in->aux;
+	pll->dp_core_revision = in->dp_core_revision;
+	pll->name = "dp0";
+	pll->in_dp_node = true;
+
+	label = of_get_property(pdev->dev.of_node, "qcom,pll-revision", NULL);
+	if (label) {
+		if (!strcmp(label, "5nm-v1")) {
+			pll->revision = DP_PLL_5NM_V1;
+		} else if (!strcmp(label, "5nm-v2")) {
+			pll->revision = DP_PLL_5NM_V2;
+		} else if (!strcmp(label, "4nm-v1")) {
+			pll->revision = DP_PLL_4NM_V1;
+		} else if (!strcmp(label, "4nm-v1.1")) {
+			pll->revision = DP_PLL_4NM_V1_1;
+		} else {
+			DP_ERR("Unsupported pll revision\n");
+			rc = -ENOTSUPP;
+			goto error;
+		}
+	} else {
+		DP_ERR("pll revision not specified\n");
+		rc = -EINVAL;
+		goto error;
+	}
+
+	pll->ssc_en = of_property_read_bool(pdev->dev.of_node,
+						"qcom,ssc-feature-enable");
+	pll->bonding_en = of_property_read_bool(pdev->dev.of_node,
+						"qcom,bonding-feature-enable");
+
+	rc = dp_pll_fill_io(pll);
+	if (rc)
+		goto error;
+
+	rc = dp_pll_clock_register(pll);
+	if (rc)
+		goto error;
+
+	DP_INFO("revision=%s, ssc_en=%d, bonding_en=%d\n",
+			dp_pll_get_revision(pll->revision), pll->ssc_en,
+			pll->bonding_en);
+
+	return pll;
+error:
+	kfree(pll);
+	return ERR_PTR(rc);
+}
+
 struct dp_pll *dp_pll_get(struct dp_pll_in *in)
 {
 	struct dp_pll *pll;
@@ -136,10 +197,8 @@ struct dp_pll *dp_pll_get(struct dp_pll_in *in)
 	}
 
 	node = of_parse_phandle(in->pdev->dev.of_node, "qcom,dp-pll", 0);
-	if (!node) {
-		DP_ERR("couldn't find dp-pll node\n");
-		return ERR_PTR(-EINVAL);
-	}
+	if (!node)
+		return dp_pll_get_from_dp_node(in);
 
 	pdev = of_find_device_by_node(node);
 	if (!pdev) {
@@ -165,6 +224,10 @@ struct dp_pll *dp_pll_get(struct dp_pll_in *in)
 
 void dp_pll_put(struct dp_pll *pll)
 {
+	if (pll->in_dp_node) {
+		dp_pll_clock_unregister(pll);
+		kfree(pll);
+	}
 }
 
 static const struct dp_pll_ver_spec_info dp_pll_5nm_v1 = {
