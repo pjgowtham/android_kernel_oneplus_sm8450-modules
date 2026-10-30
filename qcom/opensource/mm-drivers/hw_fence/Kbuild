@@ -6,10 +6,6 @@ LINUXINCLUDE += -include $(MSM_HW_FENCE_ROOT)/config/kalamammdriversconf.h \
 		-I$(MSM_HW_FENCE_ROOT)hw_fence/include/
 
 ifdef CONFIG_QTI_HW_FENCE
-ccflags-y += \
-		-I$(MSM_HW_FENCE_ROOT)../synx-kernel/include/uapi/synx/media \
-		-I$(MSM_HW_FENCE_ROOT)../synx-kernel/msm/synx
-
 obj-m += msm_hw_fence.o
 
 msm_hw_fence-y := src/msm_hw_fence.o \
@@ -18,7 +14,10 @@ msm_hw_fence-y := src/msm_hw_fence.o \
 		src/hw_fence_drv_debug.o \
 		src/hw_fence_drv_ipc.o
 
-ifneq ($(CONFIG_ARCH_KALAMA), y)
+ifneq ($(CONFIG_ARCH_WAIPIO)$(CONFIG_ARCH_KALAMA), y)
+ccflags-y += \
+		-I$(MSM_HW_FENCE_ROOT)../synx-kernel/include/uapi/synx/media \
+		-I$(MSM_HW_FENCE_ROOT)../synx-kernel/msm/synx
 LINUXINCLUDE += -I$(MSM_HW_FENCE_ROOT)/../synx-kernel/msm/synx/ \
 		-I$(MSM_HW_FENCE_ROOT)/../synx-kernel/include/uapi/synx/media/
 msm_hw_fence-y += src/msm_hw_fence_synx_translation.o
