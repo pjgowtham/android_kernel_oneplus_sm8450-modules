@@ -225,6 +225,7 @@ endif
 
 ifdef CONFIG_SND_SOC_MSM_HDMI_CODEC_RX
 	HDMICODEC_OBJS += msm_hdmi_codec_rx.o
+	CFLAGS_msm_hdmi_codec_rx.o += -I$(AUDIO_ROOT)/../mm-drivers/msm_ext_display/include
 endif
 
 ifdef CONFIG_SND_SOC_WCD_IRQ
