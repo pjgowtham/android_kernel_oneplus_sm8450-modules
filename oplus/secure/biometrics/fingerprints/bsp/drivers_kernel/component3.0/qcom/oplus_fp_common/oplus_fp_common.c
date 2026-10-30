@@ -25,7 +25,7 @@
 #elif defined(QCOM_PLATFORM)
 #include <linux/uaccess.h>
 #else
-#include <soc/qcom/smem.h>
+#include <linux/soc/qcom/smem.h>
 #endif
 
 #ifdef FP_TEE_BINDE_CORE_ENABLE

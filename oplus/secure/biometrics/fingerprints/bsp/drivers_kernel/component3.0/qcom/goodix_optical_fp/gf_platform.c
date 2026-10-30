@@ -339,7 +339,6 @@ int gf_parse_dts(struct gf_dev* gf_dev)
 err_pwr:
     gf_cleanup_pwr_list(gf_dev);
 err_irq:
-    devm_gpio_free(dev, gf_dev->reset_gpio);
 err_reset:
     return rc;
 }

@@ -131,8 +131,8 @@ static int fp_check_panel_dt(struct gf_dev *gf_dev);
 #endif
 
 static int fp_panel_event_notifier_register(struct gf_dev *gf_dev)
-#if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY_FINGERPRINT)
 {
+#if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY_FINGERPRINT)
 	int status = 0;
 	void *cookie = NULL;
 	unsigned int check_panel_retry = 0;
@@ -422,14 +422,14 @@ static void irq_cleanup(struct gf_dev *gf_dev)
     free_irq(gf_dev->irq, gf_dev);//need modify
 }
 
-static void gf_auto_send_touchdown()
+static void gf_auto_send_touchdown(void)
 {
     struct fp_underscreen_info tp_info;
     tp_info.touch_state = 1;
     gf_opticalfp_irq_handler(&tp_info);
 }
 
-static void gf_auto_send_touchup()
+static void gf_auto_send_touchup(void)
 {
     struct fp_underscreen_info tp_info;
     tp_info.touch_state = 0;
@@ -743,7 +743,7 @@ fp_panel_notifier_callback(enum panel_event_notifier_tag tag,
 		sendnlmsg(&msg);
 		break;
 	default:
-		pr_info("[%s] Unknown DRM_PANEL_EVENT_ONSCREENFINGERPRINT\n",
+                pr_debug("[%s] Unknown DRM_PANEL_EVENT_ONSCREENFINGERPRINT\n",
 			__func__);
 		break;
 	}
@@ -1108,7 +1108,11 @@ static int __init gf_init(void)
         return status;
     }
     SPIDEV_MAJOR = status;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)
+    gf_class = class_create(CLASS_NAME);
+#else
     gf_class = class_create(THIS_MODULE, CLASS_NAME);
+#endif
     if (IS_ERR(gf_class)) {
         unregister_chrdev(SPIDEV_MAJOR, gf_driver.driver.name);
         pr_warn("Failed to create class.\n");
