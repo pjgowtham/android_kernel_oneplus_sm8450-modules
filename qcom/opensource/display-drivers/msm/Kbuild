@@ -81,6 +81,11 @@ LINUX_INC +=	-I$(DISPLAY_ROOT) \
 	-I$(DISPLAY_ROOT)/msm/dsi \
 	-I$(DISPLAY_ROOT)/msm/sde \
 	-I$(DISPLAY_ROOT)/../mm-drivers/hw_fence/include \
+	-I$(DISPLAY_ROOT)/../mm-drivers/msm_ext_display/include \
+	-I$(DISPLAY_ROOT)/../mm-drivers/sync_fence/include \
+	-I$(DISPLAY_ROOT)/../securemsm-kernel \
+	-I$(DISPLAY_ROOT)/../synx-kernel/include/uapi/synx/media \
+	-I$(DISPLAY_ROOT)/../synx-kernel/msm/synx \
 	-I$(DISPLAY_ROOT)/include/uapi/display \
 
 ifeq (${CONFIG_PXLW_IRIS},y)
@@ -290,6 +295,7 @@ msm_drm-$(CONFIG_DSI_PARSER) += dsi/dsi_parser.o
 
 msm_drm-$(CONFIG_THERMAL_OF) += msm_cooling_device.o
 
+
 msm_drm-$(CONFIG_DRM_MSM) += msm_atomic.o \
 			     msm_fb.o \
 			     msm_drv.o \
@@ -298,5 +304,3 @@ msm_drm-$(CONFIG_DRM_MSM) += msm_atomic.o \
 			     msm_gem_vma.o \
 			     msm_smmu.o \
 			     msm_prop.o
-
-CDEFINES += -DBUILD_TIMESTAMP=\"$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')\"
