@@ -3040,7 +3040,7 @@ static int cam_smmu_util_get_free_map_entry(struct cam_smmu_buffer_tracker **ent
 {
 	spin_lock_bh(&iommu_cb_set.s_lock);
 	if (list_empty(&iommu_cb_set.buf_tracker_free_list)) {
-		CAM_WARN(CAM_SMMU, "[SMMU_BT] Not enough mem to track buffer");
+		CAM_WARN_RATE_LIMIT(CAM_SMMU, "[SMMU_BT] Not enough mem to track buffer");
 		spin_unlock_bh(&iommu_cb_set.s_lock);
 		return -ENOMEM;
 	}
@@ -3915,7 +3915,7 @@ void cam_smmu_buffer_tracker_buffer_putref(struct cam_smmu_buffer_tracker *entry
 {
 
 	if (!entry) {
-		CAM_WARN(CAM_ISP, "[SMMU_BT] track buffer entry is NULL");
+		CAM_WARN_RATE_LIMIT(CAM_ISP, "[SMMU_BT] track buffer entry is NULL");
 		return;
 	}
 
