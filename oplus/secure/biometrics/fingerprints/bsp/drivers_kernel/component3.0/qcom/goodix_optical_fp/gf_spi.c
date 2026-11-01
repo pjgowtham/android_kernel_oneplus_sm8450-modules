@@ -1157,7 +1157,7 @@ static void __exit gf_exit(void)
 }
 module_exit(gf_exit);
 
-MODULE_SOFTDEP("pre:oplus_fp_common");
+MODULE_SOFTDEP("pre: oplus_fp_common");
 MODULE_AUTHOR("Jiangtao Yi, <yijiangtao@goodix.com>");
 MODULE_AUTHOR("Jandy Gou, <gouqingsong@goodix.com>");
 MODULE_DESCRIPTION("goodix fingerprint sensor device driver");
