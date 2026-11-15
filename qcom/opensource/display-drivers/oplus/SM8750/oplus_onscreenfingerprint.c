@@ -3053,10 +3053,9 @@ static bool oplus_ofp_need_to_bypass_pq(void *s_crtc)
 	OPLUS_OFP_TRACE_BEGIN("oplus_ofp_need_to_bypass_pq");
 
 	hbm_enable = sde_connector_get_property(c_conn->base.state, CONNECTOR_PROP_HBM_ENABLE);
-	/* need to bypass pq when aod/dim/fingerpress layer exist */
+	/* need to bypass pq when aod/fingerpress layer exist */
 	if ((hbm_enable & OPLUS_OFP_PROPERTY_AOD_LAYER)
-			|| (hbm_enable & OPLUS_OFP_PROPERTY_DIM_LAYER)
-				|| (hbm_enable & OPLUS_OFP_PROPERTY_FINGERPRESS_LAYER)) {
+			|| (hbm_enable & OPLUS_OFP_PROPERTY_FINGERPRESS_LAYER)) {
 		need_to_bypass_pq = true;
 	}
 
